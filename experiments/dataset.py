@@ -1,23 +1,17 @@
 import torch
-from torch import nn
-from torch.utils.data import BatchSampler
 from torch_geometric.data import Data
 import energyflow
 import numpy as np
 import awkward as ak
 import os
 import glob
-from collections import defaultdict
 
-from experiments.logger import LOGGER
 from experiments.utils import (
     ensure_angle,
     fix_mass,
-    get_mass,
     pid_encoding,
-    GaussianFourierProjection,
 )
-from experiments.coordinates import jetmomenta_to_fourmomenta, fourmomenta_to_jetmomenta
+from experiments.coordinates import jetmomenta_to_fourmomenta
 
 
 class Dataset(torch.utils.data.Dataset):
@@ -35,50 +29,35 @@ class Dataset(torch.utils.data.Dataset):
 
     def append(
         self,
-        det_particles,
-        det_pids,
-        det_mults,
-        det_jets,
-        gen_particles,
-        gen_pids,
-        gen_mults,
-        gen_jets,
+        particles,
+        pids,
+        mults,
+        jets,
+        labels,
     ):
 
-        for i in range(det_particles.shape[0]):
+        for i in range(particles.shape[0]):
 
-            det_event = det_particles[i, : det_mults[i]]
-            det_event_scalars = det_pids[i, : det_mults[i]]
-            gen_event = gen_particles[i, : gen_mults[i]]
-            gen_event_scalars = gen_pids[i, : gen_mults[i]]
+            event = particles[i, : mults[i]]
+            event_scalars = pids[i, : mults[i]]
 
             if self.pos_encoding is not None:
-                det_event_scalars = torch.cat(
-                    [det_event_scalars, self.pos_encoding[: det_mults[i]]], dim=-1
-                )
-                gen_event_scalars = torch.cat(
-                    [gen_event_scalars, self.pos_encoding[: gen_mults[i]]], dim=-1
+                event_scalars = torch.cat(
+                    [event_scalars, self.pos_encoding[: mults[i]]], dim=-1
                 )
             if self.mult_encoding is not None:
-                jet_scalars_det = self.mult_encoding(
-                    torch.tensor([[det_mults[i]]], dtype=self.dtype)
-                ).detach()
-                jet_scalars_gen = self.mult_encoding(
-                    torch.tensor([[gen_mults[i]]], dtype=self.dtype)
+                jet_scalars = self.mult_encoding(
+                    torch.tensor([[mults[i]]], dtype=self.dtype)
                 ).detach()
             else:
-                jet_scalars_det = torch.empty(1, 0, dtype=self.dtype)
-                jet_scalars_gen = torch.empty(1, 0, dtype=self.dtype)
+                jet_scalars = torch.empty(1, 0, dtype=self.dtype)
 
             graph = Data(
-                x_det=det_event,
-                scalars_det=det_event_scalars,
-                jet_det=det_jets[i : i + 1],
-                jet_scalars_det=jet_scalars_det,
-                x_gen=gen_event,
-                scalars_gen=gen_event_scalars,
-                jet_gen=gen_jets[i : i + 1],
-                jet_scalars_gen=jet_scalars_gen,
+                x=event,
+                scalars=event_scalars,
+                jet=jets[i : i + 1],
+                jet_scalars=jet_scalars,
+                label=labels[i : i + 1],
             )
 
             self.data_list.append(graph)
@@ -92,14 +71,6 @@ def load_dataset(dataset_name):
         jet_pt_min = 10.0
         masked_dim = [3]
         load_fn = load_zplusjet
-
-    elif dataset_name == "cms":
-        max_num_particles = 3
-        diff = [0, 0]
-        pt_min = 30.0
-        jet_pt_min = 350.0
-        masked_dim = []
-        load_fn = load_cms
 
     elif dataset_name == "ttbar":
         max_num_particles = 238
@@ -194,76 +165,12 @@ def load_zplusjet(data_path, cfg, dtype):
         gen_mults = gen_mults[mask]
         gen_pids = gen_pids[mask]
 
-    if getattr(cfg, "use_sampled_jets", False):
-        train = torch.load(
-            "/remote/gpu04/petitjean/high-dim-unfolding/runs/long_jets_6/z_Tr_Lion2-4_1024_noconst_2481358/samples_4/samples_train.pt",
-            weights_only=False,
-            map_location=gen_jets.device,
-        )
-        val = torch.load(
-            "/remote/gpu04/petitjean/high-dim-unfolding/runs/long_jets_6/z_Tr_Lion2-4_1024_noconst_2481358/samples_4/samples_val.pt",
-            weights_only=False,
-            map_location=gen_jets.device,
-        )
-        test = torch.load(
-            "/remote/gpu04/petitjean/high-dim-unfolding/runs/long_jets_6/z_Tr_Lion2-4_1024_noconst_2481358/samples_4/samples_test.pt",
-            weights_only=False,
-            map_location=gen_jets.device,
-        )
-        LOGGER.info(
-            f"Using sampled jets from {train.jet_gen.shape[0]} train, {val.jet_gen.shape[0]} val, {test.jet_gen.shape[0]} test events"
-        )
-
-        det_jets = det_jets[:-1]
-        det_particles = det_particles[:-1]
-        det_mults = det_mults[:-1]
-        det_pids = det_pids[:-1]
-        gen_jets = gen_jets[:-1]
-        gen_particles = gen_particles[:-1]
-        gen_mults = gen_mults[:-1]
-        gen_pids = gen_pids[:-1]
-
-        sampled_jets = torch.cat([train.jet_gen, val.jet_gen, test.jet_gen], dim=0)
-        gen_jets = sampled_jets
-
-    if cfg.part_to_jet:
-        det_particles = jetmomenta_to_fourmomenta(det_jets.unsqueeze(1))
-        det_mults = torch.ones(det_jets.shape[0], dtype=torch.int)
-        gen_particles = jetmomenta_to_fourmomenta(gen_jets.unsqueeze(1))
-        gen_mults = torch.ones(gen_jets.shape[0], dtype=torch.int)
-
     return {
         "det_jets": det_jets,
         "det_particles": det_particles,
         "det_mults": det_mults,
         "det_pids": det_pids,
         "gen_jets": gen_jets,
-        "gen_particles": gen_particles,
-        "gen_mults": gen_mults,
-        "gen_pids": gen_pids,
-    }
-
-
-def load_cms(data_path, cfg, dtype):
-    gen_particles = (
-        torch.from_numpy(np.load(os.path.join(data_path, "gen_1725_delphes.npy")))
-        .to(dtype)
-        .reshape(-1, 3, 4)
-    )[: cfg.length]
-    det_particles = (
-        torch.from_numpy(np.load(os.path.join(data_path, "rec_1725_delphes.npy")))
-        .to(dtype)
-        .reshape(-1, 3, 4)
-    )[: cfg.length]
-    gen_mults = torch.zeros(gen_particles.shape[0], dtype=torch.int) + 3
-    det_mults = torch.zeros(det_particles.shape[0], dtype=torch.int) + 3
-    gen_pids = torch.empty(*gen_particles.shape[:-1], 0, dtype=dtype)
-    det_pids = torch.empty(*det_particles.shape[:-1], 0, dtype=dtype)
-
-    return {
-        "det_particles": det_particles,
-        "det_mults": det_mults,
-        "det_pids": det_pids,
         "gen_particles": gen_particles,
         "gen_mults": gen_mults,
         "gen_pids": gen_pids,
@@ -443,67 +350,3 @@ def positional_encoding(seq_length=256, pe_dim=16):
     pe[:, 0::2] = torch.sin(position * div_term)
     pe[:, 1::2] = torch.cos(position * div_term)
     return pe
-
-
-class SameSizeBatchSampler(BatchSampler):
-    """
-    Batch sampler that batches graphs of the same size together.
-    Ensure same multiplicity in each batch.
-    """
-
-    def __init__(
-        self,
-        dataset,
-        batch_size,
-        drop_last=False,  # otherwise drop last for each multiplicity so too many events
-        num_replicas=1,
-        rank=0,
-        shuffle=False,
-    ):
-        self.dataset = dataset
-        self.batch_size = batch_size
-        self.drop_last = drop_last
-        self.num_replicas = num_replicas
-        self.rank = rank
-        self.shuffle = shuffle
-
-        # bucket indices by node count
-        buckets = defaultdict(list)
-        for idx, g in enumerate(dataset):
-            # index of event for each multiplicity
-            buckets[g.num_nodes].append(idx)
-
-        # build all batches
-        bucket_batches = []
-        for idxs in buckets.values():
-            if shuffle:
-                idxs = torch.randperm(len(idxs)).tolist()
-            batches = [
-                idxs[i : i + batch_size] for i in range(0, len(idxs), batch_size)
-            ]
-            if drop_last and len(batches[-1]) < batch_size:
-                batches.pop()
-            bucket_batches.append(batches)
-
-        # interleave batches from each multiplicity
-        self.batches = []
-        max_len = max(len(b) for b in bucket_batches)
-        for i in range(max_len):
-            for batches in bucket_batches:
-                if i < len(batches):
-                    self.batches.append(batches[i])
-
-        # split batches across replicas
-        self.batches = self.batches[rank::num_replicas]
-
-    def __iter__(self):
-        if self.shuffle:  # shuffle multiplicity and batches within
-            order = torch.randperm(len(self.batches)).tolist()
-            for i in order:
-                yield self.batches[i]
-        else:
-            for b in self.batches:
-                yield b
-
-    def __len__(self):
-        return len(self.batches)

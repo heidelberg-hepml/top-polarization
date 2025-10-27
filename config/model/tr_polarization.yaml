@@ -1,4 +1,4 @@
-_target_: experiments.multiplicity.wrappers.MultiplicityTransformerWrapper
+_target_: experiments.polarization.wrappers.PolarizationTransformerWrapper
 
 net:
   _target_: experiments.baselines.Transformer

@@ -2,8 +2,6 @@ import torch
 from torch.distributions import VonMises
 
 import experiments.transforms as tr
-from experiments.utils import kappa_from_Vc
-from experiments.logger import LOGGER
 
 DTYPE = torch.float64
 
@@ -354,40 +352,6 @@ class StandardLogPtPhiEtaLogM2(BaseCoordinates):
         ]
 
 
-class StandardAsinhPtPhiEtaLogM2(BaseCoordinates):
-    # Fitted (log(pt), phi, eta, log(m^2))
-    def __init__(self, pt_min, fixed_dims=[], scaling=torch.ones(1, 4), **kwargs):
-        super().__init__()
-        self.contains_phi = True
-        self.contains_mass = True
-        self.transforms = [
-            tr.EPPP_to_PtPhiEtaE(),
-            tr.PtPhiEtaE_to_PtPhiEtaM2(),
-            tr.M2_to_ClampedM2(),
-            tr.Pt_to_ClampedPt(pt_min),
-            tr.Pt_to_AsinhPt(),
-            tr.M2_to_LogM2(),
-            tr.StandardNormal(fixed_dims, scaling, contains_phi=True),
-        ]
-
-
-class StandardLogPtPhiEtaAsinhM2(BaseCoordinates):
-    # Fitted (log(pt), phi, eta, log(m^2))
-    def __init__(self, pt_min, fixed_dims=[], scaling=torch.ones(1, 4), **kwargs):
-        super().__init__()
-        self.contains_phi = True
-        self.contains_mass = True
-        self.transforms = [
-            tr.EPPP_to_PtPhiEtaE(),
-            tr.PtPhiEtaE_to_PtPhiEtaM2(),
-            tr.M2_to_ClampedM2(),
-            tr.Pt_to_ClampedPt(pt_min),
-            tr.Pt_to_LogPt(),
-            tr.M2_to_AsinhM2(),
-            tr.StandardNormal(fixed_dims, scaling, contains_phi=True),
-        ]
-
-
 class StandardLogPtPhiEtaM2(BaseCoordinates):
     # Fitted (log(pt), phi, eta, m^2)
     def __init__(self, pt_min, fixed_dims=[], scaling=torch.ones(1, 4), **kwargs):
@@ -401,23 +365,6 @@ class StandardLogPtPhiEtaM2(BaseCoordinates):
             tr.Pt_to_ClampedPt(pt_min),
             tr.Pt_to_LogPt(),
             tr.StandardNormal(fixed_dims, scaling, contains_phi=True),
-        ]
-
-
-class IndividualStandardLogPtPhiEtaLogM2(BaseCoordinates):
-    # Position fitted (log(pt), phi, eta, log(m^2)
-    def __init__(self, pt_min, fixed_dims=[], scaling=torch.ones(1, 4), **kwargs):
-        super().__init__()
-        self.contains_phi = True
-        self.contains_mass = True
-        self.transforms = [
-            tr.EPPP_to_PtPhiEtaE(),
-            tr.PtPhiEtaE_to_PtPhiEtaM2(),
-            tr.M2_to_ClampedM2(),
-            tr.Pt_to_ClampedPt(pt_min),
-            tr.Pt_to_LogPt(),
-            tr.M2_to_LogM2(),
-            tr.IndividualNormal(fixed_dims, scaling, contains_phi=True),
         ]
 
 
@@ -485,24 +432,6 @@ class StandardJetScaledLogPtPhiEtaM2(BaseCoordinates):
             tr.Pt_to_LogPt(),
             tr.LogPtPhiEtaLogM2_to_JetScale(),
             tr.StandardNormal(fixed_dims, scaling, contains_phi=True),
-        ]
-
-
-class IndividualStandardJetScaledLogPtPhiEtaLogM2(BaseCoordinates):
-    # (pt/pt_jet, phi-phi_jet, eta-eta_jet, log(m^2))
-    def __init__(self, pt_min, fixed_dims=[], scaling=torch.ones(1, 4), **kwargs):
-        super().__init__()
-        self.contains_phi = True
-        self.contains_mass = True
-        self.transforms = [
-            tr.EPPP_to_PtPhiEtaE(),
-            tr.PtPhiEtaE_to_PtPhiEtaM2(),
-            tr.M2_to_ClampedM2(),
-            tr.M2_to_LogM2(),
-            tr.Pt_to_ClampedPt(pt_min),
-            tr.Pt_to_LogPt(),
-            tr.LogPtPhiEtaLogM2_to_JetScale(),
-            tr.IndividualNormal(fixed_dims, scaling, contains_phi=True),
         ]
 
 

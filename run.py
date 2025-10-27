@@ -3,7 +3,7 @@ import torch
 import torch.multiprocessing as mp
 import torch.distributed as dist
 
-from experiments.multiplicity.experiment import MultiplicityExperiment
+from experiments.polarization.experiment import PolarizationExperiment
 
 
 @hydra.main(config_path="config", config_name="constituents", version_base=None)
@@ -30,8 +30,8 @@ def ddp_worker(rank, cfg, world_size):
         )
         torch.cuda.set_device(rank)
 
-    if cfg.exp_type == "multiplicity":
-        constructor = MultiplicityExperiment
+    if cfg.exp_type == "polarization":
+        constructor = PolarizationExperiment
     else:
         raise ValueError(f"exp_type {cfg.exp_type} not implemented")
 
