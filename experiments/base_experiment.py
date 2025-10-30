@@ -18,7 +18,6 @@ from experiments.misc import get_device, flatten_dict
 import experiments.logger
 from experiments.logger import LOGGER, MEMORY_HANDLER, FORMATTER, RankFilter
 from experiments.mlflow import log_mlflow
-from experiments.ranger import Ranger
 
 # set to 'True' to debug autograd issues (slows down code)
 torch.autograd.set_detect_anomaly(False)
@@ -376,16 +375,6 @@ class BaseExperiment:
             self.optimizer = pytorch_optimizer.Lion(
                 param_groups,
                 betas=self.cfg.training.betas,
-            )
-        elif self.cfg.training.optimizer == "Ranger":
-            # default optimizer used in the weaver package
-            # see https://github.com/hqucms/weaver-core/blob/main/weaver/utils/nn/optimizer/ranger.py
-            self.optimizer = Ranger(
-                param_groups,
-                betas=(0.95, 0.999),
-                eps=1e-5,
-                alpha=0.5,
-                k=6,
             )
         else:
             raise ValueError(f"Optimizer {self.cfg.training.optimizer} not implemented")

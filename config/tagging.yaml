@@ -1,7 +1,12 @@
+exp_type: toptagging
+exp_name: topt_local_debug
+
 data:
+ data_dir: data/
+ dataset: full
  add_tagging_features_framesnet: true
  only_ztransform_tagging_features: false
- boost_jet: false
+ boost_jet: true
  beam_reference: lightlike
  two_beams: true
  add_time_reference: true
