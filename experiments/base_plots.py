@@ -4,9 +4,9 @@ import numpy as np
 plt.rcParams["font.family"] = "serif"
 plt.rcParams["font.serif"] = "Charter"
 plt.rcParams["text.usetex"] = True
-plt.rcParams["text.latex.preamble"] = (
-    r"\usepackage[bitstream-charter]{mathdesign} \usepackage{amsmath} \usepackage{siunitx}"
-)
+plt.rcParams[
+    "text.latex.preamble"
+] = r"\usepackage[bitstream-charter]{mathdesign} \usepackage{amsmath} \usepackage{siunitx}"
 
 FONTSIZE = 14
 FONTSIZE_LEGEND = 13
@@ -16,7 +16,7 @@ FONTSIZE_TICK = 12
 def plot_loss(file, losses, lr=None, labels=None, logy=True):
     if len(losses[1]) == 0:  # catch no-validations case
         losses = [losses[0]]
-        labels = [labels[0]] if labels is not None else [None]
+        labels = [labels[0]]
     labels = [None for _ in range(len(losses))] if labels is None else labels
     iterations = range(1, len(losses[0]) + 1)
     fig, ax = plt.subplots()

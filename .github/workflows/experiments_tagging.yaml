@@ -1,0 +1,71 @@
+name: Tagging trial experiments
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  test:
+    if: github.event.label.name == 'ready for review'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Transformer + IdentityFrames
+      run: |
+        python run.py model=tag_transformer save=false evaluate=false training.iterations=3
+
+    - name: Transformer + LearnedPDFrames
+      run: |
+        python run.py model=tag_transformer model/framesnet=learnedpd save=false evaluate=false training.iterations=3
+
+    - name: Transformer + LearnedPDFrames no symmetry breaking
+      run: |
+        python run.py model=tag_transformer model/framesnet=learnedpd save=false evaluate=false training.iterations=3 data.add_tagging_features_framesnet=False data.add_time_reference=false data.beam_reference=null
+
+    - name: GraphNet + IdentityFrames
+      run: |
+        python run.py save=false evaluate=false training.iterations=3
+
+    - name: GraphNet + LearnedPDFrames
+      run: |
+        python run.py model=tag_graphnet model/framesnet=learnedpd save=false evaluate=false training.iterations=3
+
+    - name: GraphNet + LearnedPDFrames with edge attributes
+      run: |
+        python run.py model=tag_graphnet model/framesnet=learnedpd save=false evaluate=false training.iterations=3 model.include_edges=true
+
+    - name: ParticleNet + Identity
+      run: |
+        python run.py model=tag_particlenet-lite save=false evaluate=false training.iterations=3
+    
+    - name: ParticleNet + LearnedPDFrames
+      run: |
+        python run.py model=tag_particlenet-lite model/framesnet=learnedpd save=false evaluate=false training.iterations=3
+
+    - name: ParT + LearnedPDFrames
+      run: |
+        python run.py model=tag_ParT model/framesnet=learnedpd save=false evaluate=false training.iterations=3
+
+    - name: ParT without pairwise features + LearnedPDFrames
+      run: |
+        python run.py model=tag_ParT model/framesnet=learnedpd save=false evaluate=false training.iterations=3 model.net.pair_input_dim=0
+
+    - name: GATr
+      run: |
+        python run.py model=tag_lgatr save=false evaluate=false training.iterations=3

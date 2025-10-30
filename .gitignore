@@ -1,25 +1,23 @@
+# pytest
+.coverage
+.pytest
+.pytest_cache
+
+# Python
 *__pycache__*
 *.egg-info
 *.py[cod]
-.ipynb_checkpoints/
-.pytest/
-.pytest_cache/
-.vscode/
+*.sh.e*
+*.sh.o*
 
-notebooks/
 venv/
-data/
 runs/
 mlruns/
 outputs/
 scripts/
-logs/
-notebooks/
+data/jetclass/
 *~
-
-*.png
-*.pdf
-*.pt
-*.npz
+*.hdf5
 *.npy
-*.pdf
+*.npz
+*.ipynb_checkpoint*

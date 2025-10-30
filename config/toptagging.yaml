@@ -1,0 +1,13 @@
+exp_type: toptagging
+exp_name: topt_local_debug
+
+data:
+ boost_jet: true
+ data_dir: data
+ dataset: full
+
+defaults:
+ - training: top_transformer
+ - model@: tag_top_transformer
+ - tagging
+ - _self_
