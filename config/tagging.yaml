@@ -26,5 +26,6 @@ plotting:
 
 defaults:
  - model: tag_transformer
+ - training: tag_transformer
  - default
  - _self_

@@ -5,17 +5,14 @@ from torch_geometric.utils import scatter
 from lgatr import embed_vector, extract_scalar
 
 from experiments.tagging.embedding import get_tagging_features
-from lloca.framesnet.frames import Frames
-from lloca.utils.utils import (
+from experiments.utils import (
     get_ptr_from_batch,
     get_batch_from_ptr,
-)
-from lloca.backbone.attention_backends.xformers_attention import (
     get_xformers_attention_mask,
 )
+from lloca.framesnet.frames import Frames
 from lloca.reps.tensorreps import TensorReps
 from lloca.reps.tensorreps_transform import TensorRepsTransform
-from lloca.framesnet.nonequi_frames import IdentityFrames
 
 
 class TaggerWrapper(nn.Module):
@@ -256,9 +253,6 @@ class LGATrWrapper(nn.Module):
         self.use_amp = use_amp
         self.net = net(out_mv_channels=out_channels)
         self.aggregator = MeanAggregation() if mean_aggregation else None
-
-        self.framesnet = framesnet  # not actually used
-        assert isinstance(framesnet, IdentityFrames)
 
     def forward(self, embedding):
         # extract embedding (includes spurions)

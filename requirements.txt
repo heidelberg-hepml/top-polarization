@@ -21,7 +21,8 @@ matplotlib
 xformers
 torch-cluster>=1.6.3
 torchdiffeq
-lgatr[xformers_attention]>=1.2.0
+lgatr[xformers_attention]
+lloca[xformers_attention]
 
 #weaver packages
 tqdm>=4.41.0
