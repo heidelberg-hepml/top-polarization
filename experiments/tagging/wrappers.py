@@ -13,6 +13,7 @@ from experiments.utils import (
 from lloca.framesnet.frames import Frames
 from lloca.reps.tensorreps import TensorReps
 from lloca.reps.tensorreps_transform import TensorRepsTransform
+from lloca.framesnet.nonequi_frames import IdentityFrames
 
 
 class TaggerWrapper(nn.Module):
@@ -253,6 +254,9 @@ class LGATrWrapper(nn.Module):
         self.use_amp = use_amp
         self.net = net(out_mv_channels=out_channels)
         self.aggregator = MeanAggregation() if mean_aggregation else None
+
+        self.framesnet = framesnet  # not actually used
+        assert isinstance(framesnet, IdentityFrames)
 
     def forward(self, embedding):
         # extract embedding (includes spurions)
