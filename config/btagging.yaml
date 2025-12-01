@@ -1,0 +1,32 @@
+exp_type: btagging
+exp_name: tag_debug
+
+data:
+  data_dir: data/
+  dataset: unpolarized
+  length: -1
+  tagging_features_framesnet: all
+  boost_jet: false
+  beam_reference: lightlike
+  two_beams: true
+  add_time_reference: true
+  mass_reg: 5e-3
+  spurion_scale: 1
+  momentum_float64: true
+
+
+evaluation:
+  batchsize: 512
+  save_roc: false
+  eval_set: [train, test, val]
+
+plotting:
+  roc: true
+  loss: true
+  score: true
+
+defaults:
+  - model: tag_transformer
+  - training: tag_transformer
+  - default
+  - _self_
