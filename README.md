@@ -10,12 +10,20 @@ The codebase is forked from the [LloCa repository](https://github.com/heidelberg
   and optional MLflow metadata.
 
 ## Setup
-   ```bash
-   python -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   pip install -e .
-   ```
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+pip install -e .
+```
+### Pre-commit hooks
+We use [pre-commit](https://pre-commit.com/) to run hooks before each commit. To install the hooks, run:
+```
+pre-commit install
+pre-commit run --all-files # Optional, to test that it works
+```
+The only hook that is currently active is [ruff](https://github.com/astral-sh/ruff), which performs linting and formatting. The hook is configured in `.pre-commit-config.yaml` and ruff is configured in `pyproject.toml`.
+When committing, ruff will automatically fix any issues it can and report the rest. You then have to fix the issues and commit again.
 
 ## Running Experiments
 
