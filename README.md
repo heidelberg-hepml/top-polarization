@@ -25,6 +25,13 @@ pre-commit run --all-files # Optional, to test that it works
 The only hook that is currently active is [ruff](https://github.com/astral-sh/ruff), which performs linting and formatting. The hook is configured in `.pre-commit-config.yaml` and ruff is configured in `pyproject.toml`.
 When committing, ruff will automatically fix any issues it can and report the rest. You then have to fix the issues and commit again.
 
+### Getting the data
+To automatically download the datasets, run:
+```bash
+python fetch_polarization_data.py --out [OUTPUT_DIR] --mass [STRICT|LOOSE]
+```
+By default, datasets are installed in the `data` directory with a strict cut on the top quark mass window.
+
 ## Running Experiments
 
 Runs parameters are set via Hydra configs. There are different configuration files for each experiment type.
