@@ -9,6 +9,7 @@
 *.py[cod]
 *.sh.e*
 *.sh.o*
+*'=*
 
 venv/
 runs/

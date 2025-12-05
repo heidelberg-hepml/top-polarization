@@ -151,6 +151,12 @@ class BaseExperiment:
             self.ema.to(self.device)
 
         if self.world_size > 1:
+            ############################ DEBUG ############################
+            # model = self.model.net
+            # num_cuda_params = sum(1 for p in model.parameters() if p.is_cuda)
+            # print(f"[Rank {self.rank}] num_cuda_params = {num_cuda_params} / {len(list(model.parameters()))} params on CUDA")
+            ############################ DEBUG ############################
+
             self.model.net = torch.nn.parallel.DistributedDataParallel(
                 self.model.net,
                 device_ids=[self.rank],

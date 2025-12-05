@@ -203,17 +203,18 @@ class TestDataset(TaggingDataset):
         return data
 
 
-class BTaggingDataset(TaggingDataset):
+class QuarkTaggingDataset(TaggingDataset):
     """
-    Optimized dataset for subjet b-tagging on the polarization parquet file.
+    Optimized dataset for subjet tagging on the polarization parquet file.
     Each event/graph contains the fat jet, its 3 subjets, and all subjet constituents.
     """
 
     _parquet_cache = {}
     _split_cache = {}
 
-    def __init__(self, seed=12345, split_fracs=(0.8, 0.1, 0.1), shuffle=True, length=-1):
+    def __init__(self, tag=1, seed=12345, split_fracs=(0.8, 0.1, 0.1), shuffle=True, length=-1):
         super().__init__(length=length)
+        self.tag = tag
         self.seed = seed
         self.split_fracs = split_fracs
         self.shuffle = shuffle
@@ -271,7 +272,8 @@ class BTaggingDataset(TaggingDataset):
 
         # Get split indices with caching
         num_events = len(parquet)
-        target_length = num_events if self.length is None else min(self.length, num_events)
+        # target_length = num_events if self.length is None else min(self.length, num_events)
+        target_length = self._get_target_length(len(parquet))
 
         cache_key = (
             self._normalize_filename_key(filename),
@@ -318,7 +320,7 @@ class BTaggingDataset(TaggingDataset):
         subset = parquet[split_indices]
 
         LOGGER.info(
-            f"[BTaggingDataset] mode={mode}, requested_length={self.length}, "
+            f"[QuarkTaggingDataset] mode={mode}, requested_length={self.length}, "
             f"selected={len(subset)}/{num_events} (full)"
         )
 
@@ -345,7 +347,8 @@ class BTaggingDataset(TaggingDataset):
                 ],
                 dim=-1,
             )
-            subjet_btag = torch.as_tensor(subjets["btag"], dtype=torch.bool)
+            subjet_tag = torch.as_tensor(subjets["tag"], dtype=torch.long)
+            subjet_tag = subjet_tag == self.tag
             subjet_four = PtPhiEtaM2_to_EPPP(
                 subjet_kin[:, 0], subjet_kin[:, 1], subjet_kin[:, 2], subjet_kin[:, 3]
             )
@@ -406,8 +409,8 @@ class BTaggingDataset(TaggingDataset):
 
             scalars = torch.cat([category, pid_features], dim=-1)
 
-            # Label: hardest subjet b-tag
-            label = subjet_btag[subjet_order[0]].unsqueeze(0)
+            # Label: hardest subjet tag
+            label = subjet_tag[subjet_order[0]].unsqueeze(0)
 
             # Create graph
             data = Data(x=sequence, scalars=scalars, label=label)

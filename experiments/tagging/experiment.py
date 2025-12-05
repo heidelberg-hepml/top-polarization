@@ -9,7 +9,7 @@ from torch_geometric.loader import DataLoader
 from experiments.base_experiment import BaseExperiment
 from experiments.logger import LOGGER
 from experiments.mlflow import log_mlflow
-from experiments.tagging.dataset import BTaggingDataset, TestDataset
+from experiments.tagging.dataset import QuarkTaggingDataset, TestDataset
 from experiments.tagging.embedding import embed_tagging_data, get_num_tagging_features
 from experiments.tagging.plots import plot_mixer
 
@@ -367,31 +367,44 @@ class TestExperiment(TaggingExperiment):
         self._init_data(TestDataset, data_path, dataset_kwargs)
 
 
-class BTaggingExperiment(TaggingExperiment):
+class QuarkTaggingExperiment(TaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_outputs = 1
         self.extra_scalars = 11
 
     def init_data(self):
+        if self.cfg.data.mass_window == "strict":
+            top_window = "165_190"
+        elif self.cfg.data.mass_window == "loose":
+            top_window = "120_220"
+        else:
+            raise ValueError(f"Unknown mass window definition '{self.cfg.data.mass_window}'")
+        if self.cfg.data.tag == "down":
+            tag_id = 1
+        elif self.cfg.data.tag == "bottom":
+            tag_id = 5
+        else:
+            raise ValueError(f"Particle '{self.cfg.data.tag}' not implemented for tagging")
         if self.cfg.data.dataset == "unpolarized":
-            data_path = os.path.join(
-                self.cfg.data.data_dir,
-                "polarization_top_0_delphes.parquet",
-            )
+            data_path = [
+                os.path.join(
+                    self.cfg.data.data_dir,
+                    f"polarization_top_0_{top_window}_train_{i}.parquet",
+                )
+                for i in range(1, 4)
+            ]
         elif self.cfg.data.dataset == "polarized":
             data_path = [
                 os.path.join(
                     self.cfg.data.data_dir,
-                    "polarization_top_L_delphes.parquet",
-                ),
-                os.path.join(
-                    self.cfg.data.data_dir,
-                    "polarization_top_R_delphes.parquet",
-                ),
+                    f"polarization_top_{p}_{top_window}_train_{i}.parquet",
+                )
+                for p in ["L", "R"]
+                for i in range(1, 4)
             ]
         else:
             raise ValueError(f"Unknown dataset type '{self.cfg.data.dataset}'")
 
-        dataset_kwargs = {"length": getattr(self.cfg.data, "length", None)}
-        self._init_data(BTaggingDataset, data_path, dataset_kwargs)
+        dataset_kwargs = {"length": getattr(self.cfg.data, "length", None), "tag": tag_id}
+        self._init_data(QuarkTaggingDataset, data_path, dataset_kwargs)
