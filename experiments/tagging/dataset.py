@@ -321,14 +321,13 @@ class QuarkTaggingDataset(TaggingDataset):
 
         LOGGER.info(
             f"[QuarkTaggingDataset] mode={mode}, requested_length={self.length}, "
-            f"selected={len(subset)}/{num_events} (full)"
+            f"selected={len(subset)}/{num_events}"
         )
 
         data_list = []
         for event in subset:
             graph = self._build_event_graph(event, network_dtype, momentum_dtype)
-            if graph is not None:
-                data_list.append(graph)
+            data_list.append(graph)
 
         if not data_list:
             raise RuntimeError(f"No usable events found in split '{mode}' for {filename}")
@@ -371,8 +370,6 @@ class QuarkTaggingDataset(TaggingDataset):
         const_four_list, const_pid_list, const_parent_list = [], [], []
         for parent_idx, original_idx in enumerate(subjet_order.tolist()):
             subj_const = constituents[original_idx]
-            if len(subj_const) == 0:
-                continue
             const_kin = torch.stack(
                 [
                     torch.as_tensor(subj_const[k], dtype=momentum_dtype)
