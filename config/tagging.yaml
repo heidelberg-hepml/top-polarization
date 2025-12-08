@@ -15,7 +15,7 @@ data:
   mass_reg: 5e-3
   spurion_scale: 1
   momentum_float64: true
-  pid: false
+  pid: true
   balance_factor: 0.0
 
 

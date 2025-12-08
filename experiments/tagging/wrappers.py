@@ -270,13 +270,14 @@ class LGATrWrapper(nn.Module):
         framesnet,
         out_channels,
         mean_aggregation=False,
+        add_tagging_features=False,
         use_amp=False,
     ):
         super().__init__()
         self.use_amp = use_amp
         self.net = net(out_mv_channels=out_channels)
         self.aggregator = MeanAggregation() if mean_aggregation else None
-        self.add_tagging_features = True
+        self.add_tagging_features = add_tagging_features
 
         self.framesnet = framesnet  # not actually used
         assert isinstance(framesnet, IdentityFrames)
