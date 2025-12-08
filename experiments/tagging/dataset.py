@@ -389,14 +389,9 @@ class QuarkTaggingDataset(TaggingDataset):
                 torch.full((const_order.numel(),), parent_idx, dtype=torch.long)
             )
 
-        if const_four_list:
-            const_four_sorted = torch.cat(const_four_list, dim=0)
-            const_pid_sorted = torch.cat(const_pid_list, dim=0)
-            const_parents_sorted = torch.cat(const_parent_list, dim=0)
-        else:
-            const_four_sorted = torch.empty((0, 4), dtype=momentum_dtype)
-            const_pid_sorted = torch.empty((0,), dtype=momentum_dtype)
-            const_parents_sorted = torch.empty((0,), dtype=torch.long)
+        const_four_sorted = torch.cat(const_four_list, dim=0)
+        const_pid_sorted = torch.cat(const_pid_list, dim=0)
+        const_parents_sorted = torch.cat(const_parent_list, dim=0)
 
         sequence = torch.cat([jet_four, subjet_four_sorted, const_four_sorted], dim=0)
 
