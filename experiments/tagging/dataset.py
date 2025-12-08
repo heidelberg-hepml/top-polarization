@@ -324,100 +324,102 @@ class QuarkTaggingDataset(TaggingDataset):
             f"selected={len(subset)}/{num_events} (full)"
         )
 
-        # Build graphs
         data_list = []
         for event in subset:
-            fat_jet = event["FatJet"]
-            subjets = event["Subjets"]
-
-            # Jet kinematics
-            jet_kin = torch.tensor(
-                [[fat_jet["pt"], fat_jet["phi"], fat_jet["eta"], fat_jet["mass"]]],
-                dtype=momentum_dtype,
-            )
-            jet_four = PtPhiEtaM2_to_EPPP(
-                jet_kin[:, 0], jet_kin[:, 1], jet_kin[:, 2], jet_kin[:, 3]
-            )
-
-            # Subjet kinematics (3 subjets)
-            subjet_kin = torch.stack(
-                [
-                    torch.as_tensor(subjets[k], dtype=momentum_dtype)
-                    for k in ["pt", "phi", "eta", "mass"]
-                ],
-                dim=-1,
-            )
-            subjet_tag = torch.as_tensor(subjets["tag"], dtype=torch.long)
-            subjet_tag = subjet_tag == self.tag
-            subjet_four = PtPhiEtaM2_to_EPPP(
-                subjet_kin[:, 0], subjet_kin[:, 1], subjet_kin[:, 2], subjet_kin[:, 3]
-            )
-
-            # Sort subjets by pT descending
-            subjet_order = torch.argsort(subjet_kin[:, 0], descending=True)
-            subjet_four_sorted = subjet_four[subjet_order]
-
-            # Constituent extraction
-            constituents = ak.flatten(subjets["Constituents"], axis=1)
-            const_pt, const_phi, const_eta, const_mass = [
-                torch.tensor(constituents[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta", "mass"]
-            ]
-            const_four = PtPhiEtaM2_to_EPPP(const_pt, const_phi, const_eta, const_mass)
-            const_pid = torch.tensor(constituents["pid"], dtype=momentum_dtype)
-
-            # Parent subjet indices
-            const_counts = torch.tensor(ak.num(subjets["Constituents"], axis=1), dtype=torch.long)
-            const_parents = torch.repeat_interleave(torch.arange(3, dtype=torch.long), const_counts)
-
-            # Map parent indices to sorted order
-            inverse_order = torch.argsort(subjet_order)
-            const_parents_sorted = inverse_order[const_parents]
-
-            # Sort constituents by pT descending
-            const_order = torch.argsort(const_pt, descending=True)
-            const_four_sorted = const_four[const_order]
-            const_pid_sorted = const_pid[const_order]
-            const_parents_sorted = const_parents_sorted[const_order]
-
-            # Build sequence: 1 jet + 3 subjets + N constituents
-            sequence = torch.cat([jet_four, subjet_four_sorted, const_four_sorted], dim=0)
-
-            # Build scalars: [category (5), pid_encoding (6)] = 11 features
-
-            n_constituents = const_four_sorted.shape[0]
-            category = torch.zeros(4 + n_constituents, 5, dtype=network_dtype)
-
-            # Jet: [1, 0, 0, 0, 0]
-            category[0, 0] = 1
-
-            # 3 Subjets: [0, 1, X, X, X] where one X=1 for subjet index
-            category[1:4, 1] = 1  # All subjets have 1 in position 1
-            category[1, 2] = 1  # Subjet 1
-            category[2, 3] = 1  # Subjet 2
-            category[3, 4] = 1  # Subjet 3
-
-            # Constituents: [0, 0, X, X, X] where one X=1 for parent subjet (0, 1, or 2)
-            for j, parent_idx in enumerate(const_parents_sorted):
-                category[4 + j, 2 + parent_idx] = 1
-
-            # PID encoding: only for constituents, zero for jet and subjets
-            pid_features = torch.zeros(4 + n_constituents, 6, dtype=network_dtype)
-            if n_constituents > 0:
-                pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
-                pid_features[4:] = pid_encoded.to(network_dtype)
-
-            scalars = torch.cat([category, pid_features], dim=-1)
-
-            # Label: hardest subjet tag
-            label = subjet_tag[subjet_order[0]].unsqueeze(0)
-
-            # Create graph
-            data = Data(x=sequence, scalars=scalars, label=label)
-
-            data_list.append(data)
+            graph = self._build_event_graph(event, network_dtype, momentum_dtype)
+            if graph is not None:
+                data_list.append(graph)
 
         if not data_list:
             raise RuntimeError(f"No usable events found in split '{mode}' for {filename}")
 
         self.data_list = data_list
+
+    def _build_event_graph(self, event, network_dtype, momentum_dtype):
+        fat_jet = event["FatJet"]
+        subjets = event["Subjets"]
+
+        jet_kin = torch.stack(
+            [
+                torch.as_tensor(fat_jet[k], dtype=momentum_dtype)
+                for k in ["pt", "phi", "eta", "mass"]
+            ],
+            dim=-1,
+        )
+        jet_four = PtPhiEtaM2_to_EPPP(jet_kin).unsqueeze(0)
+
+        subjet_kin = torch.stack(
+            [
+                torch.as_tensor(subjets[k], dtype=momentum_dtype)
+                for k in ["pt", "phi", "eta", "mass"]
+            ],
+            dim=-1,
+        )
+        subjet_tags = torch.as_tensor(subjets["tag"], dtype=torch.long)
+        subjet_four = PtPhiEtaM2_to_EPPP(subjet_kin)
+
+        b_idx = torch.argmax((subjet_tags == 5).to(torch.int)).item()
+        other_indices = [i for i in range(len(subjet_tags)) if i != b_idx]
+        other_indices.sort(key=lambda idx: subjet_kin[idx, 0].item(), reverse=True)
+        subjet_order = torch.tensor([b_idx] + other_indices, dtype=torch.long)
+
+        subjet_four_sorted = subjet_four[subjet_order]
+        # Label the jet as 1 if the leading non-b subjet matches the target tag
+        label = (subjet_tags[subjet_order[1]] == self.tag).to(network_dtype).unsqueeze(0)
+
+        constituents = subjets["Constituents"]
+        const_four_list, const_pid_list, const_parent_list = [], [], []
+        for parent_idx, original_idx in enumerate(subjet_order.tolist()):
+            subj_const = constituents[original_idx]
+            if len(subj_const) == 0:
+                continue
+            const_kin = torch.stack(
+                [
+                    torch.as_tensor(subj_const[k], dtype=momentum_dtype)
+                    for k in ["pt", "phi", "eta", "mass"]
+                ],
+                dim=-1,
+            )
+            const_pid = torch.as_tensor(subj_const["pid"], dtype=momentum_dtype)
+
+            const_order = torch.argsort(const_kin[:, 0], descending=True)
+            const_four_list.append(PtPhiEtaM2_to_EPPP(const_kin[const_order]))
+            const_pid_list.append(const_pid[const_order])
+            const_parent_list.append(
+                torch.full((const_order.numel(),), parent_idx, dtype=torch.long)
+            )
+
+        if const_four_list:
+            const_four_sorted = torch.cat(const_four_list, dim=0)
+            const_pid_sorted = torch.cat(const_pid_list, dim=0)
+            const_parents_sorted = torch.cat(const_parent_list, dim=0)
+        else:
+            const_four_sorted = torch.empty((0, 4), dtype=momentum_dtype)
+            const_pid_sorted = torch.empty((0,), dtype=momentum_dtype)
+            const_parents_sorted = torch.empty((0,), dtype=torch.long)
+
+        sequence = torch.cat([jet_four, subjet_four_sorted, const_four_sorted], dim=0)
+
+        n_constituents = const_four_sorted.shape[0]
+
+        category = torch.zeros(4 + n_constituents, 5, dtype=network_dtype)
+        # Jet: [1, 0, 0, 0, 0]
+        category[0, 0] = 1
+
+        # 3 Subjets: [0, 1, X, X, X] where one X=1 for subjet index
+        category[1:4, 1] = 1
+        category[1, 2] = 1
+        category[2, 3] = 1
+        category[3, 4] = 1
+
+        # Constituents: [0, 0, X, X, X] where one X=1 for parent subjet (0, 1, or 2)
+        for j, parent_idx in enumerate(const_parents_sorted):
+            category[4 + j, 2 + parent_idx] = 1
+
+        pid_features = torch.zeros(4 + n_constituents, 6, dtype=network_dtype)
+        pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
+        pid_features[4:] = pid_encoded.to(network_dtype)
+
+        scalars = torch.cat([category, pid_features], dim=-1)
+
+        return Data(x=sequence, scalars=scalars, label=label)

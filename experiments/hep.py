@@ -21,14 +21,9 @@ def EPPP_to_PtPhiEtaM2(fourmomenta, sqrt_mass=False):
     return torch.stack((pt, phi, eta, m2), dim=-1)
 
 
-def PtPhiEtaM2_to_EPPP(*x):
-    if isinstance(x, torch.Tensor):
-        assert x.shape[-1] == 4, "Input tensor must have last dimension of size 4"
-        pt, phi, eta, m2 = torch.unbind(x, dim=-1)
-    elif isinstance(x, tuple):
-        pt, phi, eta, m2 = x
-    else:
-        raise ValueError("Input must be a torch.Tensor, tuple or list")
+def PtPhiEtaM2_to_EPPP(x: torch.Tensor) -> torch.Tensor:
+    assert x.shape[-1] == 4, "Input tensor must have last dimension of size 4"
+    pt, phi, eta, m2 = torch.unbind(x, dim=-1)
     eta = eta.clamp(min=-CUTOFF, max=CUTOFF)
     px = pt * torch.cos(phi)
     py = pt * torch.sin(phi)
