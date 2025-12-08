@@ -7,7 +7,7 @@ data:
   mass_window: strict
   tag: down
   length: -1
-  tagging_features_framesnet: all
+  tagging_features: all
   boost_jet: false
   beam_reference: lightlike
   two_beams: true
@@ -15,6 +15,8 @@ data:
   mass_reg: 5e-3
   spurion_scale: 1
   momentum_float64: true
+  pid: false
+  balance_factor: 0.0
 
 
 evaluation:

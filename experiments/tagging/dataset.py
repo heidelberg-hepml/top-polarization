@@ -212,12 +212,23 @@ class QuarkTaggingDataset(TaggingDataset):
     _parquet_cache = {}
     _split_cache = {}
 
-    def __init__(self, tag=1, seed=12345, split_fracs=(0.8, 0.1, 0.1), shuffle=True, length=-1):
+    def __init__(
+        self,
+        tag=1,
+        seed=12345,
+        split_fracs=(0.8, 0.1, 0.1),
+        shuffle=True,
+        length=-1,
+        pid=False,
+        balance_factor=0.0,
+    ):
         super().__init__(length=length)
         self.tag = tag
         self.seed = seed
         self.split_fracs = split_fracs
         self.shuffle = shuffle
+        self.balance_factor = balance_factor
+        self.include_pid = pid
 
     @staticmethod
     def pid_encoding(pids: torch.Tensor) -> torch.Tensor:
@@ -325,9 +336,22 @@ class QuarkTaggingDataset(TaggingDataset):
         )
 
         data_list = []
+        label_counts = 0
         for event in subset:
             graph = self._build_event_graph(event, network_dtype, momentum_dtype)
+            if (
+                graph.label.item() == 0
+                and torch.rand(1).item() > self.balance_factor
+                and mode != "test"
+            ):
+                # Artificially balance dataset
+                continue
+            label_counts += graph.label.item()
             data_list.append(graph)
+
+        LOGGER.info(
+            f"[QuarkTaggingDataset] mode={mode}, label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
+        )
 
         if not data_list:
             raise RuntimeError(f"No usable events found in split '{mode}' for {filename}")
@@ -408,10 +432,12 @@ class QuarkTaggingDataset(TaggingDataset):
         for j, parent_idx in enumerate(const_parents_sorted):
             category[4 + j, 2 + parent_idx] = 1
 
-        pid_features = torch.zeros(4 + n_constituents, 6, dtype=network_dtype)
-        pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
-        pid_features[4:] = pid_encoded.to(network_dtype)
-
-        scalars = torch.cat([category, pid_features], dim=-1)
+        if self.include_pid:
+            pid_features = torch.zeros(4 + n_constituents, 6, dtype=network_dtype)
+            pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
+            pid_features[4:] = pid_encoded.to(network_dtype)
+            scalars = torch.cat([category, pid_features], dim=-1)
+        else:
+            scalars = category
 
         return Data(x=sequence, scalars=scalars, label=label)

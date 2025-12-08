@@ -7,7 +7,7 @@ data:
   seed: 42
   shuffle: true
   length: -1
-  tagging_features_framesnet: all
+  tagging_features: all
   boost_jet: false
   beam_reference: lightlike
   two_beams: true
