@@ -32,6 +32,10 @@ class TaggingExperiment(BaseExperiment):
         if modelname == "LGATr":
             self.cfg.model.net.in_s_channels = 0 if self.cfg.model.mean_aggregation else 1
             self.cfg.model.net.in_s_channels += self.extra_scalars
+            num_tagging_features = get_num_tagging_features(
+                tagging_features=self.cfg.data.tagging_features
+            )
+            self.cfg.model.net.in_s_channels += num_tagging_features
         elif modelname == "Transformer":
             self.cfg.model.in_channels = 7 + self.extra_scalars
             if self.cfg.model.add_fourmomenta_backbone:
@@ -43,7 +47,7 @@ class TaggingExperiment(BaseExperiment):
             # decide which entries to use for the framesnet
             if "equivectors" in self.cfg.model.framesnet:
                 num_tagging_features = get_num_tagging_features(
-                    tagging_features=self.cfg.data.tagging_features_framesnet
+                    tagging_features=self.cfg.data.tagging_features
                 )
                 self.cfg.model.framesnet.equivectors.num_scalars = self.extra_scalars
                 self.cfg.model.framesnet.equivectors.num_scalars += num_tagging_features
@@ -177,18 +181,23 @@ class TaggingExperiment(BaseExperiment):
             if self.ema is not None:
                 with self.ema.average_parameters():
                     self.results[set_label] = self._evaluate_single(
-                        loader_dict[set_label], f"{set_label}_ema", mode="eval"
+                        loader_dict[set_label],
+                        f"{set_label}_ema",
+                        mode="eval",
+                        balanced=(set_label != "test"),
                     )
 
-                self._evaluate_single(loader_dict[set_label], set_label, mode="eval")
+                self._evaluate_single(
+                    loader_dict[set_label], set_label, mode="eval", balanced=(set_label != "test")
+                )
 
             else:
                 self.results[set_label] = self._evaluate_single(
-                    loader_dict[set_label], set_label, mode="eval"
+                    loader_dict[set_label], set_label, mode="eval", balanced=(set_label != "test")
                 )
 
     @torch.no_grad()
-    def _evaluate_single(self, loader, title, mode, step=None):
+    def _evaluate_single(self, loader, title, mode, step=None, balanced=True):
         assert mode in ["val", "eval"]
 
         if mode == "eval":
@@ -207,6 +216,14 @@ class TaggingExperiment(BaseExperiment):
             labels_true.append(label.cpu().float())
             labels_predict.append(y_pred.cpu().float())
         labels_true, labels_predict = torch.cat(labels_true), torch.cat(labels_predict)
+
+        if not balanced:
+            corrected_p = self.cfg.data.balance_factor / (1 + self.cfg.data.balance_factor)
+            balanced_p = 0.5
+            labels_predict = (corrected_p / balanced_p * labels_predict) / (
+                corrected_p / balanced_p * labels_predict
+                + (1 - corrected_p) / (1 - balanced_p) * (1 - labels_predict)
+            )
 
         if mode == "eval":
             metrics["labels_true"], metrics["labels_predict"] = (
@@ -371,7 +388,9 @@ class QuarkTaggingExperiment(TaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_outputs = 1
-        self.extra_scalars = 11
+        self.extra_scalars = 5
+        if self.cfg.data.pid:
+            self.extra_scalars += 6
 
     def init_data(self):
         if self.cfg.data.mass_window == "strict":
@@ -406,5 +425,10 @@ class QuarkTaggingExperiment(TaggingExperiment):
         else:
             raise ValueError(f"Unknown dataset type '{self.cfg.data.dataset}'")
 
-        dataset_kwargs = {"length": getattr(self.cfg.data, "length", None), "tag": tag_id}
+        dataset_kwargs = {
+            "length": getattr(self.cfg.data, "length", None),
+            "tag": tag_id,
+            "pid": self.cfg.data.pid,
+            "balance_factor": self.cfg.data.balance_factor,
+        }
         self._init_data(QuarkTaggingDataset, data_path, dataset_kwargs)

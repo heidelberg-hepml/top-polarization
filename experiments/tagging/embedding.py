@@ -96,15 +96,19 @@ def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data):
 
     if cfg_data.boost_jet:
         # boost to the jet rest frame to avoid large boosts
-        jet = scatter(fourmomenta, batch, dim=0, reduce="sum").index_select(0, batch)
+        jet = scatter(
+            fourmomenta[~is_spurion], batch[~is_spurion], dim=0, reduce="sum"
+        ).index_select(0, batch)
         jet_boost = restframe_boost(jet)
         fourmomenta = torch.einsum("ijk,ik->ij", jet_boost, fourmomenta)
 
-    jet = scatter(fourmomenta, batch, dim=0, reduce="sum").index_select(0, batch)
+    jet = scatter(fourmomenta[~is_spurion], batch[~is_spurion], dim=0, reduce="sum").index_select(
+        0, batch
+    )
     global_tagging_features = get_tagging_features(
         fourmomenta,
         jet,
-        tagging_features=cfg_data.tagging_features_framesnet,
+        tagging_features=cfg_data.tagging_features,
     )
     global_tagging_features[is_spurion] = 0
 
@@ -291,3 +295,5 @@ def get_num_tagging_features(tagging_features="all"):
         return 2
     elif tagging_features is None:
         return 0
+    else:
+        raise ValueError(f"Unknown tagging_features: {tagging_features}")
