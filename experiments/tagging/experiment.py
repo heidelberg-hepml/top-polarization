@@ -1,4 +1,5 @@
 import os
+import glob
 import time
 
 import numpy as np
@@ -58,8 +59,8 @@ class TaggingExperiment(BaseExperiment):
     def init_data(self):
         raise NotImplementedError
 
-    def _init_data(self, Dataset, data_path, dataset_kwargs=None):
-        LOGGER.info(f"Creating {Dataset.__name__} from {data_path}")
+    def _init_data(self, Dataset, data_path, filenames, dataset_kwargs=None):
+        LOGGER.info(f"Creating {Dataset.__name__} from {filenames}")
         t0 = time.time()
         dataset_kwargs = dataset_kwargs or {}
         self.data = Dataset(**dataset_kwargs)
@@ -67,7 +68,7 @@ class TaggingExperiment(BaseExperiment):
             network_float64=self.cfg.use_float64,
             momentum_float64=self.cfg.data.momentum_float64,
         )
-        self.data.load_data(data_path, **kwargs)
+        self.data.load_data(data_path, filenames, **kwargs)
         self.data_train = Subset(self.data, self.data.get_subset("train"))
         self.data_val = Subset(self.data, self.data.get_subset("val"))
         self.data_test = Subset(self.data, self.data.get_subset("test"))
@@ -406,29 +407,32 @@ class QuarkTaggingExperiment(TaggingExperiment):
         else:
             raise ValueError(f"Particle '{self.cfg.data.tag}' not implemented for tagging")
         if self.cfg.data.dataset == "unpolarized":
-            data_path = [
-                os.path.join(
-                    self.cfg.data.data_dir,
-                    f"polarization_top_0_{top_window}_train_{i}.parquet",
+            filenames = sorted(
+                glob.glob(
+                    os.path.join(
+                        self.cfg.data.data_dir,
+                        f"polarization_top_0_{top_window}_train_*.parquet",
+                    )
                 )
-                for i in range(1, 4)
-            ]
+            )
         elif self.cfg.data.dataset == "polarized":
-            data_path = {
-                "L": [
-                os.path.join(
-                    self.cfg.data.data_dir,
-                    f"polarization_top_L_{top_window}_train_{i}.parquet",
+            filenames = {
+                "L": sorted(
+                    glob.glob(
+                        os.path.join(
+                            self.cfg.data.data_dir,
+                            f"polarization_top_L_{top_window}_train_*.parquet",
+                        )
+                    )
+                ), 
+                "R": sorted(
+                    glob.glob(
+                        os.path.join(
+                            self.cfg.data.data_dir,
+                            f"polarization_top_R_{top_window}_train_*.parquet",
+                        )
+                    )
                 )
-                for i in range(1, 4)
-                ], 
-                "R": [
-                os.path.join(
-                    self.cfg.data.data_dir,
-                    f"polarization_top_R_{top_window}_train_{i}.parquet",
-                )
-                for i in range(1, 4)
-                ]
             }
         else:
             raise ValueError(f"Unknown dataset type '{self.cfg.data.dataset}'")
@@ -439,4 +443,4 @@ class QuarkTaggingExperiment(TaggingExperiment):
             "pid": self.cfg.data.pid,
             "balance_factor": self.cfg.data.balance_factor,
         }
-        self._init_data(QuarkTaggingDataset, data_path, dataset_kwargs)
+        self._init_data(QuarkTaggingDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)

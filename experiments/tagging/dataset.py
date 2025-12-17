@@ -1,3 +1,7 @@
+import os
+import hashlib
+import json
+
 import awkward as ak
 import numpy as np
 import torch
@@ -30,6 +34,9 @@ class TaggingDataset(torch.utils.data.Dataset):
         We set is_global=None if no global token is used
     """
 
+    CACHE_VERSION = 1
+    CACHE_PREFIX = "tagging"
+
     def __init__(self, length=-1):
         super().__init__()
         self.data_list = []
@@ -43,6 +50,37 @@ class TaggingDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         return self.data_list[idx]
+
+    def _hash_cache_key(self, cache_key) -> str:
+        key_bytes = json.dumps(cache_key, sort_keys=True).encode("utf-8")
+        return hashlib.sha256(key_bytes).hexdigest()
+
+    def _cache_path(self, cache_hash: str, data_dir: str) -> str:
+        cache_dir = os.path.join(data_dir, "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        return os.path.join(cache_dir, f"{self.CACHE_PREFIX}_{cache_hash}.pt")
+
+    def _save_to_cache(self, cache_key, data, indices, data_dir):
+        cache_hash = self._hash_cache_key(cache_key)
+        path = self._cache_path(cache_hash, data_dir)
+        torch.save(
+            {
+                "key": cache_key,
+                "data": data,
+                "indices": indices
+            },
+            path,
+        )
+
+    def _load_from_cache(self, cache_key, data_dir):
+        cache_hash = self._hash_cache_key(cache_key)
+        path = self._cache_path(cache_hash, data_dir)
+
+        if not os.path.exists(path):
+            return None
+
+        cached = torch.load(path)
+        return cached["data"], cached["indices"]
 
     def _get_target_length(self, num_events):
         if self.length is None or self.length < 0:
@@ -211,6 +249,9 @@ class QuarkTaggingDataset(TaggingDataset):
     Each event/graph contains the fat jet, its 3 subjets, and all subjet constituents.
     """
 
+    CACHE_VERSION = 1
+    CACHE_PREFIX = "quark_tagging"
+
     _parquet_cache = {}
     _split_cache = {}
 
@@ -232,7 +273,7 @@ class QuarkTaggingDataset(TaggingDataset):
         self.balance_factor = balance_factor
         self.include_pid = pid
         self.filename = None
-        self.split_indices = {}
+        self.cache_key = {}
 
     @staticmethod
     def pid_encoding(pids: torch.Tensor) -> torch.Tensor:
@@ -270,7 +311,9 @@ class QuarkTaggingDataset(TaggingDataset):
 
         return encoded
 
-    def load_data(self, filename, network_float64=False, momentum_float64=True):
+    def load_data(self, data_dir, filename, network_float64=False, momentum_float64=True):
+
+        # TO-DO: Fix loading from cache
 
         network_dtype = torch.float64 if network_float64 else torch.float32
         momentum_dtype = torch.float64 if momentum_float64 else torch.float32
@@ -292,42 +335,71 @@ class QuarkTaggingDataset(TaggingDataset):
         else:
             parquet = self._parquet_cache.setdefault(self.filename, ak.from_parquet(self.filename))
 
-        data_list = []
-        indices = []
-        label_counts = 0
+        num_events = sum(len(p) for p in parquet) if isinstance(parquet, (list)) else len(parquet)
+        target_length = self._get_target_length(num_events)
 
-        if isinstance(parquet, (list)):
-            for l, p in enumerate(parquet):
-                p, perm = self._shuffle_data(p, evt_types=len(parquet))
-                for event in p:
-                    graph = self._build_event_graph(event, network_dtype, momentum_dtype, label_ext=l)
-                    label_counts += graph.label
-                    data_list.append(graph)
-                data_list, _ = self._shuffle_data(data_list)
-                indices += perm
-        else:
-            parquet, perm = self._shuffle_data(parquet)
-            for event in parquet:
-                graph = self._build_event_graph(event, network_dtype, momentum_dtype)
-                if (
-                    graph.label.item() == 0
-                    and torch.rand(1).item() > self.balance_factor
-                ):
-                    # Artificially balance dataset
-                    continue
-                label_counts += graph.label.item()
-                data_list.append(graph)
-            indices += perm
-
-        LOGGER.info(
-            f"[QuarkTaggingDataset] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
+        self.cache_key = (
+            self.CACHE_VERSION,
+            self._normalize_filename_key(self.filename),
+            tuple(self.split_fracs),
+            self.seed,
+            bool(self.shuffle),
+            target_length,
         )
 
-        if not data_list:
-            raise RuntimeError(f"No usable events found for {self.filename}")
+        cache = self._load_from_cache(self.cache_key, data_dir)
+
+        if cache is None:
+
+            data_list = []
+            indices = []
+            label_counts = 0
+
+            if isinstance(parquet, (list)):
+                for l, p in enumerate(parquet):
+                    p, perm = self._shuffle_data(p, evt_types=len(parquet))
+                    for event in p:
+                        graph = self._build_event_graph(event, network_dtype, momentum_dtype, label_ext=l)
+                        label_counts += graph.label
+                        data_list.append(graph)
+                    data_list, _ = self._shuffle_data(data_list)
+                    indices += perm
+            else:
+                parquet, perm = self._shuffle_data(parquet)
+                for event in parquet:
+                    graph = self._build_event_graph(event, network_dtype, momentum_dtype)
+                    if (
+                        graph.label.item() == 0
+                        and torch.rand(1).item() > self.balance_factor
+                    ):
+                        # Artificially balance dataset
+                        continue
+                    label_counts += graph.label.item()
+                    data_list.append(graph)
+                indices += perm
+
+            LOGGER.info(
+                f"[QuarkTaggingDataset] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
+            )
+
+            if not data_list:
+                raise RuntimeError(f"No usable events found for {self.filename}")
+
+            self._save_to_cache(self.cache_key, data_list, indices, data_dir)
+
+            LOGGER.info(
+                f"[QuarkTaggingDataset] saved to cache"
+            )
+
+        else:
+
+            data_list, indices = cache
+
+            LOGGER.info(
+                f"[QuarkTaggingDataset] loaded from cache"
+            )
 
         self.data_list = data_list
-
         self._split_data(indices)
 
     def _shuffle_data(self, data, evt_types=-1):
@@ -355,16 +427,8 @@ class QuarkTaggingDataset(TaggingDataset):
         return data[perm.tolist()], perm
             
     def _split_data(self, indices):
-            
-        cache_key = (
-            self._normalize_filename_key(self.filename),
-            tuple(self.split_fracs),
-            self.seed,
-            bool(self.shuffle),
-            len(self.data_list),
-        )
 
-        if cache_key not in self._split_cache:
+        if self.cache_key not in self._split_cache:
             # Calculate split sizes
             fracs = torch.as_tensor(self.split_fracs, dtype=torch.double)
             fracs = fracs / fracs.sum()
@@ -379,7 +443,7 @@ class QuarkTaggingDataset(TaggingDataset):
                     f"num_events={len(self.data_list)}, fractions={self.split_fracs}"
                 )
 
-            self._split_cache[cache_key] = {
+            self._split_cache[self.cache_key] = {
                 "train": indices[:n_train],
                 "val": indices[n_train : n_train + n_val],
                 "test": indices[n_train + n_val :],
@@ -388,21 +452,11 @@ class QuarkTaggingDataset(TaggingDataset):
     def get_subset(self, mode):
         if mode not in {"train", "val", "test"}:
             raise ValueError(f"Unknown dataset split '{mode}'")
-        
-        target_length = self._get_target_length(len(self.data_list))
 
-        cache_key = (
-            self._normalize_filename_key(self.filename),
-            tuple(self.split_fracs),
-            self.seed,
-            bool(self.shuffle),
-            target_length,
-        )
-
-        if cache_key not in self._split_cache:
-            raise KeyError(f"{cache_key} not found in cache")
+        if self.cache_key not in self._split_cache:
+            raise KeyError(f"{self.cache_key} not found in cache")
         
-        split_indices = self._split_cache[cache_key][mode]
+        split_indices = self._split_cache[self.cache_key][mode]
         select = torch.arange(len(split_indices))
 
         LOGGER.info(
