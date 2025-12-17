@@ -5,36 +5,70 @@ import re
 from tqdm import tqdm
 import awkward as ak
 import itertools
+import pylhe
+from pylorentz import Momentum4
 import ROOT
 import fastjet as fj
 ROOT.gSystem.Load('/bigwork/nhbbmene/PostDoc/MadGraph/MG5_aMC_v3_6_4/Delphes/libDelphes.so')
 
 class DelphesReader():
 
-    def __init__(self, pnet=True):
+    def __init__(self, pnet=True, top_mass=[165,190]):
 
         self.jet_data = ak.ArrayBuilder()
         self.pnet_clustering = pnet
+        self.top_mass = top_mass
         self.NEvents = 0
         self.NFatjetFail = 0
         self.NBTagFail = 0
         self.KinematicsFail = 0
         self.DeclusteringFail = 0
         self.TopmassFail = 0
-        self.BTagMatchFail = 0
+        self.JetMatchFail = 0
+        self.FailFail = 0
 
         print(f"DelphesReader initialized with {'ParticleNet' if self.pnet_clustering else 'CA'} declustering strategy.")
 
-    def _deltaR(self, p1, p2):
+    def _load_files(self, filepath):
+
+        f_delphes = glob.glob(os.path.join(filepath, '**', '*.root'), recursive=True)
+        f_parton = glob.glob(os.path.join(filepath, '**', '*.lhe'), recursive=True)
+
+        delphes_sorted = sorted([f.split('/')[-1].split('_')[1] for f in f_delphes], key=lambda x: int(re.search(r'\d+', x).group()))
+        files_delphes = [f"{filepath}/tag_{n}_delphes_events.root" for n in delphes_sorted]
+
+        parton_sorted = sorted([f.split('/')[-1].split('_')[2].split('.')[0] for f in f_parton], key=lambda x: int(re.search(r'\d+', x).group()))
+        files_parton = [f"{filepath}/unweighted_events_{n}.lhe" for n in parton_sorted]
+
+        if parton_sorted != delphes_sorted:
+            raise ValueError("Mismatch between Delphes and Parton files.")
+
+        return files_delphes, files_parton
+
+    def _detect_missing(self, files):
+        files_sorted = [f.split('/')[-1].split('_')[1] for f in files]
+        files_sorted = sorted(files_sorted, key=lambda x: int(re.search(r'\d+', x).group()))
+        expected = set(i for i in range(1, int(files_sorted[-1]) + 1))
+        missing = expected - set(int(f) for f in files_sorted)
+        print(f"Expected {files_sorted[-1]} files. Missing files: {sorted(list(missing))}")
+
+    def _deltaR(self, p1, p2, train_data):
 
         '''
         Efficient deltaR calculation between two jets.
         '''
 
-        dphi = abs(p1.phi() - p2.Phi)
+        if train_data:
+            dphi = abs(p1.phi() - p2.phi)
+            deta = p1.eta() - p2.eta
+        else:
+            dphi = abs(p1.phi() - p2.Phi)
+            deta = p1.eta() - p2.Eta
+
         if dphi > math.pi:
             dphi = dphi - 2 * math.pi
-        return math.sqrt((p1.eta() - p2.Eta) ** 2 + dphi**2)
+
+        return math.sqrt(deta**2 + dphi**2)
 
     def _inv_mass(self, subjets):
 
@@ -48,7 +82,7 @@ class DelphesReader():
         return s.m()
 
     def _get_fj_parents(self, cluster, jet):
-
+    
         '''
         Get the two parent jets of a given jet in a FastJet ClusterSequence.
         '''
@@ -100,7 +134,7 @@ class DelphesReader():
                 parent1, parent2 = self._get_fj_parents(cluster, child)
                 if parent1 is None or parent2 is None:
                     return [child]
-
+                
                 if parent2.m() > parent1.m():
                     parent1, parent2 = parent2, parent1
 
@@ -112,9 +146,9 @@ class DelphesReader():
 
                 if parent2.m() > m_max:
                     return rec_pnet(parent1) + rec_pnet(parent2)
-
+                
                 return [child]
-
+            
             subjets = rec_pnet(jet_fj)
 
         else:
@@ -128,7 +162,7 @@ class DelphesReader():
                 parent1, parent2 = self._get_fj_parents(cluster, child)
                 if parent1 is None or parent2 is None:
                     return [child]
-
+                
                 if parent2.pt() > parent1.pt():
                     parent1, parent2 = parent2, parent1
 
@@ -143,39 +177,26 @@ class DelphesReader():
                         return rec_CA(parent1, pt_hard=pt_hard, depth=1) + rec_CA(parent2, pt_hard=pt_hard, depth=1)
                     if depth == 1:
                         return [parent1, parent2]
-
+                
                 return [child]
-
+            
             subjets = rec_CA(jet_fj, pt_hard=jet_fj.pt())
 
         if len(subjets) <= 2:
             return None
-
+                
         subjets = sorted(subjets, key=lambda s: s.pt(), reverse=True)
 
         return subjets[:4]
 
-    def _match_b_jet(self, b_tagged_jets, subjets, max_dr=0.1):
-
-        min_dr = 1e6
-        sj_cand = None
-
-        for sj in subjets:
-            for b in b_tagged_jets:
-                dr = self._deltaR(sj, b)
-                if dr < min_dr:
-                    min_dr = dr
-                    sj_cand = sj
-
-        if min_dr <= max_dr:
-            return [sj_cand] + [sj for sj in subjets if sj != sj_cand]
-
-        return None
-
     def _top_mass_reco(self, subjets, top_mass = 173):
 
         '''
-        Check if the subjets can reconstruct a top quark mass within [165, 190] GeV.
+        Check if the subjets can reconstruct a top quark mass within the allowed mass window.
+
+        A mass window of [165, 190] (default) corresponds to https://arxiv.org/pdf/2407.01663
+
+        A mass window of [120, 220] corresponds to https://arxiv.org/pdf/1908.07305
         '''
 
         best_subjets = subjets
@@ -191,19 +212,84 @@ class DelphesReader():
                 best_mass = m
                 best_subjets = candidates
 
-        if best_mass < 165 or best_mass > 190:
+        if best_mass < int(self.top_mass[0]) or best_mass > int(self.top_mass[1]):
             return None
 
         return best_subjets
 
-    def _build_output(self, fatjet, subjets):
+    def _match_parton_jets(self, partons, subjets, max_dr=0.4):
+
+        ''' 
+        Match the subjets to parton-level objects for the training data.
+        '''
+
+        matches = []
+
+        ids = [p.id for p in partons]
+        if ids[-2] in [11, -11, 13, -13]: 
+            hadronic = "top"
+        elif ids[-2] in [1, -1, 2, -2, 3, -3, 4, -4]:
+            hadronic = "atop"
+        else:
+            raise ValueError(f"Parton-level objets do not match to expected IDs. The ID of the lepton/quark is {ids[-2]}.")
+
+        if hadronic == "top":
+            b_hadronic = partons[1]
+        else:
+            b_hadronic = partons[6]
+        u_index, d_index = next((i for i, p in enumerate(partons) if abs(p.id) == 2), None), next((i for i, p in enumerate(partons) if abs(p.id) == 1), None)
+        if u_index is None or d_index is None:
+            raise ValueError("Could not find both up-type and down-type quarks in parton-level objects.")
+        u_hadronic, d_hadronic = partons[u_index], partons[d_index]
+
+        for tag, ps, uidx in zip(["b", "u", "d"], [b_hadronic, u_hadronic, d_hadronic], [5, 2, 1]):
+            drs = []
+            for sj in subjets:
+                drs.append(self._deltaR(sj, Momentum4(ps.e, ps.px, ps.py, ps.pz), train_data=True))
+            min_dr = min(drs)
+            min_idx = drs.index(min_dr)
+            subjets[min_idx].set_user_index(uidx)
+            matches.append((tag, min_idx, min_dr))
+
+        if len([match[1] for match in matches]) != len(set([match[1] for match in matches])):
+            return None
+        if any(match[2] > max_dr for match in matches):
+            return None
+        
+        b_cand = subjets[matches[0][1]]
+        subjets = [sj for c, sj in enumerate(subjets) if c in [m[1] for m in matches]]
+
+        return [b_cand] + [sj for sj in subjets if sj != b_cand]
+
+    def _match_delphes_b_jet(self, b_tagged_jets, subjets, max_dr=0.1):
+
+        '''
+        Check if one of the subjets is close to a b-tagged jet and if yes, give it a b-tag.
+        '''
+
+        min_dr = 1e6
+        sj_cand = None
+
+        for sj in subjets:
+            for b in b_tagged_jets:
+                dr = self._deltaR(sj, b, train_data=False)
+                if dr < min_dr:
+                    min_dr = dr
+                    sj_cand = sj
+
+        if min_dr <= max_dr:
+            return [sj_cand] + [sj for sj in subjets if sj != sj_cand]
+
+        return None
+
+    def _build_output(self, fatjet, subjets, train_data):
 
         '''
         Adds a record for a single event to the output awkward array.
         '''
-
+    
         self.jet_data.begin_record()
-        ## Event record ##
+        ## Event record ## 
 
         self.jet_data.field("FatJet")
         self.jet_data.begin_record()
@@ -221,16 +307,20 @@ class DelphesReader():
         self.jet_data.begin_list()
         for c, subjet in enumerate(subjets):
             self.jet_data.begin_record()
-            ## Subjet records ##
+            ## Subjet records ## 
 
             self.jet_data.field("pt").real(subjet.pt())
             self.jet_data.field("phi").real(subjet.phi())
             self.jet_data.field("eta").real(subjet.eta())
             self.jet_data.field("mass").real(subjet.m())
-            if c == 0:
-                self.jet_data.field("btag").real(1)
+
+            if train_data:
+                self.jet_data.field("tag").real(subjet.user_index())
             else:
-                self.jet_data.field("btag").real(0)
+                if c == 0:
+                    self.jet_data.field("tag").real(5)
+                else:
+                    self.jet_data.field("tag").real(0)
 
             self.jet_data.field("Constituents")
             self.jet_data.begin_list()
@@ -249,18 +339,19 @@ class DelphesReader():
                 self.jet_data.end_record()
             self.jet_data.end_list()
 
-            ## Subjet records ##
+            ## Subjet records ## 
             self.jet_data.end_record()
         self.jet_data.end_list()
 
         ## Event record ##
         self.jet_data.end_record()
 
-    def _get_single_delphes(self, file):
+    def _get_single_delphes(self, file, file_parton, train_data):
 
         try:
             inFile = ROOT.TFile.Open(file, 'READ')
             delphesTree = inFile.Get('Delphes')
+            partonInfo = pylhe.read_lhe_with_attributes(file_parton)
             self.NEvents += delphesTree.GetEntries()
             # print(f"{delphesTree.GetEntries()} events found in file {file.split('temp_')[-1].split('/')[0]}.")
         except:
@@ -272,7 +363,7 @@ class DelphesReader():
         delphesTree.SetBranchAddress("FatJet", rec_fat_jets)
         delphesTree.SetBranchAddress("Jet", rec_jets)
 
-        for event in delphesTree:
+        for event, event_parton in zip(delphesTree, partonInfo):
 
             # Cut: Require at least 1 FatJet
             if rec_fat_jets.GetEntriesFast() == 0:
@@ -292,31 +383,41 @@ class DelphesReader():
                 else:
                     rec_leading_jet = rec_fat_jets.At(1)
 
-            # Cut: Require minimum pT and maximum eta for leading fat jet
+            # Cut: Require minimum pT and maximum eta for leading fat jet 
             if rec_leading_jet.PT < 250 or abs(rec_leading_jet.Eta) > 3.:
                 self.KinematicsFail += 1
                 continue
 
-            b_tagged_jets = [j for j in rec_jets if j.BTag == 1]
-
-            # Cut: Decluster fat jet into subjets
+            # Decluster hadronic fat jet into subjets
             subjets = self._decluster(rec_leading_jet.Constituents)
             if subjets is None:
                 self.DeclusteringFail += 1
                 continue
 
-            # Cut: Reconstruct top mass from subjets
+            # Reconstruct top mass from subjets
             top_subjets = self._top_mass_reco(subjets)
             if top_subjets is None:
                 self.TopmassFail += 1
                 continue
 
-            top_subjets_b_tag = self._match_b_jet(b_tagged_jets, top_subjets)
-            if top_subjets_b_tag is None:
-                self.BTagMatchFail += 1
+            # Match hadronic subjets to parton jets (training data) or apply b-tagging (test data)
+            if train_data:
+                partons = event_parton.particles[2:]
+                top_subjets_tagged = self._match_parton_jets(partons, top_subjets)
+            else:
+                b_tagged_jets = [j for j in rec_jets if j.BTag == 1]
+                top_subjets_tagged = self._match_delphes_b_jet(b_tagged_jets, top_subjets)
+
+            if top_subjets_tagged is None:
+                self.JetMatchFail += 1
                 continue
 
-            self._build_output(rec_leading_jet, top_subjets_b_tag)
+            jets_failfail = self._top_mass_reco(top_subjets_tagged)
+            if jets_failfail is None:
+                self.FailFail += 1
+                continue
+
+            self._build_output(rec_leading_jet, top_subjets_tagged, train_data)
 
     def change_clustering(self):
         self.pnet_clustering = not self.pnet_clustering
@@ -329,24 +430,21 @@ class DelphesReader():
         print(f"Fails due to kinematic cuts: {self.KinematicsFail}")
         print(f"Fails due to declustering: {self.DeclusteringFail}")
         print(f"Fails due to top mass reconstruction: {self.TopmassFail}")
-        print(f"Fails due to b-jet matching: {self.BTagMatchFail}")
+        print(f"Fails due to parton jet matching: {self.JetMatchFail}")
+        print(f"Fails due to top mass after matching: {self.FailFail}")
         print(f"Total events processed: {self.NEvents}")
         print(f"Surviving number of events: {len(self.jet_data.snapshot().FatJet.pt)}")
 
-    def read_delphes(self, filepath, detect_missing=False):
+    def read_delphes(self, filepath, train_data=True, detect_missing=False):
 
-        files = glob.glob(os.path.join(filepath, '**', '*.root'), recursive=True)
+        files_delphes, files_parton = self._load_files(filepath)
 
         if detect_missing:
-            files_sorted = [f.split('/')[-1].split('_')[1] for f in files]
-            files_sorted = sorted(files_sorted, key=lambda x: int(re.search(r'\d+', x).group()))
-            expected = set(i for i in range(1, int(files_sorted[-1]) + 1))
-            missing = expected - set(int(f) for f in files_sorted)
-            print(f"Expected {files_sorted[-1]} files. Missing files: {sorted(list(missing))}")
+            self._detect_missing(files_delphes)
 
-        print(f"Found {len(files)} root files to process.")
+        print(f"Found {len(files_delphes)} root files to process.")
 
-        for f in tqdm(files, desc="Processing Delphes files"):
-            self._get_single_delphes(f)
+        for f_d, f_p in tqdm(zip(files_delphes, files_parton), total=len(files_delphes), desc="Processing Delphes files"):
+            self._get_single_delphes(f_d, f_p, train_data)
 
         return self.jet_data.snapshot()
