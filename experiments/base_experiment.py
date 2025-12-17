@@ -12,7 +12,7 @@ import torch
 import torch.distributed as dist
 from hydra.utils import instantiate
 from omegaconf import OmegaConf, errors, open_dict
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 from torch_ema import ExponentialMovingAverage
 
 import experiments.logger
@@ -151,12 +151,6 @@ class BaseExperiment:
             self.ema.to(self.device)
 
         if self.world_size > 1:
-            ############################ DEBUG ############################
-            # model = self.model.net
-            # num_cuda_params = sum(1 for p in model.parameters() if p.is_cuda)
-            # print(f"[Rank {self.rank}] num_cuda_params = {num_cuda_params} / {len(list(model.parameters()))} params on CUDA")
-            ############################ DEBUG ############################
-
             self.model.net = torch.nn.parallel.DistributedDataParallel(
                 self.model.net,
                 device_ids=[self.rank],
@@ -491,7 +485,7 @@ class BaseExperiment:
 
     def _init_scaler(self):
         use_amp = OmegaConf.select(self.cfg.model, "use_amp", default=False)
-        self.scaler = GradScaler(enabled=use_amp)
+        self.scaler = GradScaler('cuda', enabled=use_amp)
 
         # load existing scaler if specified
         if self.warm_start and use_amp:

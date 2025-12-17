@@ -51,10 +51,12 @@ class TaggingDataset(torch.utils.data.Dataset):
             raise ValueError("Requested dataset length must be positive")
         return min(int(self.length), num_events)
 
-    @staticmethod
-    def _normalize_filename_key(filename):
+    @classmethod
+    def _normalize_filename_key(cls, filename):
         if isinstance(filename, (list, tuple)):
-            return tuple(filename)
+            return tuple(cls._normalize_filename_key(f) for f in filename)
+        elif isinstance(filename, (dict)):
+            return tuple(sorted((k, cls._normalize_filename_key(v)) for k, v in filename.items()))
         return filename
 
 
@@ -229,6 +231,8 @@ class QuarkTaggingDataset(TaggingDataset):
         self.shuffle = shuffle
         self.balance_factor = balance_factor
         self.include_pid = pid
+        self.filename = None
+        self.split_indices = {}
 
     @staticmethod
     def pid_encoding(pids: torch.Tensor) -> torch.Tensor:
@@ -266,14 +270,159 @@ class QuarkTaggingDataset(TaggingDataset):
 
         return encoded
 
-    def load_data(self, filename, mode, network_float64=False, momentum_float64=True):
+    def load_data(self, filename, network_float64=False, momentum_float64=True):
+
+        network_dtype = torch.float64 if network_float64 else torch.float32
+        momentum_dtype = torch.float64 if momentum_float64 else torch.float32
+
+        self.filename = filename
+
+        # Load data with caching
+        if isinstance(self.filename, (list, tuple)):
+            parquet = ak.concatenate(
+                [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in self.filename]
+            )
+        elif isinstance(self.filename, (dict)):
+            parquet = [
+                ak.concatenate(
+                [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in files]
+                )
+                for files in self.filename.values()
+            ]
+        else:
+            parquet = self._parquet_cache.setdefault(self.filename, ak.from_parquet(self.filename))
+
+        data_list = []
+        indices = []
+        label_counts = 0
+
+        if isinstance(parquet, (list)):
+            for l, p in enumerate(parquet):
+                p, perm = self._shuffle_data(p, evt_types=len(parquet))
+                for event in p:
+                    graph = self._build_event_graph(event, network_dtype, momentum_dtype, label_ext=l)
+                    label_counts += graph.label
+                    data_list.append(graph)
+                data_list, _ = self._shuffle_data(data_list)
+                indices += perm
+        else:
+            parquet, perm = self._shuffle_data(parquet)
+            for event in parquet:
+                graph = self._build_event_graph(event, network_dtype, momentum_dtype)
+                if (
+                    graph.label.item() == 0
+                    and torch.rand(1).item() > self.balance_factor
+                ):
+                    # Artificially balance dataset
+                    continue
+                label_counts += graph.label.item()
+                data_list.append(graph)
+            indices += perm
+
+        LOGGER.info(
+            f"[QuarkTaggingDataset] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
+        )
+
+        if not data_list:
+            raise RuntimeError(f"No usable events found for {self.filename}")
+
+        self.data_list = data_list
+
+        self._split_data(indices)
+
+    def _shuffle_data(self, data, evt_types=-1):
+        
+        # target_length = num_events if self.length is None else min(self.length, num_events)
+        target_length = self._get_target_length(len(data))
+        if evt_types > 0:
+            target_length = int(target_length / evt_types)
+
+        if target_length == 0:
+            raise RuntimeError(f"No events found in loaded data")
+
+        # Generate permutation
+        gen = torch.Generator().manual_seed(self.seed)
+        perm = (
+            torch.randperm(len(data), generator=gen)
+            if self.shuffle
+            else torch.arange(len(data))
+        )
+        perm = perm[:target_length]
+
+        if isinstance(data, (list)):
+            return [data[x] for x in perm.tolist()], perm
+
+        return data[perm.tolist()], perm
+            
+    def _split_data(self, indices):
+            
+        cache_key = (
+            self._normalize_filename_key(self.filename),
+            tuple(self.split_fracs),
+            self.seed,
+            bool(self.shuffle),
+            len(self.data_list),
+        )
+
+        if cache_key not in self._split_cache:
+            # Calculate split sizes
+            fracs = torch.as_tensor(self.split_fracs, dtype=torch.double)
+            fracs = fracs / fracs.sum()
+
+            n_train = int(len(self.data_list) * fracs[0].item())
+            n_val = int(len(self.data_list) * fracs[1].item())
+            n_test = len(self.data_list) - n_train - n_val
+
+            if min(n_train, n_val, n_test) <= 0:
+                raise ValueError(
+                    f"Split fractions result in empty dataset parts. "
+                    f"num_events={len(self.data_list)}, fractions={self.split_fracs}"
+                )
+
+            self._split_cache[cache_key] = {
+                "train": indices[:n_train],
+                "val": indices[n_train : n_train + n_val],
+                "test": indices[n_train + n_val :],
+            }
+
+    def get_subset(self, mode):
+        if mode not in {"train", "val", "test"}:
+            raise ValueError(f"Unknown dataset split '{mode}'")
+        
+        target_length = self._get_target_length(len(self.data_list))
+
+        cache_key = (
+            self._normalize_filename_key(self.filename),
+            tuple(self.split_fracs),
+            self.seed,
+            bool(self.shuffle),
+            target_length,
+        )
+
+        if cache_key not in self._split_cache:
+            raise KeyError(f"{cache_key} not found in cache")
+        
+        split_indices = self._split_cache[cache_key][mode]
+        select = torch.arange(len(split_indices))
+
+        LOGGER.info(
+            f"[QuarkTaggingDataset] mode={mode}, requested_length={self.length}, "
+            f"selected={len(select)}/{len(self.data_list)}"
+        )
+
+        return select
+
+    def load_data_old(self, filename, mode, network_float64=False, momentum_float64=True):
+
+        raise DeprecationWarning(f"Function replaced due to incompatibility with L vs R polarization")
+
         if mode not in {"train", "val", "test"}:
             raise ValueError(f"Unknown dataset split '{mode}'")
 
         network_dtype = torch.float64 if network_float64 else torch.float32
         momentum_dtype = torch.float64 if momentum_float64 else torch.float32
 
-        # Load parquet with caching
+        # Load data with caching
         if isinstance(filename, (list, tuple)):
             parquet = ak.concatenate(
                 [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in filename]
@@ -358,7 +507,7 @@ class QuarkTaggingDataset(TaggingDataset):
 
         self.data_list = data_list
 
-    def _build_event_graph(self, event, network_dtype, momentum_dtype):
+    def _build_event_graph(self, event, network_dtype, momentum_dtype, label_ext=-1):
         fat_jet = event["FatJet"]
         subjets = event["Subjets"]
 
@@ -387,8 +536,13 @@ class QuarkTaggingDataset(TaggingDataset):
         subjet_order = torch.tensor([b_idx] + other_indices, dtype=torch.long)
 
         subjet_four_sorted = subjet_four[subjet_order]
-        # Label the jet as 1 if the leading non-b subjet matches the target tag
-        label = (subjet_tags[subjet_order[1]] == self.tag).to(network_dtype).unsqueeze(0)
+
+        if label_ext >= 0:
+            # Label by the polarization of the dataset
+            label = label_ext
+        else:
+            # Label the jet as 1 if the leading non-b subjet matches the target tag
+            label = (subjet_tags[subjet_order[1]] == self.tag).to(network_dtype).unsqueeze(0)
 
         constituents = subjets["Constituents"]
         const_four_list, const_pid_list, const_parent_list = [], [], []

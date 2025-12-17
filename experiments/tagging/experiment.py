@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
 from torch_geometric.loader import DataLoader
+from torch.utils.data import Subset
 
 from experiments.base_experiment import BaseExperiment
 from experiments.logger import LOGGER
@@ -61,16 +62,15 @@ class TaggingExperiment(BaseExperiment):
         LOGGER.info(f"Creating {Dataset.__name__} from {data_path}")
         t0 = time.time()
         dataset_kwargs = dataset_kwargs or {}
-        self.data_train = Dataset(**dataset_kwargs)
-        self.data_test = Dataset(**dataset_kwargs)
-        self.data_val = Dataset(**dataset_kwargs)
+        self.data = Dataset(**dataset_kwargs)
         kwargs = dict(
             network_float64=self.cfg.use_float64,
             momentum_float64=self.cfg.data.momentum_float64,
         )
-        self.data_train.load_data(data_path, "train", **kwargs)
-        self.data_test.load_data(data_path, "test", **kwargs)
-        self.data_val.load_data(data_path, "val", **kwargs)
+        self.data.load_data(data_path, **kwargs)
+        self.data_train = Subset(self.data, self.data.get_subset("train"))
+        self.data_val = Subset(self.data, self.data.get_subset("val"))
+        self.data_test = Subset(self.data, self.data.get_subset("test"))
         dt = time.time() - t0
         LOGGER.info(f"Finished creating datasets after {dt:.2f} s = {dt / 60:.2f} min")
 
@@ -388,9 +388,9 @@ class QuarkTaggingExperiment(TaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_outputs = 1
-        self.extra_scalars = 5
+        self.extra_scalars = 5 # Differentiate between fatjet, subjets, and constituents
         if self.cfg.data.pid:
-            self.extra_scalars += 6
+            self.extra_scalars += 6 
 
     def init_data(self):
         if self.cfg.data.mass_window == "strict":
@@ -414,14 +414,22 @@ class QuarkTaggingExperiment(TaggingExperiment):
                 for i in range(1, 4)
             ]
         elif self.cfg.data.dataset == "polarized":
-            data_path = [
+            data_path = {
+                "L": [
                 os.path.join(
                     self.cfg.data.data_dir,
-                    f"polarization_top_{p}_{top_window}_train_{i}.parquet",
+                    f"polarization_top_L_{top_window}_train_{i}.parquet",
                 )
-                for p in ["L", "R"]
                 for i in range(1, 4)
-            ]
+                ], 
+                "R": [
+                os.path.join(
+                    self.cfg.data.data_dir,
+                    f"polarization_top_R_{top_window}_train_{i}.parquet",
+                )
+                for i in range(1, 4)
+                ]
+            }
         else:
             raise ValueError(f"Unknown dataset type '{self.cfg.data.dataset}'")
 
