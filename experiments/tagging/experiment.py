@@ -7,6 +7,7 @@ import torch
 from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
 from torch.utils.data import Subset
 from torch_geometric.loader import DataLoader
+from torch.utils.data import Subset
 
 from experiments.base_experiment import BaseExperiment
 from experiments.logger import LOGGER
@@ -74,18 +75,12 @@ class TaggingExperiment(BaseExperiment):
         LOGGER.info(f"Creating {Dataset.__name__} from {filenames}")
         t0 = time.time()
         dataset_kwargs = dataset_kwargs or {}
-        # self.data_train = Dataset(**dataset_kwargs)
-        # self.data_test = Dataset(**dataset_kwargs)
-        # self.data_val = Dataset(**dataset_kwargs)
         self.data = Dataset(**dataset_kwargs)
         kwargs = dict(
             network_float64=self.cfg.use_float64,
             momentum_float64=self.cfg.data.momentum_float64,
         )
-        # self.data_train.load_data_old(filenames, "train", **kwargs)
-        # self.data_test.load_data_old(filenames, "test", **kwargs)
-        # self.data_val.load_data_old(filenames, "val", **kwargs)
-        self.data.load_data(data_path, filenames, **kwargs)
+        self.data.load_data(data_path, **kwargs)
         self.data_train = Subset(self.data, self.data.get_subset("train"))
         self.data_val = Subset(self.data, self.data.get_subset("val"))
         self.data_test = Subset(self.data, self.data.get_subset("test"))
@@ -458,9 +453,9 @@ class QuarkTaggingExperiment(TaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_outputs = 1
-        self.extra_scalars = 5  # Differentiate between fatjet, subjets, and constituents
+        self.extra_scalars = 5 # Differentiate between fatjet, subjets, and constituents
         if self.cfg.data.pid:
-            self.extra_scalars += 6
+            self.extra_scalars += 6 
 
     def init_data(self, mode="train"):
         if self.cfg.data.dataset_eval and mode != "train":

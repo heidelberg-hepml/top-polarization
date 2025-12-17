@@ -467,7 +467,7 @@ class QuarkTaggingDataset(TaggingDataset):
         network_dtype = torch.float64 if network_float64 else torch.float32
         momentum_dtype = torch.float64 if momentum_float64 else torch.float32
 
-        # Load parquet with caching
+        # Load data with caching
         if isinstance(filename, (list, tuple)):
             parquet = ak.concatenate(
                 [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in filename]
