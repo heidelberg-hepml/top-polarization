@@ -1,5 +1,6 @@
 import glob
 import os
+import glob
 import time
 
 import numpy as np
@@ -80,7 +81,7 @@ class TaggingExperiment(BaseExperiment):
             network_float64=self.cfg.use_float64,
             momentum_float64=self.cfg.data.momentum_float64,
         )
-        self.data.load_data(data_path, **kwargs)
+        self.data.load_data(data_path, filenames, **kwargs)
         self.data_train = Subset(self.data, self.data.get_subset("train"))
         self.data_val = Subset(self.data, self.data.get_subset("val"))
         self.data_test = Subset(self.data, self.data.get_subset("test"))
