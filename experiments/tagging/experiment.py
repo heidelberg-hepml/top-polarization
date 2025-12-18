@@ -287,7 +287,7 @@ class TaggingExperiment(BaseExperiment):
     def plot(self):
         plot_path = os.path.join(self.cfg.run_dir, f"plots_{self.cfg.run_idx}")
         os.makedirs(plot_path, exist_ok=True)
-        title = type(self.model.net).__name__
+        title = f"{type(self.model.net).__name__} - {self.cfg.data.dataset}"
         LOGGER.info(f"Creating plots in {plot_path}")
 
         if (

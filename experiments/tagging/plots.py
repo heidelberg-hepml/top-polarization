@@ -75,12 +75,14 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
         with PdfPages(file) as out:
             plot_score(
                 out,
+                cfg.data.dataset,
                 plot_dict["results_test"]["labels_true"],
                 plot_dict["results_test"]["labels_predict"],
                 title=title,
             )
             plot_score(
                 out,
+                cfg.data.dataset,
                 plot_dict["results_test"]["labels_true"],
                 plot_dict["results_test"]["labels_predict"],
                 title=title,
@@ -186,27 +188,31 @@ def plot_roc(out, fpr, tpr, auc, title=None):
     plt.close()
 
 
-def plot_score(out, labels_true, labels_predicted, title=None, xrange=[0, 1], bins=100, logy=False):
+def plot_score(out, dataset, labels_true, labels_predicted, title=None, xrange=[0, 1], bins=100, logy=False):
     cols = [colors[1], colors[2]]
 
     fig, ax = plt.subplots(figsize=(5, 4))
     if logy:
         ax.set_yscale("log")
     ax.set_ylabel("Normalized", fontsize=FONTSIZE)
-    ax.set_xlabel("Classifier score (0=QCD, 1=top)", fontsize=FONTSIZE)
+    if dataset == "polarized":
+        label_0, label_1 = "L", "R"
+    elif dataset == "unpolarized":
+        label_0, label_1 = "Up", "Down"
+    ax.set_xlabel(f"Classifier score (0={label_0}, 1={label_1})", fontsize=FONTSIZE)
     _, bins, _ = ax.hist(
         labels_predicted[labels_true == 0],
         range=xrange,
         bins=bins,
         alpha=0.5,
-        label="QCD",
+        label=label_0,
         density=True,
         color=cols[0],
     )
     ax.hist(
         labels_predicted[labels_true == 1],
         bins=bins,
-        label="Top",
+        label=label_1,
         alpha=0.5,
         density=True,
         color=cols[1],
