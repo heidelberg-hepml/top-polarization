@@ -7,6 +7,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch_geometric.data import Data
+from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr
+from torch_geometric.data.storage import GlobalStorage
+torch.serialization.add_safe_globals([DataEdgeAttr, DataTensorAttr, GlobalStorage]) # Needed to cache sequence data
 
 from experiments.hep import PtPhiEtaM2_to_EPPP
 from experiments.logger import LOGGER
