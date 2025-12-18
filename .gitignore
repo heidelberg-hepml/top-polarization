@@ -16,7 +16,7 @@ runs/
 mlruns/
 outputs/
 scripts/
-data/cache
+data/cache/
 data/jetclass/
 notebooks/
 *~
