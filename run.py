@@ -8,7 +8,7 @@ import torch.multiprocessing as mp
 from lgatr.primitives.config import gatr_config
 
 from experiments.tagging.experiment import (
-    BTaggingExperiment,
+    QuarkTaggingExperiment,
     TestExperiment,
 )
 
@@ -48,9 +48,17 @@ def ddp_worker(rank, cfg):
             timeout=datetime.timedelta(minutes=30),
         )
         torch.cuda.set_device(rank)
+        print(
+            "Rank",
+            rank,
+            "sees devices:",
+            torch.cuda.device_count(),
+            "current device:",
+            torch.cuda.current_device(),
+        )
 
-    if cfg.exp_type == "btagging":
-        constructor = BTaggingExperiment
+    if cfg.exp_type == "tagging":
+        constructor = QuarkTaggingExperiment
     elif cfg.exp_type == "test":
         constructor = TestExperiment
     else:

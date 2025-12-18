@@ -1,9 +1,9 @@
-import numpy as np
-import os
 import argparse
+import os
+
 import requests
 
-parser = argparse.ArgumentParser(description='Download data.')
+parser = argparse.ArgumentParser(description="Download data.")
 parser.add_argument("--out", type=str)
 parser.add_argument("--mass", type=str, default="strict")
 
@@ -14,10 +14,7 @@ MASS = args.mass
 
 BASE_URL = "https://seafile.cloud.uni-hannover.de/d/bed29fcc630340d4a131/files"
 POLARIZATIONS = ["L", "R", "0"]
-MASS_WINDOWS = {
-    "strict": (165, 190),
-    "loose": (120, 220)
-}
+MASS_WINDOWS = {"strict": (165, 190), "loose": (120, 220)}
 
 
 def load(filename, out):

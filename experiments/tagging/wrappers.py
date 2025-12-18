@@ -270,12 +270,14 @@ class LGATrWrapper(nn.Module):
         framesnet,
         out_channels,
         mean_aggregation=False,
+        add_tagging_features=False,
         use_amp=False,
     ):
         super().__init__()
         self.use_amp = use_amp
         self.net = net(out_mv_channels=out_channels)
         self.aggregator = MeanAggregation() if mean_aggregation else None
+        self.add_tagging_features = add_tagging_features
 
         self.framesnet = framesnet  # not actually used
         assert isinstance(framesnet, IdentityFrames)
@@ -287,6 +289,9 @@ class LGATrWrapper(nn.Module):
         batch = embedding["batch"]
         ptr = embedding["ptr"]
         is_spurion = embedding["is_spurion"]
+
+        if self.add_tagging_features:
+            scalars = torch.cat((scalars, embedding["global_tagging_features"]), dim=-1)
 
         # rescale fourmomenta (but not the spurions)
         fourmomenta[~is_spurion] = fourmomenta[~is_spurion] / 20
