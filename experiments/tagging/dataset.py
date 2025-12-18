@@ -598,8 +598,11 @@ class QuarkTaggingDataset(TaggingDataset):
             # Label by the polarization of the dataset
             label = label_ext
         else:
-            # Label the jet as 1 if the leading non-b subjet matches the target tag
-            label = (subjet_tags[subjet_order[1]] == self.tag).to(network_dtype).unsqueeze(0)
+            if self.tag > 0:
+                # Label the jet as 1 if the leading non-b subjet matches the target tag
+                label = (subjet_tags[subjet_order[1]] == self.tag).to(network_dtype).unsqueeze(0)
+            else:
+                raise ValueError(f"Invalid subjet label of {self.tag}, must be positive")
 
         constituents = subjets["Constituents"]
         const_four_list, const_pid_list, const_parent_list = [], [], []

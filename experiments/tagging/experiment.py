@@ -400,13 +400,9 @@ class QuarkTaggingExperiment(TaggingExperiment):
             top_window = "120_220"
         else:
             raise ValueError(f"Unknown mass window definition '{self.cfg.data.mass_window}'")
-        if self.cfg.data.tag == "down":
-            tag_id = 1
-        elif self.cfg.data.tag == "bottom":
-            tag_id = 5
-        else:
-            raise ValueError(f"Particle '{self.cfg.data.tag}' not implemented for tagging")
+        
         if self.cfg.data.dataset == "unpolarized":
+            tag_id = 1
             filenames = sorted(
                 glob.glob(
                     os.path.join(
@@ -416,6 +412,7 @@ class QuarkTaggingExperiment(TaggingExperiment):
                 )
             )
         elif self.cfg.data.dataset == "polarized":
+            tag_id = -1
             filenames = {
                 "L": sorted(
                     glob.glob(
