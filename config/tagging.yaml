@@ -29,7 +29,7 @@ plotting:
   score: true
 
 defaults:
-  - model: tag_lgatr
-  - training: tag_lgatr
+  - model: tag_transformer
+  - training: tag_transformer
   - default
   - _self_

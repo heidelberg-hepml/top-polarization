@@ -316,8 +316,6 @@ class QuarkTaggingDataset(TaggingDataset):
 
     def load_data(self, data_dir, filename, network_float64=False, momentum_float64=True):
 
-        # TO-DO: Fix loading from cache
-
         network_dtype = torch.float64 if network_float64 else torch.float32
         momentum_dtype = torch.float64 if momentum_float64 else torch.float32
 
@@ -479,7 +477,7 @@ class QuarkTaggingDataset(TaggingDataset):
         network_dtype = torch.float64 if network_float64 else torch.float32
         momentum_dtype = torch.float64 if momentum_float64 else torch.float32
 
-        # Load data with caching
+        # Load parquet with caching
         if isinstance(filename, (list, tuple)):
             parquet = ak.concatenate(
                 [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in filename]
