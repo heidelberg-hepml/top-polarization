@@ -456,7 +456,7 @@ class QuarkTaggingExperiment(TaggingExperiment):
         self.num_outputs = 1
         self.extra_scalars = 5 # Differentiate between fatjet, subjets, and constituents
         if self.cfg.data.pid:
-            self.extra_scalars += 6 
+            self.extra_scalars += 6
 
     def init_data(self, mode="train"):
         if self.cfg.data.dataset_eval and mode != "train":
