@@ -1,5 +1,6 @@
 import logging
 import os
+import shutil
 import resource
 import shutil
 import time

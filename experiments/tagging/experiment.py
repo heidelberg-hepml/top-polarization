@@ -349,6 +349,15 @@ class TaggingExperiment(BaseExperiment):
         )
         np.savetxt(file, labels)
 
+    def _save_metrics(self):
+        metric_path = os.path.join(self.cfg.run_dir, f"preds_{self.cfg.run_idx}")
+        os.makedirs(metric_path, exist_ok=True)
+        LOGGER.info(f"Saving labels in {metric_path}")
+
+        file = f"{metric_path}/labels.txt"
+        labels = np.stack((self.results["test"]["labels_true"], self.results["test"]["labels_predict"]), axis=-1)
+        np.savetxt(file, labels)
+
     def plot(self):
         plot_path = os.path.join(self.cfg.run_dir, f"plots_{self.cfg.run_idx}")
         os.makedirs(plot_path, exist_ok=True)
