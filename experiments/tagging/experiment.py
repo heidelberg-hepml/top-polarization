@@ -131,6 +131,18 @@ class TaggingExperiment(BaseExperiment):
             )
             self.model.init_standardization(embedding["fourmomenta"], embedding["ptr"])
 
+    def _init_experiment(self, run_name_add=None):
+
+        run_name_add = [
+            f"dataset={self.cfg.data.dataset}",
+            f"mass={self.cfg.data.mass_window}",
+            f"data={'all' if self.cfg.data.length==-1 else self.cfg.data.length}",
+            f"lr={self.cfg.training.lr}",
+            f"opt={self.cfg.training.optimizer}",
+            f"bs={self.cfg.training.batchsize}"
+        ]
+        super()._init_experiment(run_name_add=run_name_add)
+
     def _init_optimizer(self, param_groups=None):
         if self.cfg.model.net._target_.rsplit(".", 1)[-1] in [
             "ParticleTransformer",
@@ -196,6 +208,9 @@ class TaggingExperiment(BaseExperiment):
                 self.results[set_label] = self._evaluate_single(
                     loader_dict[set_label], set_label, mode="eval", balanced=(set_label != "test")
                 )
+
+        if self.cfg.evaluation.save_labels:
+            self._save_metrics()
 
     @torch.no_grad()
     def _evaluate_single(self, loader, title, mode, step=None, balanced=True):
@@ -283,6 +298,15 @@ class TaggingExperiment(BaseExperiment):
                 f" & {metrics['rej03']:.0f} & {metrics['rej05']:.0f} & {metrics['rej08']:.0f} \\\\"
             )
         return metrics
+
+    def _save_metrics(self):
+        metric_path = os.path.join(self.cfg.run_dir, f"preds_{self.cfg.run_idx}")
+        os.makedirs(metric_path, exist_ok=True)
+        LOGGER.info(f"Saving labels in {metric_path}")
+
+        file = f"{metric_path}/labels.txt"
+        labels = np.stack((self.results["test"]["labels_true"], self.results["test"]["labels_predict"]), axis=-1)
+        np.savetxt(file, labels)
 
     def plot(self):
         plot_path = os.path.join(self.cfg.run_dir, f"plots_{self.cfg.run_idx}")

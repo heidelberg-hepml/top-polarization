@@ -458,14 +458,13 @@ class QuarkTaggingDataset(TaggingDataset):
             raise KeyError(f"{self.cache_key} not found in cache")
         
         split_indices = self._split_cache[self.cache_key][mode]
-        select = torch.arange(len(split_indices))
 
         LOGGER.info(
             f"[QuarkTaggingDataset] mode={mode}, requested_length={self.length}, "
-            f"selected={len(select)}/{len(self.data_list)}"
+            f"selected={len(split_indices)}/{len(self.data_list)}"
         )
 
-        return select
+        return split_indices
 
     def load_data_old(self, filename, mode, network_float64=False, momentum_float64=True):
 

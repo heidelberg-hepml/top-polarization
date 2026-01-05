@@ -17,10 +17,13 @@ data:
   pid: true
   balance_factor: 1.0
 
+train: true
+model_load_idx: null
 
 evaluation:
   batchsize: 512
   save_roc: false
+  save_labels: true
   eval_set: [train, test, val]
 
 plotting:
