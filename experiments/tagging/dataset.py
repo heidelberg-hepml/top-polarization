@@ -398,6 +398,9 @@ class QuarkTaggingDataset(TaggingDataset):
 
             LOGGER.info("[QuarkTaggingDataset] loaded from cache")
 
+        print(f"Maximum index: {max(indices)}")
+        print(f"Length of data list: {len(data_list)}")
+
         self.data_list = data_list
         self._split_data(indices)
 
