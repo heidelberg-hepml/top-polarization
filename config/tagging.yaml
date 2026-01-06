@@ -6,6 +6,7 @@ data:
   dataset: unpolarized
   mass_window: strict
   length: -1
+  use_cache: true
   tagging_features: all
   boost_jet: false
   beam_reference: lightlike

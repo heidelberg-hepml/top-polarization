@@ -463,5 +463,6 @@ class QuarkTaggingExperiment(TaggingExperiment):
             "tag": tag_id,
             "pid": self.cfg.data.pid,
             "balance_factor": self.cfg.data.balance_factor,
+            "use_cache": self.cfg.data.use_cache,
         }
         self._init_data(QuarkTaggingDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)

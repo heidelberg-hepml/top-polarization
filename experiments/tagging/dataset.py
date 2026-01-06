@@ -267,6 +267,7 @@ class QuarkTaggingDataset(TaggingDataset):
         length=-1,
         pid=False,
         balance_factor=0.0,
+        use_cache=True,
     ):
         super().__init__(length=length)
         self.tag = tag
@@ -275,6 +276,7 @@ class QuarkTaggingDataset(TaggingDataset):
         self.shuffle = shuffle
         self.balance_factor = balance_factor
         self.include_pid = pid
+        self.use_cache = use_cache
         self.filename = None
         self.cache_key = {}
 
@@ -348,7 +350,10 @@ class QuarkTaggingDataset(TaggingDataset):
             target_length,
         )
 
-        cache = self._load_from_cache(self.cache_key, data_dir)
+        if self.use_cache:
+            cache = self._load_from_cache(self.cache_key, data_dir)
+        else:
+            cache = None
 
         if cache is None:
 
@@ -357,14 +362,18 @@ class QuarkTaggingDataset(TaggingDataset):
             label_counts = 0
 
             if isinstance(parquet, (list)):
+                offset = 0
                 for l, p in enumerate(parquet):
                     p, perm = self._shuffle_data(p, evt_types=len(parquet))
+                    if offset > 0:
+                        perm = [pm+offset for pm in perm]
                     for event in p:
                         graph = self._build_event_graph(event, network_dtype, momentum_dtype, label_ext=l)
                         label_counts += graph.label
                         data_list.append(graph)
-                    data_list, _ = self._shuffle_data(data_list)
                     indices += perm
+                    offset += len(data_list)
+                data_list, _ = self._shuffle_data(data_list)
             else:
                 parquet, perm = self._shuffle_data(parquet)
                 for event in parquet:
@@ -400,6 +409,9 @@ class QuarkTaggingDataset(TaggingDataset):
                 f"[QuarkTaggingDataset] loaded from cache"
             )
 
+        print(f"Maximum index: {max(indices)}")
+        print(f"Length of data list: {len(data_list)}")
+
         self.data_list = data_list
         self._split_data(indices)
 
@@ -407,7 +419,7 @@ class QuarkTaggingDataset(TaggingDataset):
         
         # target_length = num_events if self.length is None else min(self.length, num_events)
         target_length = self._get_target_length(len(data))
-        if evt_types > 0:
+        if evt_types > 0 and target_length < len(data):
             target_length = int(target_length / evt_types)
 
         if target_length == 0:
