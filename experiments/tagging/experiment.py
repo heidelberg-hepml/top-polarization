@@ -1,6 +1,5 @@
 import glob
 import os
-import glob
 import time
 
 import numpy as np
@@ -8,7 +7,6 @@ import torch
 from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
 from torch.utils.data import Subset
 from torch_geometric.loader import DataLoader
-from torch.utils.data import Subset
 
 from experiments.base_experiment import BaseExperiment
 from experiments.logger import LOGGER
@@ -350,7 +348,9 @@ class TaggingExperiment(BaseExperiment):
         LOGGER.info(f"Saving labels in {metric_path}")
 
         file = f"{metric_path}/labels.txt"
-        labels = np.stack((self.results["test"]["labels_true"], self.results["test"]["labels_predict"]), axis=-1)
+        labels = np.stack(
+            (self.results["test"]["labels_true"], self.results["test"]["labels_predict"]), axis=-1
+        )
         np.savetxt(file, labels)
 
     def plot(self):
@@ -458,7 +458,7 @@ class QuarkTaggingExperiment(TaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_outputs = 1
-        self.extra_scalars = 5 # Differentiate between fatjet, subjets, and constituents
+        self.extra_scalars = 5  # Differentiate between fatjet, subjets, and constituents
         if self.cfg.data.pid:
             self.extra_scalars += 6
 
