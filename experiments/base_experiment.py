@@ -71,11 +71,11 @@ class BaseExperiment:
 
         self.init_physics()
         self.init_model()
-        self.init_data()
-        self._init_dataloader()
         self._init_loss()
 
         if self.cfg.train:
+            self.init_data()
+            self._init_dataloader()
             LOGGER.debug(OmegaConf.to_yaml(self.cfg))
             self._save_config("config.yaml", to_mlflow=True)
             self._save_config(f"config_{self.cfg.run_idx}.yaml")
@@ -86,6 +86,8 @@ class BaseExperiment:
             self._save_model()
 
         if self.cfg.evaluate:
+            self.init_data(mode="eval")
+            self._init_dataloader()
             self.evaluate()
 
         if self.cfg.plot and self.cfg.save:

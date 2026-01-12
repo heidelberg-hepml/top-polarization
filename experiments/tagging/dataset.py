@@ -477,7 +477,7 @@ class QuarkTaggingDataset(TaggingDataset):
 
     def load_data_old(self, filename, mode, network_float64=False, momentum_float64=True):
 
-        raise DeprecationWarning(f"Function replaced due to incompatibility with L vs R polarization")
+        # raise DeprecationWarning(f"Function replaced due to incompatibility with L vs R polarization")
 
         if mode not in {"train", "val", "test"}:
             raise ValueError(f"Unknown dataset split '{mode}'")
