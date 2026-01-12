@@ -1,6 +1,6 @@
-import os
 import hashlib
 import json
+import os
 
 import awkward as ak
 import numpy as np
@@ -9,10 +9,13 @@ import torch.nn.functional as F
 from torch_geometric.data import Data
 from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr
 from torch_geometric.data.storage import GlobalStorage
-torch.serialization.add_safe_globals([DataEdgeAttr, DataTensorAttr, GlobalStorage]) # Needed to cache sequence data
 
 from experiments.hep import PtPhiEtaM2_to_EPPP
 from experiments.logger import LOGGER
+
+torch.serialization.add_safe_globals(
+    [DataEdgeAttr, DataTensorAttr, GlobalStorage]
+)  # Needed to cache sequence data
 
 EPS = 1e-5
 
@@ -67,11 +70,7 @@ class TaggingDataset(torch.utils.data.Dataset):
         cache_hash = self._hash_cache_key(cache_key)
         path = self._cache_path(cache_hash, data_dir)
         torch.save(
-            {
-                "key": cache_key,
-                "data": data,
-                "indices": indices
-            },
+            {"key": cache_key, "data": data, "indices": indices},
             path,
         )
 
@@ -317,7 +316,6 @@ class QuarkTaggingDataset(TaggingDataset):
         return encoded
 
     def load_data(self, data_dir, filename, network_float64=False, momentum_float64=True):
-
         network_dtype = torch.float64 if network_float64 else torch.float32
         momentum_dtype = torch.float64 if momentum_float64 else torch.float32
 
@@ -331,7 +329,7 @@ class QuarkTaggingDataset(TaggingDataset):
         elif isinstance(self.filename, (dict)):
             parquet = [
                 ak.concatenate(
-                [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in files]
+                    [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in files]
                 )
                 for files in self.filename.values()
             ]
@@ -356,19 +354,20 @@ class QuarkTaggingDataset(TaggingDataset):
             cache = None
 
         if cache is None:
-
             data_list = []
             indices = []
             label_counts = 0
 
             if isinstance(parquet, (list)):
                 offset = 0
-                for l, p in enumerate(parquet):
+                for lbl, p in enumerate(parquet):
                     p, perm = self._shuffle_data(p, evt_types=len(parquet))
                     if offset > 0:
-                        perm = [pm+offset for pm in perm]
+                        perm = [pm + offset for pm in perm]
                     for event in p:
-                        graph = self._build_event_graph(event, network_dtype, momentum_dtype, label_ext=l)
+                        graph = self._build_event_graph(
+                            event, network_dtype, momentum_dtype, label_ext=lbl
+                        )
                         label_counts += graph.label
                         data_list.append(graph)
                     indices += perm
@@ -378,10 +377,7 @@ class QuarkTaggingDataset(TaggingDataset):
                 parquet, perm = self._shuffle_data(parquet)
                 for event in parquet:
                     graph = self._build_event_graph(event, network_dtype, momentum_dtype)
-                    if (
-                        graph.label.item() == 0
-                        and torch.rand(1).item() > self.balance_factor
-                    ):
+                    if graph.label.item() == 0 and torch.rand(1).item() > self.balance_factor:
                         # Artificially balance dataset
                         continue
                     label_counts += graph.label.item()
@@ -397,47 +393,36 @@ class QuarkTaggingDataset(TaggingDataset):
 
             self._save_to_cache(self.cache_key, data_list, indices, data_dir)
 
-            LOGGER.info(
-                f"[QuarkTaggingDataset] saved to cache"
-            )
+            LOGGER.info("[QuarkTaggingDataset] saved to cache")
 
         else:
-
             data_list, indices = cache
 
-            LOGGER.info(
-                f"[QuarkTaggingDataset] loaded from cache"
-            )
+            LOGGER.info("[QuarkTaggingDataset] loaded from cache")
 
         self.data_list = data_list
         self._split_data(indices)
 
     def _shuffle_data(self, data, evt_types=-1):
-        
         # target_length = num_events if self.length is None else min(self.length, num_events)
         target_length = self._get_target_length(len(data))
         if evt_types > 0 and target_length < len(data):
             target_length = int(target_length / evt_types)
 
         if target_length == 0:
-            raise RuntimeError(f"No events found in loaded data")
+            raise RuntimeError("No events found in loaded data")
 
         # Generate permutation
         gen = torch.Generator().manual_seed(self.seed)
-        perm = (
-            torch.randperm(len(data), generator=gen)
-            if self.shuffle
-            else torch.arange(len(data))
-        )
+        perm = torch.randperm(len(data), generator=gen) if self.shuffle else torch.arange(len(data))
         perm = perm[:target_length]
 
         if isinstance(data, (list)):
             return [data[x] for x in perm.tolist()], perm
 
         return data[perm.tolist()], perm
-            
-    def _split_data(self, indices):
 
+    def _split_data(self, indices):
         if self.cache_key not in self._split_cache:
             # Calculate split sizes
             fracs = torch.as_tensor(self.split_fracs, dtype=torch.double)
@@ -465,7 +450,7 @@ class QuarkTaggingDataset(TaggingDataset):
 
         if self.cache_key not in self._split_cache:
             raise KeyError(f"{self.cache_key} not found in cache")
-        
+
         split_indices = self._split_cache[self.cache_key][mode]
 
         LOGGER.info(
@@ -476,7 +461,6 @@ class QuarkTaggingDataset(TaggingDataset):
         return split_indices
 
     def load_data_old(self, filename, mode, network_float64=False, momentum_float64=True):
-
         # raise DeprecationWarning(f"Function replaced due to incompatibility with L vs R polarization")
 
         if mode not in {"train", "val", "test"}:

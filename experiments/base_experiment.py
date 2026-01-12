@@ -1,7 +1,7 @@
 import logging
 import os
-import shutil
 import resource
+import shutil
 import time
 import zipfile
 from pathlib import Path
@@ -176,11 +176,14 @@ class BaseExperiment:
         return experiment_id, run_name
 
     def _init_experiment(self, run_name_add=None):
-
         if not self.cfg.train and self.cfg.model_load_idx is None:
-            raise ValueError("Trying to evaluate a model that was neither trained nor loaded from a checkpoint. To evaluate without training, specify the model_load_idx. Aborting.")
-        
-        self.warm_start = False if (self.cfg.model_load_idx is None and self.cfg.train is True) else True
+            raise ValueError(
+                "Trying to evaluate a model that was neither trained nor loaded from a checkpoint. To evaluate without training, specify the model_load_idx. Aborting."
+            )
+
+        self.warm_start = (
+            False if (self.cfg.model_load_idx is None and self.cfg.train is True) else True
+        )
 
         if self.cfg.run_name is None:
             modelname = self.cfg.model.net._target_.rsplit(".", 1)[-1]
@@ -209,9 +212,9 @@ class BaseExperiment:
             model_load_idx = self.cfg.model_load_idx
             run_idx = model_load_idx
             LOGGER.info(
-                    f"Loading run {run_idx} from experiment {self.cfg.exp_name}/{run_name} for evaluation"
-                )
-            
+                f"Loading run {run_idx} from experiment {self.cfg.exp_name}/{run_name} for evaluation"
+            )
+
         with open_dict(self.cfg):
             self.cfg.run_idx = run_idx
             if not self.cfg.train:
@@ -274,7 +277,9 @@ class BaseExperiment:
                 LOGGER.info(f"Experiment in directory {self.cfg.run_dir} will be overwritten")
                 shutil.rmtree(self.cfg.run_dir)
             else:
-                raise ValueError(f"Experiment in directory {self.cfg.run_dir} already exists. If you want to overwrite it, set allow_overwrite to true. Aborting.")
+                raise ValueError(
+                    f"Experiment in directory {self.cfg.run_dir} already exists. If you want to overwrite it, set allow_overwrite to true. Aborting."
+                )
         os.makedirs(run_dir, exist_ok=True)
         os.makedirs(os.path.join(run_dir, "models"), exist_ok=True)
 
@@ -509,7 +514,7 @@ class BaseExperiment:
 
     def _init_scaler(self):
         use_amp = OmegaConf.select(self.cfg.model, "use_amp", default=False)
-        self.scaler = GradScaler('cuda', enabled=use_amp)
+        self.scaler = GradScaler("cuda", enabled=use_amp)
 
         # load existing scaler if specified
         if self.warm_start and use_amp:
@@ -821,7 +826,7 @@ class BaseExperiment:
         config_filename = Path(run_dir) / filename
         if not config_filename.exists():
             raise FileNotFoundError(
-            f"Tried to load information from existing config but {config_filename} does not exist"
+                f"Tried to load information from existing config but {config_filename} does not exist"
             )
         LOGGER.info(f"Loading information from config from {config_filename}")
         return OmegaConf.load(config_filename)

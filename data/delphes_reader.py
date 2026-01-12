@@ -82,7 +82,7 @@ class DelphesReader():
         return s.m()
 
     def _get_fj_parents(self, cluster, jet):
-    
+
         '''
         Get the two parent jets of a given jet in a FastJet ClusterSequence.
         '''
@@ -134,7 +134,7 @@ class DelphesReader():
                 parent1, parent2 = self._get_fj_parents(cluster, child)
                 if parent1 is None or parent2 is None:
                     return [child]
-                
+
                 if parent2.m() > parent1.m():
                     parent1, parent2 = parent2, parent1
 
@@ -146,9 +146,9 @@ class DelphesReader():
 
                 if parent2.m() > m_max:
                     return rec_pnet(parent1) + rec_pnet(parent2)
-                
+
                 return [child]
-            
+
             subjets = rec_pnet(jet_fj)
 
         else:
@@ -162,7 +162,7 @@ class DelphesReader():
                 parent1, parent2 = self._get_fj_parents(cluster, child)
                 if parent1 is None or parent2 is None:
                     return [child]
-                
+
                 if parent2.pt() > parent1.pt():
                     parent1, parent2 = parent2, parent1
 
@@ -177,14 +177,14 @@ class DelphesReader():
                         return rec_CA(parent1, pt_hard=pt_hard, depth=1) + rec_CA(parent2, pt_hard=pt_hard, depth=1)
                     if depth == 1:
                         return [parent1, parent2]
-                
+
                 return [child]
-            
+
             subjets = rec_CA(jet_fj, pt_hard=jet_fj.pt())
 
         if len(subjets) <= 2:
             return None
-                
+
         subjets = sorted(subjets, key=lambda s: s.pt(), reverse=True)
 
         return subjets[:4]
@@ -219,14 +219,14 @@ class DelphesReader():
 
     def _match_parton_jets(self, partons, subjets, max_dr=0.4):
 
-        ''' 
+        '''
         Match the subjets to parton-level objects for the training data.
         '''
 
         matches = []
 
         ids = [p.id for p in partons]
-        if ids[-2] in [11, -11, 13, -13]: 
+        if ids[-2] in [11, -11, 13, -13]:
             hadronic = "top"
         elif ids[-2] in [1, -1, 2, -2, 3, -3, 4, -4]:
             hadronic = "atop"
@@ -255,7 +255,7 @@ class DelphesReader():
             return None
         if any(match[2] > max_dr for match in matches):
             return None
-        
+
         b_cand = subjets[matches[0][1]]
         subjets = [sj for c, sj in enumerate(subjets) if c in [m[1] for m in matches]]
 
@@ -287,9 +287,9 @@ class DelphesReader():
         '''
         Adds a record for a single event to the output awkward array.
         '''
-    
+
         self.jet_data.begin_record()
-        ## Event record ## 
+        ## Event record ##
 
         self.jet_data.field("FatJet")
         self.jet_data.begin_record()
@@ -307,7 +307,7 @@ class DelphesReader():
         self.jet_data.begin_list()
         for c, subjet in enumerate(subjets):
             self.jet_data.begin_record()
-            ## Subjet records ## 
+            ## Subjet records ##
 
             self.jet_data.field("pt").real(subjet.pt())
             self.jet_data.field("phi").real(subjet.phi())
@@ -339,7 +339,7 @@ class DelphesReader():
                 self.jet_data.end_record()
             self.jet_data.end_list()
 
-            ## Subjet records ## 
+            ## Subjet records ##
             self.jet_data.end_record()
         self.jet_data.end_list()
 
@@ -383,7 +383,7 @@ class DelphesReader():
                 else:
                     rec_leading_jet = rec_fat_jets.At(1)
 
-            # Cut: Require minimum pT and maximum eta for leading fat jet 
+            # Cut: Require minimum pT and maximum eta for leading fat jet
             if rec_leading_jet.PT < 250 or abs(rec_leading_jet.Eta) > 3.:
                 self.KinematicsFail += 1
                 continue

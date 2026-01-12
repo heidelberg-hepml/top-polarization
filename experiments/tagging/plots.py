@@ -188,7 +188,9 @@ def plot_roc(out, fpr, tpr, auc, title=None):
     plt.close()
 
 
-def plot_score(out, dataset, labels_true, labels_predicted, title=None, xrange=[0, 1], bins=100, logy=False):
+def plot_score(
+    out, dataset, labels_true, labels_predicted, title=None, xrange=[0, 1], bins=100, logy=False
+):
     cols = [colors[1], colors[2]]
 
     fig, ax = plt.subplots(figsize=(5, 4))

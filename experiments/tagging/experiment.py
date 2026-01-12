@@ -1,12 +1,12 @@
-import os
 import glob
+import os
 import time
 
 import numpy as np
 import torch
 from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
-from torch_geometric.loader import DataLoader
 from torch.utils.data import Subset
+from torch_geometric.loader import DataLoader
 
 from experiments.base_experiment import BaseExperiment
 from experiments.logger import LOGGER
@@ -140,14 +140,13 @@ class TaggingExperiment(BaseExperiment):
             self.model.init_standardization(embedding["fourmomenta"], embedding["ptr"])
 
     def _init_experiment(self, run_name_add=None):
-
         run_name_add = [
             f"dataset={self.cfg.data.dataset}",
             f"mass={self.cfg.data.mass_window}",
-            f"data={'all' if self.cfg.data.length==-1 else self.cfg.data.length}",
+            f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
             f"lr={self.cfg.training.lr}",
             f"opt={self.cfg.training.optimizer}",
-            f"bs={self.cfg.training.batchsize}"
+            f"bs={self.cfg.training.batchsize}",
         ]
         super()._init_experiment(run_name_add=run_name_add)
 
@@ -247,11 +246,21 @@ class TaggingExperiment(BaseExperiment):
             y_pred = torch.nn.functional.sigmoid(y_pred)
             labels_true.append(label)
             labels_predict.append(y_pred)
-            mask_b, mask_hard, mask_soft = (scalars[:,1]+scalars[:,2] == 2), (scalars[:,1]+scalars[:,3] == 2), (scalars[:,1]+scalars[:,4] == 2)
+            mask_b, mask_hard, mask_soft = (
+                (scalars[:, 1] + scalars[:, 2] == 2),
+                (scalars[:, 1] + scalars[:, 3] == 2),
+                (scalars[:, 1] + scalars[:, 4] == 2),
+            )
             mom_b.append(fourmomenta[mask_b])
             mom_hard.append(fourmomenta[mask_hard])
             mom_soft.append(fourmomenta[mask_soft])
-        labels_true, labels_predict, mom_b, mom_hard, mom_soft = torch.cat(labels_true).cpu().float(), torch.cat(labels_predict).cpu().float(), torch.cat(mom_b).cpu(), torch.cat(mom_hard).cpu(), torch.cat(mom_soft).cpu()
+        labels_true, labels_predict, mom_b, mom_hard, mom_soft = (
+            torch.cat(labels_true).cpu().float(),
+            torch.cat(labels_predict).cpu().float(),
+            torch.cat(mom_b).cpu(),
+            torch.cat(mom_hard).cpu(),
+            torch.cat(mom_soft).cpu(),
+        )
 
         if not balanced:
             corrected_p = self.cfg.data.balance_factor / (1 + self.cfg.data.balance_factor)
@@ -330,7 +339,9 @@ class TaggingExperiment(BaseExperiment):
         LOGGER.info(f"Saving labels in {metric_path}")
 
         file = f"{metric_path}/labels.txt"
-        labels = np.stack((self.results["test"]["labels_true"], self.results["test"]["labels_predict"]), axis=-1)
+        labels = np.stack(
+            (self.results["test"]["labels_true"], self.results["test"]["labels_predict"]), axis=-1
+        )
         np.savetxt(file, labels)
 
     def plot(self):
@@ -438,12 +449,11 @@ class QuarkTaggingExperiment(TaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_outputs = 1
-        self.extra_scalars = 5 # Differentiate between fatjet, subjets, and constituents
+        self.extra_scalars = 5  # Differentiate between fatjet, subjets, and constituents
         if self.cfg.data.pid:
             self.extra_scalars += 6
 
     def init_data(self, mode="train"):
-
         if self.cfg.data.dataset_eval and mode != "train":
             dataset = self.cfg.data.dataset_eval
         else:
@@ -479,7 +489,7 @@ class QuarkTaggingExperiment(TaggingExperiment):
                             f"polarization_top_L_{top_window}_train_*.parquet",
                         )
                     )
-                ), 
+                ),
                 "R": sorted(
                     glob.glob(
                         os.path.join(
@@ -487,7 +497,7 @@ class QuarkTaggingExperiment(TaggingExperiment):
                             f"polarization_top_R_{top_window}_train_*.parquet",
                         )
                     )
-                )
+                ),
             }
         else:
             raise ValueError(f"Unknown dataset type '{self.cfg.data.dataset}'")
