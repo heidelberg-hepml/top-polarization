@@ -76,11 +76,17 @@ class TaggingExperiment(BaseExperiment):
         LOGGER.info(f"Creating {Dataset.__name__} from {filenames}")
         t0 = time.time()
         dataset_kwargs = dataset_kwargs or {}
+        # self.data_train = Dataset(**dataset_kwargs)
+        # self.data_test = Dataset(**dataset_kwargs)
+        # self.data_val = Dataset(**dataset_kwargs)
         self.data = Dataset(**dataset_kwargs)
         kwargs = dict(
             network_float64=self.cfg.use_float64,
             momentum_float64=self.cfg.data.momentum_float64,
         )
+        # self.data_train.load_data_old(filenames, "train", **kwargs)
+        # self.data_test.load_data_old(filenames, "test", **kwargs)
+        # self.data_val.load_data_old(filenames, "val", **kwargs)
         self.data.load_data(data_path, filenames, **kwargs)
         self.data_train = Subset(self.data, self.data.get_subset("train"))
         self.data_val = Subset(self.data, self.data.get_subset("val"))
@@ -337,17 +343,6 @@ class TaggingExperiment(BaseExperiment):
                 f" & {metrics['rej03']:.0f} & {metrics['rej05']:.0f} & {metrics['rej08']:.0f} \\\\"
             )
         return metrics, momenta
-
-    def _save_metrics(self):
-        metric_path = os.path.join(self.cfg.run_dir, f"preds_{self.cfg.run_idx}")
-        os.makedirs(metric_path, exist_ok=True)
-        LOGGER.info(f"Saving labels in {metric_path}")
-
-        file = f"{metric_path}/labels.txt"
-        labels = np.stack(
-            (self.results["test"]["labels_true"], self.results["test"]["labels_predict"]), axis=-1
-        )
-        np.savetxt(file, labels)
 
     def _save_metrics(self):
         metric_path = os.path.join(self.cfg.run_dir, f"preds_{self.cfg.run_idx}")
