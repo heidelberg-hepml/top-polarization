@@ -272,12 +272,13 @@ class TaggingExperiment(BaseExperiment):
         )
 
         if not balanced:
-            corrected_p = self.cfg.data.balance_factor / (1 + self.cfg.data.balance_factor)
-            balanced_p = 0.5
-            labels_predict = (corrected_p / balanced_p * labels_predict) / (
-                corrected_p / balanced_p * labels_predict
-                + (1 - corrected_p) / (1 - balanced_p) * (1 - labels_predict)
-            )
+            raise NotImplementedError("Unbalanced evaluation not implemented")
+        #     corrected_p = self.cfg.data.balance_factor / (1 + self.cfg.data.balance_factor)
+        #     balanced_p = 0.5
+        #     labels_predict = (corrected_p / balanced_p * labels_predict) / (
+        #         corrected_p / balanced_p * labels_predict
+        #         + (1 - corrected_p) / (1 - balanced_p) * (1 - labels_predict)
+        #     )
 
         if mode == "eval":
             metrics["labels_true"], metrics["labels_predict"] = (

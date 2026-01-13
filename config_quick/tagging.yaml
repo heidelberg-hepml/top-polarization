@@ -1,15 +1,20 @@
-exp_type: btagging
-exp_name: tag_quick
-
 data:
- tagging_features_framesnet: all
- boost_jet: false
- beam_reference: lightlike
- two_beams: true
- add_time_reference: true
- mass_reg: 5e-3
- spurion_scale: 1
- momentum_float64: true
+  data_dir: data/
+  dataset: unpolarized
+  mass_window: strict
+  tag: down
+  length: -1
+  tagging_features: all
+  boost_jet: false
+  beam_reference: lightlike
+  two_beams: true
+  add_time_reference: true
+  mass_reg: 5e-3
+  spurion_scale: 1
+  max_particles: null
+  momentum_float64: true
+  pid: true
+  balance_factor: 0.0
 
 evaluation:
  batchsize: 128

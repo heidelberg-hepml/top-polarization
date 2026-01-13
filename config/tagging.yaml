@@ -1,6 +1,3 @@
-exp_type: tagging
-exp_name: tag_debug
-
 data:
   data_dir: data/
   dataset: unpolarized
@@ -15,6 +12,7 @@ data:
   add_time_reference: true
   mass_reg: 5e-3
   spurion_scale: 1
+  max_particles: null
   momentum_float64: true
   pid: true
   balance_factor: 1.0
@@ -23,18 +21,17 @@ train: true
 model_load_idx: null
 
 evaluation:
-  batchsize: 512
-  save_roc: false
-  save_labels: true
-  eval_set: [train, test, val]
+ batchsize: 512
+ save_roc: false
+ save_labels: true
+ eval_set: [train, test, val]
 
 plotting:
-  roc: true
-  loss: true
-  score: true
+ roc: true
+ loss: true
+ score: true
 
 defaults:
-  - model: tag_transformer
-  - training: tag_transformer
-  - default
-  - _self_
+ - model: tag_transformer
+ - default
+ - _self_
