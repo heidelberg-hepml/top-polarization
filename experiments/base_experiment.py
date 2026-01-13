@@ -17,7 +17,7 @@ from torch_ema import ExponentialMovingAverage
 
 import experiments.logger
 from experiments.logger import FORMATTER, LOGGER, MEMORY_HANDLER, RankFilter
-from experiments.misc import flatten_dict, get_device
+from experiments.misc import flatten_dict
 from experiments.mlflow import log_mlflow
 from experiments.ranger import Ranger
 
@@ -27,7 +27,7 @@ MIN_STEP_SKIP = 1000
 
 
 class BaseExperiment:
-    def __init__(self, cfg, rank, world_size):
+    def __init__(self, cfg, rank=0, world_size=1):
         self.cfg = cfg
         self.rank = rank
         self.world_size = world_size
@@ -151,12 +151,6 @@ class BaseExperiment:
             self.ema.to(self.device)
 
         if self.world_size > 1:
-            ############################ DEBUG ############################
-            # model = self.model.net
-            # num_cuda_params = sum(1 for p in model.parameters() if p.is_cuda)
-            # print(f"[Rank {self.rank}] num_cuda_params = {num_cuda_params} / {len(list(model.parameters()))} params on CUDA")
-            ############################ DEBUG ############################
-
             self.model.net = torch.nn.parallel.DistributedDataParallel(
                 self.model.net,
                 device_ids=[self.rank],
@@ -320,19 +314,25 @@ class BaseExperiment:
         LOGGER.debug("Logger initialized")
 
     def _init_backend(self):
-        self.device = get_device()
+        self.device = (
+            torch.device("cuda")
+            if torch.cuda.is_available() and self.cfg.gpus != 0
+            else torch.device("cpu")
+        )
         LOGGER.info(f"Using device {self.device}; see {self.world_size} GPUs in total")
         self.dtype = torch.float64 if self.cfg.use_float64 else torch.float32
+        if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
+            torch.set_autocast_gpu_dtype(torch.bfloat16)
         LOGGER.debug(f"Using dtype {self.dtype}")
 
-        torch.backends.cuda.matmul.fp32_precision = self.cfg.float32_matmul_precision
+        torch.set_float32_matmul_precision(self.cfg.float32_matmul_precision)
         LOGGER.debug(f"Using float32_matmul_precision {self.cfg.float32_matmul_precision}")
 
     def _init_optimizer(self, param_groups=None):
         if param_groups is None:
 
             def is_bias(param):
-                return param.ndim == 1
+                return param.ndim <= 1
 
             param_groups = [
                 {
@@ -435,8 +435,6 @@ class BaseExperiment:
                 eta_min=self.cfg.training.cosanneal_eta_min,
             )
         elif self.cfg.training.scheduler == "CosineAnnealingWarmRestarts":
-            t0 = int((self.cfg.training.iterations * self.cfg.training.scheduler_scale) / 2)
-            t0 = max(1, t0)
             self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
                 self.optimizer,
                 T_0=int((self.cfg.training.iterations * self.cfg.training.scheduler_scale) / 2),
@@ -721,6 +719,9 @@ class BaseExperiment:
         ]:
             self.scheduler.step()
 
+        if not torch.isfinite(loss):
+            LOGGER.warning(f"Loss is nonfinite (loss={loss}) at iteration {step}")
+
         # collect metrics
         if self.world_size > 1:
             dist.all_reduce(loss, op=dist.ReduceOp.SUM)
@@ -755,6 +756,7 @@ class BaseExperiment:
             for key, values in metrics.items():
                 log_mlflow(f"train.{key}", values, step=step)
 
+    @torch.no_grad()
     def _validate(self, step):
         losses = []
         metrics = self._init_metrics()
