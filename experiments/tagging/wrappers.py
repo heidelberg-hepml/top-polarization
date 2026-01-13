@@ -4,15 +4,18 @@ from lloca.framesnet.frames import Frames
 from lloca.framesnet.nonequi_frames import IdentityFrames
 from lloca.reps.tensorreps import TensorReps
 from lloca.reps.tensorreps_transform import TensorRepsTransform
+from lloca.utils.lorentz import lorentz_eye
 from lloca.utils.utils import (
     get_batch_from_ptr,
+    get_edge_attr,
+    get_edge_index_from_ptr,
     get_ptr_from_batch,
 )
 from torch import nn
 from torch_geometric.nn.aggr import MeanAggregation
-from torch_geometric.utils import scatter
+from torch_geometric.utils import scatter, to_dense_batch
 
-from experiments.misc import get_xformers_attention_mask
+from experiments.misc import get_attention_mask
 from experiments.tagging.embedding import get_tagging_features
 
 
@@ -45,7 +48,7 @@ class TaggerWrapper(nn.Module):
         # extract embedding
         fourmomenta_withspurions = embedding["fourmomenta"]
         scalars_withspurions = embedding["scalars"]
-        global_tagging_features_withspurions = embedding["global_tagging_features"]
+        global_tagging_features_withspurions = embedding["tagging_features"]
         batch_withspurions = embedding["batch"]
         is_spurion = embedding["is_spurion"]
         ptr_withspurions = embedding["ptr"]
@@ -143,18 +146,22 @@ class TransformerWrapper(AggregatedTaggerWrapper):
         net,
         *args,
         use_amp=False,
+        attention_backend="xformers",
         mean_aggregation=True,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.use_amp = use_amp
+        self.attention_backend = attention_backend
         self.mean_aggregation = mean_aggregation
         self.net = net(in_channels=self.in_channels, out_channels=self.out_channels)
+
+        if attention_backend == "flex":
+            compile_flex_attention(package_name="lloca")
 
     def forward(self, embedding):
         # precompute attention mask to avoid cudaStreamSynchronize
         # from .tolist() in get_xformers_attention_mask
-        dtype = embedding["scalars"].dtype
         batch_withspurions = embedding["batch"]
         is_spurion = embedding["is_spurion"]
         nospurion_idxs = (~is_spurion).nonzero(as_tuple=False).squeeze(-1)
@@ -166,10 +173,10 @@ class TransformerWrapper(AggregatedTaggerWrapper):
             ptr = ptr.clone()
             ptr[1:] = ptr[1:] + (torch.arange(batchsize, device=ptr.device) + 1)
             batch = get_batch_from_ptr(ptr)
-        mask = get_xformers_attention_mask(
+        mask_kwarg = get_attention_mask(
             batch,
-            materialize=batch.device == torch.device("cpu"),
-            dtype=dtype,
+            dtype=embedding["scalars"].dtype,
+            attention_backend=self.attention_backend,
         )
 
         (
@@ -248,11 +255,8 @@ class TransformerWrapper(AggregatedTaggerWrapper):
         frames = frames.reshape(1, *frames.shape)
 
         # network
-        kwargs = {
-            "attn_mask" if features_local.device == torch.device("cpu") else "attn_bias": mask
-        }
         with torch.autocast("cuda", enabled=self.use_amp):
-            outputs = self.net(inputs=features_local, frames=frames, **kwargs)
+            outputs = self.net(inputs=features_local, frames=frames, **mask_kwarg)
 
         # aggregation
         outputs = outputs[0, ...]
@@ -270,28 +274,28 @@ class LGATrWrapper(nn.Module):
         framesnet,
         out_channels,
         mean_aggregation=False,
-        add_tagging_features=False,
         use_amp=False,
+        attention_backend="xformers",
     ):
         super().__init__()
         self.use_amp = use_amp
+        self.attention_backend = attention_backend
         self.net = net(out_mv_channels=out_channels)
         self.aggregator = MeanAggregation() if mean_aggregation else None
-        self.add_tagging_features = add_tagging_features
 
         self.framesnet = framesnet  # not actually used
         assert isinstance(framesnet, IdentityFrames)
 
+        if attention_backend == "flex":
+            compile_flex_attention(package_name="lgatr")
+
     def forward(self, embedding):
         # extract embedding (includes spurions)
         fourmomenta = embedding["fourmomenta"]
-        scalars = embedding["scalars"]
+        scalars = torch.cat([embedding["scalars"], embedding["tagging_features"]], dim=-1)
         batch = embedding["batch"]
         ptr = embedding["ptr"]
         is_spurion = embedding["is_spurion"]
-
-        if self.add_tagging_features:
-            scalars = torch.cat((scalars, embedding["global_tagging_features"]), dim=-1)
 
         # rescale fourmomenta (but not the spurions)
         fourmomenta[~is_spurion] = fourmomenta[~is_spurion] / 20
@@ -355,18 +359,17 @@ class LGATrWrapper(nn.Module):
         fourmomenta = fourmomenta.unsqueeze(0).to(scalars.dtype)
         scalars = scalars.unsqueeze(0)
 
-        mask = get_xformers_attention_mask(
+        mask_kwarg = get_attention_mask(
             batch,
-            materialize=fourmomenta.device == torch.device("cpu"),
-            dtype=fourmomenta.dtype,
+            dtype=scalars.dtype,
+            attention_backend=self.attention_backend,
         )
-        kwargs = {"attn_mask" if fourmomenta.device == torch.device("cpu") else "attn_bias": mask}
 
         mv = embed_vector(fourmomenta).unsqueeze(-2)
         s = scalars if scalars.shape[-1] > 0 else None
 
         with torch.autocast("cuda", enabled=self.use_amp):
-            mv_outputs, _ = self.net(mv, s, **kwargs)
+            mv_outputs, _ = self.net(mv, s, **mask_kwarg)
         out = extract_pseudoscalar(mv_outputs)[0, :, :, 0] + extract_scalar(mv_outputs)[0, :, :, 0]
 
         if self.aggregator is not None:
@@ -375,3 +378,35 @@ class LGATrWrapper(nn.Module):
         else:
             logits = out[is_global]
         return logits, {}, None
+
+
+def compile_flex_attention(package_name="lgatr"):
+    """Run torch.compile on the flex_attention function.
+
+    However, as of today (Dec 2025, pytorch 2.9.0), torch.compile + flex_attention
+    for variable-length sequences only works in a few cases:
+    - CPU: Forward pass is supported, but backward pass not (https://github.com/pytorch/pytorch/issues/169224)
+      To still let the code run through for tests, we skip torch.compile on CPU.
+      This way the code runs through, but is super slow because it materializes the attention matrix.
+      Note that we use essentially the same approach for xformers, where we fall back to default torch attention on CPU.
+      On the plus side, flex_attention supports arbitrary head_dim if torch.compile is not used.
+    - GPU: The docs say that only head dimensions being powers of 2 are supported.
+      However, on my system only head_dim=2**n with n>=4 works, i.e. head_dim=16,32,...
+      Setting head_dim=2,4,8 gives cryptic errors.
+      Moreover, transformers with flex_attention are still significantly slower than
+      transformers with xformers attention in our implementation.
+    """
+    if package_name == "lgatr":
+        import lgatr.primitives.attention_backends.flex as flex
+    elif package_name == "lloca":
+        import lloca.backbone.attention_backends.flex as flex
+    else:
+        raise ValueError(f"Unknown package {package_name}")
+
+    if torch.cuda.is_available():
+        # max-autotune strongly recommended for flex-attention with variable-length sequences,
+        # see https://pytorch.org/blog/flexattention-for-inference/
+        flex.attention = torch.compile(
+            flex.attention,
+            dynamic=True,
+        )
