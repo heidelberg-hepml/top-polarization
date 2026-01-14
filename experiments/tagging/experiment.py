@@ -214,16 +214,13 @@ class TaggingExperiment(BaseExperiment):
                         loader_dict[set_label],
                         f"{set_label}_ema",
                         mode="eval",
-                        balanced=(set_label != "test"),
                     )
 
-                self._evaluate_single(
-                    loader_dict[set_label], set_label, mode="eval", balanced=(set_label != "test")
-                )
+                self._evaluate_single(loader_dict[set_label], set_label, mode="eval")
 
             else:
                 self.results[set_label], self.momenta[set_label] = self._evaluate_single(
-                    loader_dict[set_label], set_label, mode="eval", balanced=(set_label != "test")
+                    loader_dict[set_label], set_label, mode="eval"
                 )
 
         beta_l, beta_r = likelihood_calculator(self.cfg, self.results, self.momenta)
@@ -235,7 +232,7 @@ class TaggingExperiment(BaseExperiment):
             self._save_metrics()
 
     @torch.no_grad()
-    def _evaluate_single(self, loader, title, mode, step=None, balanced=True):
+    def _evaluate_single(self, loader, title, mode, step=None):
         assert mode in ["val", "eval"]
 
         if mode == "eval":
@@ -252,7 +249,6 @@ class TaggingExperiment(BaseExperiment):
         for batch in loader:
             fourmomenta, scalars, _, _ = self._extract_batch(batch)
             y_pred, label, _, _ = self._get_ypred_and_label(batch)
-            y_pred = torch.nn.functional.sigmoid(y_pred)
             labels_true.append(label)
             labels_predict.append(y_pred)
             mask_b, mask_hard, mask_soft = (
@@ -270,15 +266,6 @@ class TaggingExperiment(BaseExperiment):
             torch.cat(mom_hard).cpu(),
             torch.cat(mom_soft).cpu(),
         )
-
-        if not balanced:
-            raise NotImplementedError("Unbalanced evaluation not implemented")
-        #     corrected_p = self.cfg.data.balance_factor / (1 + self.cfg.data.balance_factor)
-        #     balanced_p = 0.5
-        #     labels_predict = (corrected_p / balanced_p * labels_predict) / (
-        #         corrected_p / balanced_p * labels_predict
-        #         + (1 - corrected_p) / (1 - balanced_p) * (1 - labels_predict)
-        #     )
 
         if mode == "eval":
             metrics["labels_true"], metrics["labels_predict"] = (
@@ -528,7 +515,6 @@ class QuarkTaggingExperiment(TaggingExperiment):
             "length": getattr(self.cfg.data, "length", None),
             "tag": tag_id,
             "pid": self.cfg.data.pid,
-            "balance_factor": self.cfg.data.balance_factor,
             "use_cache": self.cfg.data.use_cache,
         }
         self._init_data(QuarkTaggingDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
