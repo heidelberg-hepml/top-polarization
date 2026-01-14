@@ -22,6 +22,8 @@ data:
 train: true
 model_load_idx: null
 
+optuna: null
+
 evaluation:
  batchsize: 512
  save_roc: false

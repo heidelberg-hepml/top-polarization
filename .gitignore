@@ -20,6 +20,7 @@ data/cache/
 data/jetclass/
 notebooks/
 *~
+*.db
 *.hdf5
 *.npy
 *.npz

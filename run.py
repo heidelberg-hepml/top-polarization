@@ -1,7 +1,9 @@
 import datetime
 import os
 
+from omegaconf import OmegaConf
 import hydra
+import optuna
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -14,9 +16,46 @@ from experiments.tagging.experiment import (
 
 gatr_config.use_fully_connected_subgroup = False
 
+GLOBAL_METRIC = None
+
 
 @hydra.main(config_path="config", config_name="tagging", version_base=None)
 def main(cfg):
+
+    if cfg.optuna:
+        study_name=f"{cfg.exp_name}"
+        storage_name = "sqlite:///optuna.db"
+        cfg.run_name = f"optuna_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        pruner = optuna.pruners.MedianPruner(n_warmup_steps=3)
+
+        study = optuna.create_study(
+            study_name=study_name,
+            direction="minimize", 
+            pruner=pruner,
+            storage=storage_name,
+            load_if_exists=True,
+        )
+        study.optimize(
+            lambda trial: objective(cfg, trial), 
+            n_trials=10,
+        )
+        print(f"Best trial: {study.best_trial.params}")
+
+    else:
+        objective(cfg)
+
+
+def objective(base_cfg, trial=None):
+
+    cfg = OmegaConf.merge(base_cfg)
+    if trial:
+        cfg.run_name = os.path.join(cfg.run_name, f"trial_{trial.number}")
+        cfg.optuna_trial_id = trial.number
+        cfg.training.lr = trial.suggest_float("learning_rate", 1e-6, 1e-3, log=True)
+        cfg.training.batchsize = trial.suggest_categorical("batchsize", [32, 64, 128, 256, 512])
+        cfg.training.optimizer = trial.suggest_categorical("optimizer", ["Lion", "AdamW"])
+        cfg.training.weight_decay = trial.suggest_categorical("weight_decay", [0.2, 0.5, 1., 2., 5.])
+
     world_size = torch.cuda.device_count() if torch.cuda.is_available() else 1
 
     if world_size > 1:
@@ -27,13 +66,18 @@ def main(cfg):
         os.environ.setdefault("OMP_NUM_THREADS", "1")
 
         _set_common_env(world_size)
-        mp.spawn(ddp_worker, nprocs=world_size, args=(cfg,))
+        mp.spawn(ddp_worker, nprocs=world_size, args=(cfg,trial))
+        metric = GLOBAL_METRIC
     else:
         # no GPU or only one GPU -> run on main process
-        ddp_worker(rank=0, cfg=cfg)
+        metric = ddp_worker(rank=0, cfg=cfg, trial=trial)
+
+    return metric
 
 
-def ddp_worker(rank, cfg):
+def ddp_worker(rank, cfg, trial=None):
+    global GLOBAL_METRIC
+
     world_size = int(os.environ.get("WORLD_SIZE", 1))
     os.environ["RANK"] = str(rank)
     os.environ["LOCAL_RANK"] = str(rank)
@@ -64,12 +108,23 @@ def ddp_worker(rank, cfg):
     else:
         raise ValueError(f"exp_type {cfg.exp_type} not implemented")
 
-    exp = constructor(cfg, rank, world_size)
-    exp()
+    try:
+        exp = constructor(cfg, rank, world_size, trial)
+        metric = exp()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if world_size > 1:
+            metric_tensor = torch.tensor(metric if rank == 0 else 0.0, device=rank)
+            dist.broadcast(metric_tensor, src=0)
+            metric = metric_tensor.item()
 
-    if world_size > 1:
-        dist.barrier(device_ids=[rank])
-        dist.destroy_process_group()
+            dist.barrier(device_ids=[rank])
+            dist.destroy_process_group()
+
+        if rank == 0:
+            GLOBAL_METRIC = metric
+            return metric
 
 
 def _set_common_env(world_size):

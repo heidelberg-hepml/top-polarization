@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 import mlflow
+import optuna
 import numpy as np
 import pytorch_optimizer
 import torch
@@ -28,11 +29,13 @@ MIN_STEP_SKIP = 1000
 
 
 class BaseExperiment:
-    def __init__(self, cfg, rank=0, world_size=1):
+    def __init__(self, cfg, rank=0, world_size=1, trial=None):
         self.cfg = cfg
         self.rank = rank
         self.world_size = world_size
         self.is_master = rank == 0
+        self.trial = trial
+        self.metric = None
 
     def __call__(self):
         # pass all exceptions to the logger
@@ -40,6 +43,10 @@ class BaseExperiment:
             self.run_mlflow()
         except errors.ConfigAttributeError as e:
             LOGGER.exception("Tried to access key that is not specified in the config files")
+            raise e
+        except optuna.TrialPruned as e:
+            if self.rank == 0:
+                LOGGER.exception("Optuna trial pruned")
             raise e
         except Exception as e:
             LOGGER.exception("Exiting with error")
@@ -51,6 +58,10 @@ class BaseExperiment:
             stream_handler.setLevel(logging.DEBUG)
             MEMORY_HANDLER.setTarget(stream_handler)
             MEMORY_HANDLER.close()
+
+        if self.rank == 0:
+            return self.metric
+        return None
 
     def run_mlflow(self):
         experiment_id, run_name = self._init()
@@ -85,13 +96,14 @@ class BaseExperiment:
             self.train()
             self._save_model()
 
-        if self.cfg.evaluate:
-            self.init_data(mode="eval")
-            self._init_dataloader()
-            self.evaluate()
+        if self.trial is None:
+            if self.cfg.evaluate:
+                self.init_data(mode="eval")
+                self._init_dataloader()
+                self.evaluate()
 
-        if self.cfg.plot and self.cfg.save:
-            self.plot()
+            if self.cfg.plot and self.cfg.save:
+                self.plot()
 
         if self.device == torch.device("cuda"):
             max_gpuram_used = torch.cuda.max_memory_allocated() / 1024**3
@@ -596,8 +608,16 @@ class BaseExperiment:
                 t0 = time.time()
                 val_loss = self._validate(step)
                 val_time += time.time() - t0
+                if self.rank == 0 and self.trial:
+                    self.trial.report(val_loss, step=step)
+                    if self.trial.should_prune():
+                        raise optuna.TrialPruned(
+                            f"Pruned in iteration {step} = epoch {step / len(self.train_loader):.1f} with val_loss={val_loss}"
+                        )
+                    
                 if val_loss < smallest_val_loss:
                     smallest_val_loss = val_loss
+                    self.metric = smallest_val_loss
                     smallest_val_loss_step = step
                     patience = 0
 

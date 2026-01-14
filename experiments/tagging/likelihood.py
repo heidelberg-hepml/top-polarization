@@ -9,8 +9,14 @@ def likelihood_calculator(cfg, results, momenta):
     )
 
     if cfg.data.dataset == "polarized":
+        print(2 * labels[labels[:, 0] == 0, -1] - 1)
+        print(2 * labels[labels[:, 0] == 1, -1] - 1)
         neg_pred = 2 * labels[labels[:, 0] == 0, -1] - 1
         pos_pred = 2 * labels[labels[:, 0] == 1, -1] - 1
+        print(len(neg_pred))
+        print(len(pos_pred))
+        print(len(neg_pred < 0))
+        print(len(pos_pred >= 0))
         beta_l = (neg_pred < 0).float().mean()
         beta_r = (pos_pred >= 0).float().mean()
 

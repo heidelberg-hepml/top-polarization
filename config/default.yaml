@@ -25,6 +25,8 @@ evaluate: true
 evaluation:
  batchsize: 1024
 
+optuna_trial_id: null
+
 plot: true
 plotting:
  loss: true
