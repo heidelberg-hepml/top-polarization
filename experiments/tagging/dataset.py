@@ -265,7 +265,7 @@ class QuarkTaggingDataset(TaggingDataset):
         shuffle=True,
         length=-1,
         pid=False,
-        balance_factor=0.0,
+        balance_factor=1.0,
         use_cache=True,
     ):
         super().__init__(length=length)

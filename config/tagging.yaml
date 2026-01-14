@@ -1,3 +1,6 @@
+exp_type: tagging
+exp_name: tagging
+
 data:
   data_dir: data/
   dataset: unpolarized
@@ -15,7 +18,7 @@ data:
   max_particles: null
   momentum_float64: true
   pid: true
-  balance_factor: 1.0
+  balance_factor: 0.8
 
 train: true
 model_load_idx: null
@@ -32,6 +35,7 @@ plotting:
  score: true
 
 defaults:
- - model: tag_transformer
  - default
+ - model: tag_transformer
+ - training: tag_default
  - _self_
