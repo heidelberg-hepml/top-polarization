@@ -220,14 +220,12 @@ class QuarkTaggingDataset(TaggingDataset):
         shuffle=True,
         length=-1,
         pid=False,
-        balance_factor=1.0,
     ):
         super().__init__(length=length)
         self.tag = tag
         self.seed = seed
         self.split_fracs = split_fracs
         self.shuffle = shuffle
-        self.balance_factor = balance_factor
         self.include_pid = pid
 
     @staticmethod
@@ -339,13 +337,6 @@ class QuarkTaggingDataset(TaggingDataset):
         label_counts = 0
         for event in subset:
             graph = self._build_event_graph(event, network_dtype, momentum_dtype)
-            if (
-                graph.label.item() == 0
-                and torch.rand(1).item() > self.balance_factor
-                and mode != "test"
-            ):
-                # Artificially balance dataset
-                continue
             label_counts += graph.label.item()
             data_list.append(graph)
 

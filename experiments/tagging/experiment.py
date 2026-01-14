@@ -193,20 +193,17 @@ class TaggingExperiment(BaseExperiment):
                         loader_dict[set_label],
                         f"{set_label}_ema",
                         mode="eval",
-                        balanced=(set_label != "test"),
                     )
 
-                self._evaluate_single(
-                    loader_dict[set_label], set_label, mode="eval", balanced=(set_label != "test")
-                )
+                self._evaluate_single(loader_dict[set_label], set_label, mode="eval")
 
             else:
                 self.results[set_label] = self._evaluate_single(
-                    loader_dict[set_label], set_label, mode="eval", balanced=(set_label != "test")
+                    loader_dict[set_label], set_label, mode="eval"
                 )
 
     @torch.no_grad()
-    def _evaluate_single(self, loader, title, mode, step=None, balanced=True):
+    def _evaluate_single(self, loader, title, mode, step=None):
         assert mode in ["val", "eval"]
 
         if mode == "eval":
@@ -224,15 +221,6 @@ class TaggingExperiment(BaseExperiment):
             labels_true.append(label.cpu().float())
             labels_predict.append(y_pred.cpu().float())
         labels_true, labels_predict = torch.cat(labels_true), torch.cat(labels_predict)
-
-        if not balanced:
-            raise NotImplementedError("Unbalanced evaluation not implemented")
-        #     corrected_p = self.cfg.data.balance_factor / (1 + self.cfg.data.balance_factor)
-        #     balanced_p = 0.5
-        #     labels_predict = (corrected_p / balanced_p * labels_predict) / (
-        #         corrected_p / balanced_p * labels_predict
-        #         + (1 - corrected_p) / (1 - balanced_p) * (1 - labels_predict)
-        #     )
 
         if mode == "eval":
             metrics["labels_true"], metrics["labels_predict"] = (
@@ -450,6 +438,5 @@ class QuarkTaggingExperiment(TaggingExperiment):
             "length": getattr(self.cfg.data, "length", None),
             "tag": tag_id,
             "pid": self.cfg.data.pid,
-            "balance_factor": self.cfg.data.balance_factor,
         }
         self._init_data(QuarkTaggingDataset, data_path, dataset_kwargs)

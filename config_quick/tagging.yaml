@@ -17,7 +17,6 @@ data:
   max_particles: null
   momentum_float64: true
   pid: true
-  balance_factor: 0.8
 
 evaluation:
  batchsize: 128
