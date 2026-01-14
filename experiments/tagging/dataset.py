@@ -220,7 +220,7 @@ class QuarkTaggingDataset(TaggingDataset):
         shuffle=True,
         length=-1,
         pid=False,
-        balance_factor=0.0,
+        balance_factor=1.0,
     ):
         super().__init__(length=length)
         self.tag = tag
