@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import torch
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 
@@ -77,14 +78,14 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                 out,
                 cfg.data.dataset,
                 plot_dict["results_test"]["labels_true"],
-                plot_dict["results_test"]["labels_predict"],
+                torch.nn.functional.sigmoid(plot_dict["results_test"]["labels_predict"]),
                 title=title,
             )
             plot_score(
                 out,
                 cfg.data.dataset,
                 plot_dict["results_test"]["labels_true"],
-                plot_dict["results_test"]["labels_predict"],
+                torch.nn.functional.sigmoid(plot_dict["results_test"]["labels_predict"]),
                 title=title,
                 logy=True,
             )
