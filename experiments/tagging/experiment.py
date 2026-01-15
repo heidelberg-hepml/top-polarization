@@ -267,17 +267,6 @@ class TaggingExperiment(BaseExperiment):
             torch.cat(mom_soft).cpu(),
         )
 
-        if mode == "eval":
-            metrics["labels_true"], metrics["labels_predict"] = (
-                labels_true,
-                labels_predict,
-            )
-            momenta["q_b"], momenta["q_hard"], momenta["q_soft"] = (
-                mom_b,
-                mom_hard,
-                mom_soft,
-            )
-
         # bce loss
         metrics["loss"] = torch.nn.functional.binary_cross_entropy_with_logits(
             labels_predict, labels_true
@@ -294,6 +283,18 @@ class TaggingExperiment(BaseExperiment):
                 # set non-finite predictions to zero and continue
                 labels_predict[~mask] = 0.0
         labels_predict = torch.nn.functional.sigmoid(labels_predict)
+
+        if mode == "eval":
+            metrics["labels_true"], metrics["labels_predict"] = (
+                labels_true,
+                labels_predict,
+            )
+            momenta["q_b"], momenta["q_hard"], momenta["q_soft"] = (
+                mom_b,
+                mom_hard,
+                mom_soft,
+            )
+
         labels_true, labels_predict = labels_true.numpy(), labels_predict.numpy()
 
         # accuracy
