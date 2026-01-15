@@ -21,6 +21,7 @@ class TaggingExperiment(BaseExperiment):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # Default values
         self.num_outputs = 1  # binary classification
         self.extra_scalars = 0  # number of extra scalar input features per particle
 
@@ -30,13 +31,18 @@ class TaggingExperiment(BaseExperiment):
 
         self.cfg.model.out_channels = self.num_outputs
         if modelname == "LGATr":
-            self.cfg.model.net.in_s_channels = 0 if self.cfg.model.mean_aggregation else 1
-            self.cfg.model.net.in_s_channels += self.extra_scalars
-            num_tagging_features = get_num_tagging_features(
+            # Lorentz-equivariance by internal representations
+            in_s_channels = self.extra_scalars
+            in_s_channels += get_num_tagging_features(
                 tagging_features=self.cfg.data.tagging_features
             )
-            self.cfg.model.net.in_s_channels += num_tagging_features
+            self.cfg.model.net.in_s_channels = 0 if self.cfg.model.mean_aggregation else 1
+            self.cfg.model.net.in_s_channels += in_s_channels
+
+            # doesn't affect results and never needed
+            self.cfg.data.boost_jet = False
         elif modelname == "Transformer":
+            # Non-equivariant or canonicalization
             self.cfg.model.in_channels = 7 + self.extra_scalars
             if self.cfg.model.add_fourmomenta_backbone:
                 self.cfg.model.in_channels += 4
@@ -51,6 +57,9 @@ class TaggingExperiment(BaseExperiment):
                 )
                 self.cfg.model.framesnet.equivectors.num_scalars = self.extra_scalars
                 self.cfg.model.framesnet.equivectors.num_scalars += num_tagging_features
+            else:
+                # not allowed, because the network is not Lorentz-equivariant
+                self.cfg.data.boost_jet = False
         else:
             raise NotImplementedError(f"Model {modelname} not implemented")
 
@@ -184,20 +193,17 @@ class TaggingExperiment(BaseExperiment):
                         loader_dict[set_label],
                         f"{set_label}_ema",
                         mode="eval",
-                        balanced=(set_label != "test"),
                     )
 
-                self._evaluate_single(
-                    loader_dict[set_label], set_label, mode="eval", balanced=(set_label != "test")
-                )
+                self._evaluate_single(loader_dict[set_label], set_label, mode="eval")
 
             else:
                 self.results[set_label] = self._evaluate_single(
-                    loader_dict[set_label], set_label, mode="eval", balanced=(set_label != "test")
+                    loader_dict[set_label], set_label, mode="eval"
                 )
 
     @torch.no_grad()
-    def _evaluate_single(self, loader, title, mode, step=None, balanced=True):
+    def _evaluate_single(self, loader, title, mode, step=None):
         assert mode in ["val", "eval"]
 
         if mode == "eval":
@@ -212,18 +218,9 @@ class TaggingExperiment(BaseExperiment):
         self.model.eval()
         for batch in loader:
             y_pred, label, _, _ = self._get_ypred_and_label(batch)
-            y_pred = torch.nn.functional.sigmoid(y_pred)
             labels_true.append(label.cpu().float())
             labels_predict.append(y_pred.cpu().float())
         labels_true, labels_predict = torch.cat(labels_true), torch.cat(labels_predict)
-
-        if not balanced:
-            corrected_p = self.cfg.data.balance_factor / (1 + self.cfg.data.balance_factor)
-            balanced_p = 0.5
-            labels_predict = (corrected_p / balanced_p * labels_predict) / (
-                corrected_p / balanced_p * labels_predict
-                + (1 - corrected_p) / (1 - balanced_p) * (1 - labels_predict)
-            )
 
         if mode == "eval":
             metrics["labels_true"], metrics["labels_predict"] = (
@@ -232,9 +229,21 @@ class TaggingExperiment(BaseExperiment):
             )
 
         # bce loss
-        metrics["loss"] = torch.nn.functional.binary_cross_entropy(
+        metrics["loss"] = torch.nn.functional.binary_cross_entropy_with_logits(
             labels_predict, labels_true
         ).item()
+        if not torch.isfinite(labels_predict).all():
+            mask = torch.isfinite(labels_predict)
+            LOGGER.warning(
+                f"Non-finite values ({(~mask).sum().item()}) in labels_predict detected during evaluation"
+            )
+            if mode == "eval":
+                # only loss is required
+                return metrics
+            else:
+                # set non-finite predictions to zero and continue
+                labels_predict[~mask] = 0.0
+        labels_predict = torch.nn.functional.sigmoid(labels_predict)
         labels_true, labels_predict = labels_true.numpy(), labels_predict.numpy()
 
         # accuracy
@@ -429,6 +438,5 @@ class QuarkTaggingExperiment(TaggingExperiment):
             "length": getattr(self.cfg.data, "length", None),
             "tag": tag_id,
             "pid": self.cfg.data.pid,
-            "balance_factor": self.cfg.data.balance_factor,
         }
         self._init_data(QuarkTaggingDataset, data_path, dataset_kwargs)
