@@ -44,24 +44,24 @@ class BaseExperiment:
         except errors.ConfigAttributeError as e:
             LOGGER.exception("Tried to access key that is not specified in the config files")
             raise e
-        except optuna.TrialPruned as e:
+        except optuna.TrialPruned:
             if self.rank == 0:
-                LOGGER.exception("Optuna trial pruned")
-            raise e
+                LOGGER.info("Optuna trial pruned")
+            raise
         except Exception as e:
             LOGGER.exception("Exiting with error")
             raise e
-
-        # print buffered logger messages if failed
-        if not experiments.logger.LOGGING_INITIALIZED:
-            stream_handler = logging.StreamHandler()
-            stream_handler.setLevel(logging.DEBUG)
-            MEMORY_HANDLER.setTarget(stream_handler)
-            MEMORY_HANDLER.close()
-
-        if self.rank == 0:
-            return self.metric
-        return None
+        else:
+            if self.rank == 0:
+                return self.metric
+            return None
+        finally:
+            # print buffered logger messages if failed
+            if not experiments.logger.LOGGING_INITIALIZED:
+                stream_handler = logging.StreamHandler()
+                stream_handler.setLevel(logging.DEBUG)
+                MEMORY_HANDLER.setTarget(stream_handler)
+                MEMORY_HANDLER.close()
 
     def run_mlflow(self):
         experiment_id, run_name = self._init()

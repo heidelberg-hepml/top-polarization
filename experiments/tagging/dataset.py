@@ -375,9 +375,6 @@ class QuarkTaggingDataset(TaggingDataset):
                 parquet, perm = self._shuffle_data(parquet)
                 for event in parquet:
                     graph = self._build_event_graph(event, network_dtype, momentum_dtype)
-                    if graph.label.item() == 0 and torch.rand(1).item() > self.balance_factor:
-                        # Artificially balance dataset
-                        continue
                     label_counts += graph.label.item()
                     data_list.append(graph)
                 indices += perm

@@ -1,28 +1,69 @@
 import torch
+import numpy as np
 from lloca.utils.lorentz import lorentz_squarednorm
 from lloca.utils.polar_decomposition import restframe_boost
 
 
-def likelihood_calculator(cfg, results, momenta):
+def get_polarization(cfg, results, momenta):
     labels = torch.stack(
-        (results["test"]["labels_true"], results["test"]["labels_predict"]), axis=-1
-    )
-
-    if cfg.data.dataset == "polarized":
-        neg_pred = 2 * labels[labels[:, 0] == 0, -1] - 1
-        pos_pred = 2 * labels[labels[:, 0] == 1, -1] - 1
-        beta_l = (neg_pred < 0).float().mean()
-        beta_r = (pos_pred >= 0).float().mean()
-
-    elif cfg.data.dataset == "unpolarized":
-        jets = torch.stack(
-            (momenta["test"]["q_b"], momenta["test"]["q_hard"], momenta["test"]["q_soft"]), axis=-1
+        (results["test"]["labels_true"], 
+        results["test"]["labels_predict"]), 
+        axis=-1,
         )
-        beta = pol_opt(labels[:, 1], jets)
-        beta_l = torch.mean(beta[labels[:, 0] == 0])
-        beta_r = torch.mean(beta[labels[:, 0] == 1])
+    jets = torch.stack(
+        (momenta["test"]["q_b"], 
+        momenta["test"]["q_hard"], 
+        momenta["test"]["q_soft"]), 
+        axis=-1,
+    )
+    efficiency_vals = np.linspace(0.2, 1., num=1000)
+    if cfg.data.dataset == "polarized":
+        beta_l, beta_r = polarized(labels, efficiency=1)
+        print(f"Polarization at efficiency 1: Left: {beta_l}, Right: {beta_r}")
+        beta_l, beta_r = polarized(labels, efficiency=0.5)
+        print(f"Polarization at efficiency 0.5: Left: {beta_l}, Right: {beta_r}")
+        beta_l, beta_r = polarized(labels, efficiency=0.2)
+        print(f"Polarization at efficiency 0.2: Left: {beta_l}, Right: {beta_r}")
+        # polarization_vals = polarized(results_all, efficiency=efficiency_vals)
+    if cfg.data.dataset == "unpolarized":
+        beta_l, beta_r = unpolarized(labels, jets, efficiency=1)
+        print(f"Polarization at efficiency 1: Left: {beta_l}, Right: {beta_r}")
+        beta_l, beta_r = unpolarized(labels, jets, efficiency=0.5)
+        print(f"Polarization at efficiency 0.5: Left: {beta_l}, Right: {beta_r}")
+        beta_l, beta_r = unpolarized(labels, jets, efficiency=0.2)
+        print(f"Polarization at efficiency 0.2: Left: {beta_l}, Right: {beta_r}")
+        # polarization_vals = unpolarized(results_all, efficiency=efficiency_vals)
+    return beta_l, beta_r
+
+
+def polarized(labels, efficiency=1):
+    mask = cut_efficiency(labels, efficiency=efficiency)
+    labels_cut = labels[mask]
+    neg_pred = 2 * labels_cut[labels_cut[:, 0] == 0, 1] - 1
+    pos_pred = 2 * labels_cut[labels_cut[:, 0] == 1, 1] - 1
+    beta_l = (neg_pred < 0).float().mean()
+    beta_r = (pos_pred >= 0).float().mean()
 
     return beta_l, beta_r
+
+
+def unpolarized(labels, jets, efficiency=1):
+    mask = cut_efficiency(labels, efficiency=efficiency)
+    print(f"Mask: {mask}")
+    labels_cut = labels[mask]
+    print(f"Labels masked: {labels_cut}")
+    jets_cut = jets[mask]
+    print(f"Jets masked: {jets_cut}")
+    beta = pol_opt(labels_cut[:, -1], jets_cut)
+    beta_l = torch.mean(beta[labels_cut[:, 0] == 0])
+    beta_r = torch.mean(beta[labels_cut[:, 0] == 1])
+
+    return beta_l, beta_r
+
+
+def cut_efficiency(labels, efficiency=1):
+    cut_mask = torch.logical_or(labels[:, -1] >= 1 - (efficiency / 2), labels[:, -1] < (efficiency / 2))
+    return cut_mask
 
 
 def pol_opt(p, q):

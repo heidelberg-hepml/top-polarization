@@ -22,7 +22,7 @@ data:
 train: true
 model_load_idx: null
 
-optuna: null
+optuna: false
 
 evaluation:
  batchsize: 512
@@ -34,6 +34,7 @@ plotting:
  roc: true
  loss: true
  score: true
+ efficiency: true
 
 defaults:
  - default

@@ -13,7 +13,7 @@ from experiments.logger import LOGGER
 from experiments.mlflow import log_mlflow
 from experiments.tagging.dataset import QuarkTaggingDataset, TestDataset
 from experiments.tagging.embedding import embed_tagging_data, get_num_tagging_features
-from experiments.tagging.likelihood import likelihood_calculator
+from experiments.tagging.likelihood import get_polarization
 from experiments.tagging.plots import plot_mixer
 
 
@@ -223,7 +223,7 @@ class TaggingExperiment(BaseExperiment):
                     loader_dict[set_label], set_label, mode="eval"
                 )
 
-        beta_l, beta_r = likelihood_calculator(self.cfg, self.results, self.momenta)
+        beta_l, beta_r = get_polarization(self.cfg, self.results, self.momenta)
         LOGGER.info(
             f"Degrees of top polarization: {beta_l} for left-handed tops, {beta_r} for right-handed tops"
         )
