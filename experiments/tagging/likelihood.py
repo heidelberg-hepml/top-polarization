@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-from lloca.utils.lorentz import lorentz_squarednorm
 from lloca.utils.polar_decomposition import restframe_boost
 
 
@@ -16,24 +15,12 @@ def get_polarization(cfg, results, momenta):
         momenta["test"]["q_soft"]), 
         axis=-1,
     )
-    efficiency_vals = np.linspace(0.2, 1., num=1000)
-    if cfg.data.dataset == "polarized":
-        beta_l, beta_r = polarized(labels, efficiency=1)
-        print(f"Polarization at efficiency 1: Left: {beta_l}, Right: {beta_r}")
-        beta_l, beta_r = polarized(labels, efficiency=0.5)
-        print(f"Polarization at efficiency 0.5: Left: {beta_l}, Right: {beta_r}")
-        beta_l, beta_r = polarized(labels, efficiency=0.2)
-        print(f"Polarization at efficiency 0.2: Left: {beta_l}, Right: {beta_r}")
-        # polarization_vals = polarized(results_all, efficiency=efficiency_vals)
-    if cfg.data.dataset == "unpolarized":
-        beta_l, beta_r = unpolarized(labels, jets, efficiency=1)
-        print(f"Polarization at efficiency 1: Left: {beta_l}, Right: {beta_r}")
-        beta_l, beta_r = unpolarized(labels, jets, efficiency=0.5)
-        print(f"Polarization at efficiency 0.5: Left: {beta_l}, Right: {beta_r}")
-        beta_l, beta_r = unpolarized(labels, jets, efficiency=0.2)
-        print(f"Polarization at efficiency 0.2: Left: {beta_l}, Right: {beta_r}")
-        # polarization_vals = unpolarized(results_all, efficiency=efficiency_vals)
-    return beta_l, beta_r
+    for eff in [1., 0.5, 0.2]:
+        if cfg.data.dataset == "polarized":
+            beta_l, beta_r = polarized(labels, efficiency=1)
+        if cfg.data.dataset == "unpolarized":
+            beta_l, beta_r = unpolarized(labels, jets, efficiency=1)
+        print(f"Polarization at efficiency {eff}: Left: {beta_l}, Right: {beta_r}")
 
 
 def polarized(labels, efficiency=1):

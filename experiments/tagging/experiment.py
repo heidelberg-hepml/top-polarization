@@ -74,17 +74,11 @@ class TaggingExperiment(BaseExperiment):
         LOGGER.info(f"Creating {Dataset.__name__} from {filenames}")
         t0 = time.time()
         dataset_kwargs = dataset_kwargs or {}
-        # self.data_train = Dataset(**dataset_kwargs)
-        # self.data_test = Dataset(**dataset_kwargs)
-        # self.data_val = Dataset(**dataset_kwargs)
         self.data = Dataset(**dataset_kwargs)
         kwargs = dict(
             network_float64=self.cfg.use_float64,
             momentum_float64=self.cfg.data.momentum_float64,
         )
-        # self.data_train.load_data_old(filenames, "train", **kwargs)
-        # self.data_test.load_data_old(filenames, "test", **kwargs)
-        # self.data_val.load_data_old(filenames, "val", **kwargs)
         self.data.load_data(data_path, filenames, **kwargs)
         self.data_train = Subset(self.data, self.data.get_subset("train"))
         self.data_val = Subset(self.data, self.data.get_subset("val"))
@@ -223,10 +217,7 @@ class TaggingExperiment(BaseExperiment):
                     loader_dict[set_label], set_label, mode="eval"
                 )
 
-        beta_l, beta_r = get_polarization(self.cfg, self.results, self.momenta)
-        LOGGER.info(
-            f"Degrees of top polarization: {beta_l} for left-handed tops, {beta_r} for right-handed tops"
-        )
+        get_polarization(self.cfg, self.results, self.momenta)
 
         if self.cfg.evaluation.save_labels:
             self._save_metrics()

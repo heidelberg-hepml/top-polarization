@@ -53,12 +53,12 @@ def objective(base_cfg, trial=None):
         cfg.run_name = os.path.join(cfg.run_name, f"trial_{trial.number}")
         cfg.optuna_trial_id = trial.number
         cfg.training.lr = trial.suggest_float("learning_rate", 1e-6, 1e-3, log=True)
-        cfg.training.batchsize = trial.suggest_categorical("batchsize", [32, 64, 128, 256, 512])
+        cfg.training.batchsize = trial.suggest_categorical("batchsize", [32, 64, 128, 256])
         cfg.training.optimizer = trial.suggest_categorical("optimizer", ["Lion", "AdamW"])
         cfg.training.weight_decay = trial.suggest_categorical("weight_decay", [0.2, 0.5, 1., 2., 5.])
         if cfg.model.net._target_.rsplit('.', 1)[0] == "lgatr":
             cfg.model.net.num_blocks = trial.suggest_categorical("num_blocks", [6, 12])
-            cfg.model.net.dropout_prob = trial.suggest_categorical("dropout_prob", [None, 0.1, 0.3])
+            cfg.model.net.dropout_prob = trial.suggest_categorical("dropout_prob", [None, 0.1, 0.2])
 
     world_size = torch.cuda.device_count() if torch.cuda.is_available() else 1
 
