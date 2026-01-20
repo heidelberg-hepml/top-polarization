@@ -4,9 +4,10 @@ exp_name: tagging
 data:
   data_dir: data/
   dataset: unpolarized
+  dataset_eval: null
   mass_window: strict
-  tag: down
   length: -1
+  use_cache: true
   tagging_features: all
   boost_jet: false
   beam_reference: lightlike
@@ -18,10 +19,15 @@ data:
   momentum_float64: true
   pid: true
 
+train: true
+model_load_idx: null
+
+optuna: null
 
 evaluation:
  batchsize: 512
  save_roc: false
+ save_labels: true
  eval_set: [train, test, val]
 
 plotting:

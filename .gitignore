@@ -9,16 +9,18 @@
 *.py[cod]
 *.sh.e*
 *.sh.o*
-*'=*
+=*.*
 
 venv/
 runs/
 mlruns/
 outputs/
 scripts/
+data/cache/
 data/jetclass/
 notebooks/
 *~
+*.db
 *.hdf5
 *.npy
 *.npz

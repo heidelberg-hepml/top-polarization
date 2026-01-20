@@ -1,18 +1,20 @@
 import logging
 import os
 import resource
+import shutil
 import time
 import zipfile
 from pathlib import Path
 
 import mlflow
+import optuna
 import numpy as np
 import pytorch_optimizer
 import torch
 import torch.distributed as dist
 from hydra.utils import instantiate
 from omegaconf import OmegaConf, errors, open_dict
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 from torch_ema import ExponentialMovingAverage
 
 import experiments.logger
@@ -27,11 +29,13 @@ MIN_STEP_SKIP = 1000
 
 
 class BaseExperiment:
-    def __init__(self, cfg, rank=0, world_size=1):
+    def __init__(self, cfg, rank=0, world_size=1, trial=None):
         self.cfg = cfg
         self.rank = rank
         self.world_size = world_size
         self.is_master = rank == 0
+        self.trial = trial
+        self.metric = None
 
     def __call__(self):
         # pass all exceptions to the logger
@@ -39,6 +43,10 @@ class BaseExperiment:
             self.run_mlflow()
         except errors.ConfigAttributeError as e:
             LOGGER.exception("Tried to access key that is not specified in the config files")
+            raise e
+        except optuna.TrialPruned as e:
+            if self.rank == 0:
+                LOGGER.exception("Optuna trial pruned")
             raise e
         except Exception as e:
             LOGGER.exception("Exiting with error")
@@ -50,6 +58,10 @@ class BaseExperiment:
             stream_handler.setLevel(logging.DEBUG)
             MEMORY_HANDLER.setTarget(stream_handler)
             MEMORY_HANDLER.close()
+
+        if self.rank == 0:
+            return self.metric
+        return None
 
     def run_mlflow(self):
         experiment_id, run_name = self._init()
@@ -70,27 +82,28 @@ class BaseExperiment:
 
         self.init_physics()
         self.init_model()
-        self.init_data()
-        self._init_dataloader()
         self._init_loss()
 
-        # save config
-        LOGGER.debug(OmegaConf.to_yaml(self.cfg))
-        self._save_config("config.yaml", to_mlflow=True)
-        self._save_config(f"config_{self.cfg.run_idx}.yaml")
-
         if self.cfg.train:
+            self.init_data()
+            self._init_dataloader()
+            LOGGER.debug(OmegaConf.to_yaml(self.cfg))
+            self._save_config("config.yaml", to_mlflow=True)
+            self._save_config(f"config_{self.cfg.run_idx}.yaml")
             self._init_optimizer()
             self._init_scheduler()
             self._init_scaler()
             self.train()
             self._save_model()
 
-        if self.cfg.evaluate:
-            self.evaluate()
+        if self.trial is None:
+            if self.cfg.evaluate:
+                self.init_data(mode="eval")
+                self._init_dataloader()
+                self.evaluate()
 
-        if self.cfg.plot and self.cfg.save:
-            self.plot()
+            if self.cfg.plot and self.cfg.save:
+                self.plot()
 
         if self.device == torch.device("cuda"):
             max_gpuram_used = torch.cuda.max_memory_allocated() / 1024**3
@@ -131,7 +144,7 @@ class BaseExperiment:
         # load existing model if specified
         if self.warm_start:
             model_path = os.path.join(
-                self.cfg.run_dir, "models", f"model_run{self.cfg.warm_start_idx}.pt"
+                self.cfg.run_dir, "models", f"model_run{self.cfg.model_load_idx}.pt"
             )
             try:
                 state_dict = torch.load(model_path, map_location="cpu", weights_only=False)["model"]
@@ -174,34 +187,56 @@ class BaseExperiment:
 
         return experiment_id, run_name
 
-    def _init_experiment(self):
-        self.warm_start = False if self.cfg.warm_start_idx is None else True
+    def _init_experiment(self, run_name_add=None):
+        if not self.cfg.train and self.cfg.model_load_idx is None:
+            raise ValueError(
+                "Trying to evaluate a model that was neither trained nor loaded from a checkpoint. To evaluate without training, specify the model_load_idx. Aborting."
+            )
 
-        if not self.warm_start:
-            if self.cfg.run_name is None:
-                modelname = self.cfg.model.net._target_.rsplit(".", 1)[-1]
-                rnd_number = np.random.randint(low=0, high=9999)
-                run_name = f"{modelname}_{rnd_number:04}"
-            else:
-                run_name = self.cfg.run_name
+        self.warm_start = (
+            False if (self.cfg.model_load_idx is None and self.cfg.train is True) else True
+        )
 
-            run_dir = os.path.join(self.cfg.base_dir, "runs", self.cfg.exp_name, run_name)
-            run_idx = 0
-            LOGGER.info(f"Creating new experiment {self.cfg.exp_name}/{run_name}")
-
+        if self.cfg.run_name is None:
+            modelname = self.cfg.model.net._target_.rsplit(".", 1)[-1]
+            name_parts = [modelname]
+            if run_name_add:
+                name_parts.extend(run_name_add)
+            run_name = "_".join(name_parts)
         else:
             run_name = self.cfg.run_name
-            run_idx = self.cfg.run_idx + 1
+
+        run_dir = os.path.join(self.cfg.base_dir, "runs", self.cfg.exp_name, run_name)
+
+        if self.cfg.train:
+            if not self.warm_start:
+                run_idx = 0
+                LOGGER.info(f"Creating new experiment {self.cfg.exp_name}/{run_name}")
+            else:
+                model_load_idx = self.cfg.model_load_idx
+                saved_cfg = self._load_config(run_dir, "config.yaml")
+                self.cfg = OmegaConf.merge(self.cfg, saved_cfg)
+                run_idx = self.cfg.run_idx + 1
+                LOGGER.info(
+                    f"Warm-starting from existing experiment {self.cfg.exp_name}/{run_name} for run {run_idx}"
+                )
+        else:
+            model_load_idx = self.cfg.model_load_idx
+            run_idx = model_load_idx
             LOGGER.info(
-                f"Warm-starting from existing experiment {self.cfg.exp_name}/{run_name} for run {run_idx}"
+                f"Loading run {run_idx} from experiment {self.cfg.exp_name}/{run_name} for evaluation"
             )
 
         with open_dict(self.cfg):
             self.cfg.run_idx = run_idx
+            if not self.cfg.train:
+                self.cfg.run_dir = run_dir
             if not self.warm_start:
-                self.cfg.warm_start_idx = 0
+                self.cfg.model_load_idx = 0
                 self.cfg.run_name = run_name
                 self.cfg.run_dir = run_dir
+            else:
+                self.cfg.model_load_idx = model_load_idx
 
             self.cfg.save = self.cfg.save and self.is_master  # only save on master
 
@@ -249,8 +284,14 @@ class BaseExperiment:
 
         # create experiment directory
         run_dir = Path(self.cfg.run_dir).resolve()
-        if run_dir.exists() and not self.warm_start:
-            raise ValueError(f"Experiment in directory {self.cfg.run_dir} alredy exists. Aborting.")
+        if run_dir.exists() and self.cfg.train and not self.warm_start:
+            if self.cfg.allow_overwrite:
+                LOGGER.info(f"Experiment in directory {self.cfg.run_dir} will be overwritten")
+                shutil.rmtree(self.cfg.run_dir)
+            else:
+                raise ValueError(
+                    f"Experiment in directory {self.cfg.run_dir} already exists. If you want to overwrite it, set allow_overwrite to true. Aborting."
+                )
         os.makedirs(run_dir, exist_ok=True)
         os.makedirs(os.path.join(run_dir, "models"), exist_ok=True)
 
@@ -399,7 +440,7 @@ class BaseExperiment:
         # load existing optimizer if specified
         if self.warm_start:
             model_path = os.path.join(
-                self.cfg.run_dir, "models", f"model_run{self.cfg.warm_start_idx}.pt"
+                self.cfg.run_dir, "models", f"model_run{self.cfg.model_load_idx}.pt"
             )
             try:
                 state_dict = torch.load(model_path, map_location="cpu", weights_only=False)[
@@ -476,7 +517,7 @@ class BaseExperiment:
         # load existing scheduler if specified
         if self.warm_start and self.scheduler is not None:
             model_path = os.path.join(
-                self.cfg.run_dir, "models", f"model_run{self.cfg.warm_start_idx}.pt"
+                self.cfg.run_dir, "models", f"model_run{self.cfg.model_load_idx}.pt"
             )
             try:
                 state_dict = torch.load(model_path, map_location="cpu", weights_only=False)[
@@ -489,12 +530,12 @@ class BaseExperiment:
 
     def _init_scaler(self):
         use_amp = OmegaConf.select(self.cfg.model, "use_amp", default=False)
-        self.scaler = GradScaler(enabled=use_amp)
+        self.scaler = GradScaler("cuda", enabled=use_amp)
 
         # load existing scaler if specified
         if self.warm_start and use_amp:
             model_path = os.path.join(
-                self.cfg.run_dir, "models", f"model_run{self.cfg.warm_start_idx}.pt"
+                self.cfg.run_dir, "models", f"model_run{self.cfg.model_load_idx}.pt"
             )
             try:
                 state_dict = torch.load(model_path, map_location="cpu", weights_only=False)[
@@ -567,8 +608,16 @@ class BaseExperiment:
                 t0 = time.time()
                 val_loss = self._validate(step)
                 val_time += time.time() - t0
+                if self.rank == 0 and self.trial:
+                    self.trial.report(val_loss, step=step)
+                    if self.trial.should_prune():
+                        raise optuna.TrialPruned(
+                            f"Pruned in iteration {step} = epoch {step / len(self.train_loader):.1f} with val_loss={val_loss}"
+                        )
+                    
                 if val_loss < smallest_val_loss:
                     smallest_val_loss = val_loss
+                    self.metric = smallest_val_loss
                     smallest_val_loss_step = step
                     patience = 0
 
@@ -800,6 +849,15 @@ class BaseExperiment:
         if to_mlflow and self.cfg.use_mlflow:
             for key, value in flatten_dict(self.cfg).items():
                 log_mlflow(key, value, kind="param")
+
+    def _load_config(self, run_dir, filename):
+        config_filename = Path(run_dir) / filename
+        if not config_filename.exists():
+            raise FileNotFoundError(
+                f"Tried to load information from existing config but {config_filename} does not exist"
+            )
+        LOGGER.info(f"Loading information from config from {config_filename}")
+        return OmegaConf.load(config_filename)
 
     def _save_model(self, filename=None):
         if not self.cfg.save:

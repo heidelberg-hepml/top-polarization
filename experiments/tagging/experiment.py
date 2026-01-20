@@ -1,9 +1,11 @@
+import glob
 import os
 import time
 
 import numpy as np
 import torch
 from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
+from torch.utils.data import Subset
 from torch_geometric.loader import DataLoader
 
 from experiments.base_experiment import BaseExperiment
@@ -11,6 +13,7 @@ from experiments.logger import LOGGER
 from experiments.mlflow import log_mlflow
 from experiments.tagging.dataset import QuarkTaggingDataset, TestDataset
 from experiments.tagging.embedding import embed_tagging_data, get_num_tagging_features
+from experiments.tagging.likelihood import likelihood_calculator
 from experiments.tagging.plots import plot_mixer
 
 
@@ -22,6 +25,7 @@ class TaggingExperiment(BaseExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Default values
+        self.data = None
         self.num_outputs = 1  # binary classification
         self.extra_scalars = 0  # number of extra scalar input features per particle
 
@@ -66,20 +70,25 @@ class TaggingExperiment(BaseExperiment):
     def init_data(self):
         raise NotImplementedError
 
-    def _init_data(self, Dataset, data_path, dataset_kwargs=None):
-        LOGGER.info(f"Creating {Dataset.__name__} from {data_path}")
+    def _init_data(self, Dataset, data_path, filenames, dataset_kwargs=None):
+        LOGGER.info(f"Creating {Dataset.__name__} from {filenames}")
         t0 = time.time()
         dataset_kwargs = dataset_kwargs or {}
-        self.data_train = Dataset(**dataset_kwargs)
-        self.data_test = Dataset(**dataset_kwargs)
-        self.data_val = Dataset(**dataset_kwargs)
+        # self.data_train = Dataset(**dataset_kwargs)
+        # self.data_test = Dataset(**dataset_kwargs)
+        # self.data_val = Dataset(**dataset_kwargs)
+        self.data = Dataset(**dataset_kwargs)
         kwargs = dict(
             network_float64=self.cfg.use_float64,
             momentum_float64=self.cfg.data.momentum_float64,
         )
-        self.data_train.load_data(data_path, "train", **kwargs)
-        self.data_test.load_data(data_path, "test", **kwargs)
-        self.data_val.load_data(data_path, "val", **kwargs)
+        # self.data_train.load_data_old(filenames, "train", **kwargs)
+        # self.data_test.load_data_old(filenames, "test", **kwargs)
+        # self.data_val.load_data_old(filenames, "val", **kwargs)
+        self.data.load_data(data_path, filenames, **kwargs)
+        self.data_train = Subset(self.data, self.data.get_subset("train"))
+        self.data_val = Subset(self.data, self.data.get_subset("val"))
+        self.data_test = Subset(self.data, self.data.get_subset("test"))
         dt = time.time() - t0
         LOGGER.info(f"Finished creating datasets after {dt:.2f} s = {dt / 60:.2f} min")
 
@@ -139,6 +148,17 @@ class TaggingExperiment(BaseExperiment):
             )
             self.model.init_standardization(embedding["fourmomenta"], embedding["ptr"])
 
+    def _init_experiment(self, run_name_add=None):
+        run_name_add = [
+            f"dataset={self.cfg.data.dataset}",
+            f"mass={self.cfg.data.mass_window}",
+            f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
+            f"lr={self.cfg.training.lr}",
+            f"opt={self.cfg.training.optimizer}",
+            f"bs={self.cfg.training.batchsize}",
+        ]
+        super()._init_experiment(run_name_add=run_name_add)
+
     def _init_optimizer(self, param_groups=None):
         if self.cfg.model.net._target_.rsplit(".", 1)[-1] in [
             "ParticleTransformer",
@@ -181,6 +201,7 @@ class TaggingExperiment(BaseExperiment):
 
     def evaluate(self):
         self.results = {}
+        self.momenta = {}
         loader_dict = {
             "train": self.train_loader,
             "test": self.test_loader,
@@ -189,7 +210,7 @@ class TaggingExperiment(BaseExperiment):
         for set_label in self.cfg.evaluation.eval_set:
             if self.ema is not None:
                 with self.ema.average_parameters():
-                    self.results[set_label] = self._evaluate_single(
+                    self.results[set_label], self.momenta[set_label] = self._evaluate_single(
                         loader_dict[set_label],
                         f"{set_label}_ema",
                         mode="eval",
@@ -198,9 +219,17 @@ class TaggingExperiment(BaseExperiment):
                 self._evaluate_single(loader_dict[set_label], set_label, mode="eval")
 
             else:
-                self.results[set_label] = self._evaluate_single(
+                self.results[set_label], self.momenta[set_label] = self._evaluate_single(
                     loader_dict[set_label], set_label, mode="eval"
                 )
+
+        beta_l, beta_r = likelihood_calculator(self.cfg, self.results, self.momenta)
+        LOGGER.info(
+            f"Degrees of top polarization: {beta_l} for left-handed tops, {beta_r} for right-handed tops"
+        )
+
+        if self.cfg.evaluation.save_labels:
+            self._save_metrics()
 
     @torch.no_grad()
     def _evaluate_single(self, loader, title, mode, step=None):
@@ -212,21 +241,31 @@ class TaggingExperiment(BaseExperiment):
                 f"{len(loader.dataset)} elements, batchsize {loader.batch_size} ###"
             )
         metrics = {}
+        momenta = {}
 
         # predictions
-        labels_true, labels_predict = [], []
+        labels_true, labels_predict, mom_b, mom_hard, mom_soft = [], [], [], [], []
         self.model.eval()
         for batch in loader:
+            fourmomenta, scalars, _, _ = self._extract_batch(batch)
             y_pred, label, _, _ = self._get_ypred_and_label(batch)
-            labels_true.append(label.cpu().float())
-            labels_predict.append(y_pred.cpu().float())
-        labels_true, labels_predict = torch.cat(labels_true), torch.cat(labels_predict)
-
-        if mode == "eval":
-            metrics["labels_true"], metrics["labels_predict"] = (
-                labels_true,
-                labels_predict,
+            labels_true.append(label)
+            labels_predict.append(y_pred)
+            mask_b, mask_hard, mask_soft = (
+                (scalars[:, 1] + scalars[:, 2] == 2),
+                (scalars[:, 1] + scalars[:, 3] == 2),
+                (scalars[:, 1] + scalars[:, 4] == 2),
             )
+            mom_b.append(fourmomenta[mask_b])
+            mom_hard.append(fourmomenta[mask_hard])
+            mom_soft.append(fourmomenta[mask_soft])
+        labels_true, labels_predict, mom_b, mom_hard, mom_soft = (
+            torch.cat(labels_true).cpu().float(),
+            torch.cat(labels_predict).cpu().float(),
+            torch.cat(mom_b).cpu(),
+            torch.cat(mom_hard).cpu(),
+            torch.cat(mom_soft).cpu(),
+        )
 
         # bce loss
         metrics["loss"] = torch.nn.functional.binary_cross_entropy_with_logits(
@@ -244,6 +283,18 @@ class TaggingExperiment(BaseExperiment):
                 # set non-finite predictions to zero and continue
                 labels_predict[~mask] = 0.0
         labels_predict = torch.nn.functional.sigmoid(labels_predict)
+
+        if mode == "eval":
+            metrics["labels_true"], metrics["labels_predict"] = (
+                labels_true,
+                labels_predict,
+            )
+            momenta["q_b"], momenta["q_hard"], momenta["q_soft"] = (
+                mom_b,
+                mom_hard,
+                mom_soft,
+            )
+
         labels_true, labels_predict = labels_true.numpy(), labels_predict.numpy()
 
         # accuracy
@@ -290,12 +341,23 @@ class TaggingExperiment(BaseExperiment):
                 f" & {num_parameters} & {metrics['accuracy']:.4f} & {metrics['auc']:.4f}"
                 f" & {metrics['rej03']:.0f} & {metrics['rej05']:.0f} & {metrics['rej08']:.0f} \\\\"
             )
-        return metrics
+        return metrics, momenta
+
+    def _save_metrics(self):
+        metric_path = os.path.join(self.cfg.run_dir, f"preds_{self.cfg.run_idx}")
+        os.makedirs(metric_path, exist_ok=True)
+        LOGGER.info(f"Saving labels in {metric_path}")
+
+        file = f"{metric_path}/labels.txt"
+        labels = np.stack(
+            (self.results["test"]["labels_true"], self.results["test"]["labels_predict"]), axis=-1
+        )
+        np.savetxt(file, labels)
 
     def plot(self):
         plot_path = os.path.join(self.cfg.run_dir, f"plots_{self.cfg.run_idx}")
         os.makedirs(plot_path, exist_ok=True)
-        title = type(self.model.net).__name__
+        title = f"{type(self.model.net).__name__} - {self.cfg.data.dataset}"
         LOGGER.info(f"Creating plots in {plot_path}")
 
         if (
@@ -328,9 +390,9 @@ class TaggingExperiment(BaseExperiment):
     def _validate(self, step):
         if self.ema is not None:
             with self.ema.average_parameters():
-                metrics = self._evaluate_single(self.val_loader, "val", mode="val", step=step)
+                metrics, _ = self._evaluate_single(self.val_loader, "val", mode="val", step=step)
         else:
-            metrics = self._evaluate_single(self.val_loader, "val", mode="val", step=step)
+            metrics, _ = self._evaluate_single(self.val_loader, "val", mode="val", step=step)
         self.val_loss.append(metrics["loss"])
         return metrics["loss"]
 
@@ -397,40 +459,56 @@ class QuarkTaggingExperiment(TaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_outputs = 1
-        self.extra_scalars = 5
+        self.extra_scalars = 5  # Differentiate between fatjet, subjets, and constituents
         if self.cfg.data.pid:
             self.extra_scalars += 6
 
-    def init_data(self):
+    def init_data(self, mode="train"):
+        if self.cfg.data.dataset_eval and mode != "train":
+            dataset = self.cfg.data.dataset_eval
+        else:
+            dataset = self.cfg.data.dataset
+
+        if self.data and (dataset == self.cfg.data.dataset):
+            return
+
         if self.cfg.data.mass_window == "strict":
             top_window = "165_190"
         elif self.cfg.data.mass_window == "loose":
             top_window = "120_220"
         else:
             raise ValueError(f"Unknown mass window definition '{self.cfg.data.mass_window}'")
-        if self.cfg.data.tag == "down":
+
+        if dataset == "unpolarized":
             tag_id = 1
-        elif self.cfg.data.tag == "bottom":
-            tag_id = 5
-        else:
-            raise ValueError(f"Particle '{self.cfg.data.tag}' not implemented for tagging")
-        if self.cfg.data.dataset == "unpolarized":
-            data_path = [
-                os.path.join(
-                    self.cfg.data.data_dir,
-                    f"polarization_top_0_{top_window}_train_{i}.parquet",
+            filenames = sorted(
+                glob.glob(
+                    os.path.join(
+                        self.cfg.data.data_dir,
+                        f"polarization_top_0_{top_window}_train_*.parquet",
+                    )
                 )
-                for i in range(1, 4)
-            ]
-        elif self.cfg.data.dataset == "polarized":
-            data_path = [
-                os.path.join(
-                    self.cfg.data.data_dir,
-                    f"polarization_top_{p}_{top_window}_train_{i}.parquet",
-                )
-                for p in ["L", "R"]
-                for i in range(1, 4)
-            ]
+            )
+        elif dataset == "polarized":
+            tag_id = -1
+            filenames = {
+                "L": sorted(
+                    glob.glob(
+                        os.path.join(
+                            self.cfg.data.data_dir,
+                            f"polarization_top_L_{top_window}_train_*.parquet",
+                        )
+                    )
+                ),
+                "R": sorted(
+                    glob.glob(
+                        os.path.join(
+                            self.cfg.data.data_dir,
+                            f"polarization_top_R_{top_window}_train_*.parquet",
+                        )
+                    )
+                ),
+            }
         else:
             raise ValueError(f"Unknown dataset type '{self.cfg.data.dataset}'")
 
@@ -438,5 +516,6 @@ class QuarkTaggingExperiment(TaggingExperiment):
             "length": getattr(self.cfg.data, "length", None),
             "tag": tag_id,
             "pid": self.cfg.data.pid,
+            "use_cache": self.cfg.data.use_cache,
         }
-        self._init_data(QuarkTaggingDataset, data_path, dataset_kwargs)
+        self._init_data(QuarkTaggingDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
