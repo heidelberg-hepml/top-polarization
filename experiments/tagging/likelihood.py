@@ -4,6 +4,7 @@ from lloca.utils.polar_decomposition import restframe_boost
 
 
 def get_polarization(cfg, results, momenta):
+    pol = {"efficiency": [], "pol_l": [], "pol_r": []}
     labels = torch.stack(
         (results["test"]["labels_true"], 
         results["test"]["labels_predict"]), 
@@ -15,12 +16,16 @@ def get_polarization(cfg, results, momenta):
         momenta["test"]["q_soft"]), 
         axis=-1,
     )
-    for eff in [1., 0.5, 0.2]:
+    efficiencies = [1., 0.5, 0.2]
+    for eff in efficiencies:
+        pol["efficiency"].append(eff)
         if cfg.data.dataset == "polarized":
-            beta_l, beta_r = polarized(labels, efficiency=1)
+            beta_l, beta_r = polarized(labels, efficiency=eff)
         if cfg.data.dataset == "unpolarized":
-            beta_l, beta_r = unpolarized(labels, jets, efficiency=1)
-        print(f"Polarization at efficiency {eff}: Left: {beta_l}, Right: {beta_r}")
+            beta_l, beta_r = unpolarized(labels, jets, efficiency=eff)
+        pol["pol_l"].append(beta_l)
+        pol["pol_r"].append(beta_r)
+    return pol
 
 
 def polarized(labels, efficiency=1):
@@ -36,11 +41,8 @@ def polarized(labels, efficiency=1):
 
 def unpolarized(labels, jets, efficiency=1):
     mask = cut_efficiency(labels, efficiency=efficiency)
-    print(f"Mask: {mask}")
     labels_cut = labels[mask]
-    print(f"Labels masked: {labels_cut}")
     jets_cut = jets[mask]
-    print(f"Jets masked: {jets_cut}")
     beta = pol_opt(labels_cut[:, -1], jets_cut)
     beta_l = torch.mean(beta[labels_cut[:, 0] == 0])
     beta_r = torch.mean(beta[labels_cut[:, 0] == 1])

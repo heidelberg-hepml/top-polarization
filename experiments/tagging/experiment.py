@@ -217,7 +217,12 @@ class TaggingExperiment(BaseExperiment):
                     loader_dict[set_label], set_label, mode="eval"
                 )
 
-        get_polarization(self.cfg, self.results, self.momenta)
+        pol = get_polarization(self.cfg, self.results, self.momenta)
+        LOGGER.info(
+            f'Degrees of polarization: '
+            f'{pol["pol_l"][0]} (L) and {pol["pol_r"][0]} (R) at efficiency {pol["efficiency"][0]}, '
+            f'{pol["pol_l"][-1]} (L) and {pol["pol_r"][-1]} (R) at efficiency {pol["efficiency"][-1]}, '
+        )
 
         if self.cfg.evaluation.save_labels:
             self._save_metrics()

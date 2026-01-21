@@ -37,7 +37,7 @@ def main(cfg):
         )
         study.optimize(
             lambda trial: objective(cfg, trial), 
-            n_trials=10,
+            n_trials=20,
             gc_after_trial=True,
         )
         print(f"Best trial: {study.best_trial.params}")
@@ -53,6 +53,7 @@ def objective(base_cfg, trial=None):
         cfg.run_name = os.path.join(cfg.run_name, f"trial_{trial.number}")
         cfg.optuna_trial_id = trial.number
         cfg.training.lr = trial.suggest_float("learning_rate", 1e-6, 1e-3, log=True)
+        cfg.training.scheduler = trial.suggest_categorical("scheduler", ["CosineAnnealingLR", "OneCycleLR", "ReduceLROnPlateau"])
         cfg.training.batchsize = trial.suggest_categorical("batchsize", [32, 64, 128, 256])
         cfg.training.optimizer = trial.suggest_categorical("optimizer", ["Lion", "AdamW"])
         cfg.training.weight_decay = trial.suggest_categorical("weight_decay", [0.2, 0.5, 1., 2., 5.])
@@ -62,19 +63,22 @@ def objective(base_cfg, trial=None):
 
     world_size = torch.cuda.device_count() if torch.cuda.is_available() else 1
 
-    if world_size > 1:
-        os.environ.setdefault("TORCH_NCCL_ASYNC_ERROR_HANDLING", "1")
-        os.environ.setdefault("NCCL_DEBUG", "WARN")
-        os.environ.setdefault("NCCL_IB_DISABLE", "1")
-        os.environ.setdefault("CUDA_DEVICE_MAX_CONNECTIONS", "1")
-        os.environ.setdefault("OMP_NUM_THREADS", "1")
+    try:
+        if world_size > 1:
+            os.environ.setdefault("TORCH_NCCL_ASYNC_ERROR_HANDLING", "1")
+            os.environ.setdefault("NCCL_DEBUG", "WARN")
+            os.environ.setdefault("NCCL_IB_DISABLE", "1")
+            os.environ.setdefault("CUDA_DEVICE_MAX_CONNECTIONS", "1")
+            os.environ.setdefault("OMP_NUM_THREADS", "1")
 
-        _set_common_env(world_size)
-        mp.spawn(ddp_worker, nprocs=world_size, args=(cfg,trial))
-        metric = GLOBAL_METRIC
-    else:
-        # no GPU or only one GPU -> run on main process
-        metric = ddp_worker(rank=0, cfg=cfg, trial=trial)
+            _set_common_env(world_size)
+            mp.spawn(ddp_worker, nprocs=world_size, args=(cfg,trial))
+            metric = GLOBAL_METRIC
+        else:
+            # no GPU or only one GPU -> run on main process
+            metric = ddp_worker(rank=0, cfg=cfg, trial=trial)
+    except optuna.TrialPruned:
+        raise 
 
     return metric
 
@@ -112,23 +116,19 @@ def ddp_worker(rank, cfg, trial=None):
     else:
         raise ValueError(f"exp_type {cfg.exp_type} not implemented")
 
-    try:
-        exp = constructor(cfg, rank, world_size, trial)
-        metric = exp()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        if world_size > 1:
-            metric_tensor = torch.tensor(metric if rank == 0 else 0.0, device=rank)
-            dist.broadcast(metric_tensor, src=0)
-            metric = metric_tensor.item()
+    exp = constructor(cfg, rank, world_size, trial)
+    metric = exp()
+    if world_size > 1:
+        metric_tensor = torch.tensor(metric if rank == 0 else 0.0, device=rank)
+        dist.broadcast(metric_tensor, src=0)
+        metric = metric_tensor.item()
 
-            dist.barrier(device_ids=[rank])
-            dist.destroy_process_group()
+        dist.barrier(device_ids=[rank])
+        dist.destroy_process_group()
 
-        if rank == 0:
-            GLOBAL_METRIC = float(metric) if metric else None
-            return metric
+    if rank == 0:
+        GLOBAL_METRIC = float(metric) if metric else None
+        return metric
 
 
 def _set_common_env(world_size):
