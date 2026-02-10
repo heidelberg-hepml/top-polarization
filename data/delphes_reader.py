@@ -9,7 +9,7 @@ import pylhe
 from pylorentz import Momentum4
 import ROOT
 import fastjet as fj
-ROOT.gSystem.Load('/bigwork/nhbbmene/PostDoc/MadGraph/MG5_aMC_v3_6_4/Delphes/libDelphes.so')
+ROOT.gSystem.Load('/bigwork/nhbbmene/PHD/MadGraph/MG5_aMC_v3_5_4/Delphes/libDelphes.so')
 
 class DelphesReader():
 
@@ -20,10 +20,14 @@ class DelphesReader():
         self.top_mass = top_mass
         self.NEvents = 0
         self.NFatjetFail = 0
+        self.NLepFail = 0
         self.NBTagFail = 0
         self.KinematicsFail = 0
+        self.LeptonIdentificationFail = 0
+        self.BIdentificationFail = 0
         self.DeclusteringFail = 0
-        self.TopmassFail = 0
+        self.TopMassFailHad = 0
+        self.TopMassFailLep = 0
         self.JetMatchFail = 0
         self.FailFail = 0
 
@@ -52,18 +56,35 @@ class DelphesReader():
         missing = expected - set(int(f) for f in files_sorted)
         print(f"Expected {files_sorted[-1]} files. Missing files: {sorted(list(missing))}")
 
-    def _deltaR(self, p1, p2, train_data):
+    def _delphes_to_fj(self, obj):
+        px = obj.PT * math.cos(obj.Phi)
+        py = obj.PT * math.sin(obj.Phi)
+        pz = obj.PT * math.sinh(obj.Eta)
+        E  = obj.PT * math.cosh(obj.Eta)
+        return fj.PseudoJet(px, py, pz, E)
+
+    def _phi(self, p):
+        return (
+            p.phi() if callable(getattr(p, "phi", None)) else
+            p.phi   if hasattr(p, "phi") else
+            p.Phi
+        )
+
+    def _eta(self, p):
+        return (
+            p.eta() if callable(getattr(p, "eta", None)) else
+            p.eta   if hasattr(p, "eta") else
+            p.Eta
+        )
+
+    def _deltaR(self, p1, p2):
 
         '''
         Efficient deltaR calculation between two jets.
         '''
 
-        if train_data:
-            dphi = abs(p1.phi() - p2.phi)
-            deta = p1.eta() - p2.eta
-        else:
-            dphi = abs(p1.phi() - p2.Phi)
-            deta = p1.eta() - p2.Eta
+        dphi = abs(self._phi(p1) - self._phi(p2))
+        deta = self._eta(p1) - self._eta(p2)
 
         if dphi > math.pi:
             dphi = dphi - 2 * math.pi
@@ -81,8 +102,17 @@ class DelphesReader():
             s = s + j
         return s.m()
 
-    def _get_fj_parents(self, cluster, jet):
+    def _is_in_jet_radius(self, particle, jet):
 
+        dist = self._deltaR(particle, jet)
+        
+        if dist > 1.5:
+            return False
+
+        return True
+
+    def _get_fj_parents(self, cluster, jet):
+    
         '''
         Get the two parent jets of a given jet in a FastJet ClusterSequence.
         '''
@@ -134,7 +164,7 @@ class DelphesReader():
                 parent1, parent2 = self._get_fj_parents(cluster, child)
                 if parent1 is None or parent2 is None:
                     return [child]
-
+                
                 if parent2.m() > parent1.m():
                     parent1, parent2 = parent2, parent1
 
@@ -146,9 +176,9 @@ class DelphesReader():
 
                 if parent2.m() > m_max:
                     return rec_pnet(parent1) + rec_pnet(parent2)
-
+                
                 return [child]
-
+            
             subjets = rec_pnet(jet_fj)
 
         else:
@@ -162,7 +192,7 @@ class DelphesReader():
                 parent1, parent2 = self._get_fj_parents(cluster, child)
                 if parent1 is None or parent2 is None:
                     return [child]
-
+                
                 if parent2.pt() > parent1.pt():
                     parent1, parent2 = parent2, parent1
 
@@ -177,19 +207,19 @@ class DelphesReader():
                         return rec_CA(parent1, pt_hard=pt_hard, depth=1) + rec_CA(parent2, pt_hard=pt_hard, depth=1)
                     if depth == 1:
                         return [parent1, parent2]
-
+                
                 return [child]
-
+            
             subjets = rec_CA(jet_fj, pt_hard=jet_fj.pt())
 
         if len(subjets) <= 2:
             return None
-
+                
         subjets = sorted(subjets, key=lambda s: s.pt(), reverse=True)
 
         return subjets[:4]
 
-    def _top_mass_reco(self, subjets, top_mass = 173):
+    def _top_mass_reco_had(self, subjets, mtop = 173):
 
         '''
         Check if the subjets can reconstruct a top quark mass within the allowed mass window.
@@ -201,12 +231,12 @@ class DelphesReader():
 
         best_subjets = subjets
         m = self._inv_mass(subjets)
-        best_diff = abs(m - top_mass)
+        best_diff = abs(m - mtop)
         best_mass = m
 
         for candidates in itertools.combinations(subjets, 3):
             m = self._inv_mass(candidates)
-            diff = abs(m - top_mass)
+            diff = abs(m - mtop)
             if diff < best_diff:
                 best_diff = diff
                 best_mass = m
@@ -219,14 +249,14 @@ class DelphesReader():
 
     def _match_parton_jets(self, partons, subjets, max_dr=0.4):
 
-        '''
+        ''' 
         Match the subjets to parton-level objects for the training data.
         '''
 
         matches = []
 
         ids = [p.id for p in partons]
-        if ids[-2] in [11, -11, 13, -13]:
+        if ids[-2] in [11, -11, 13, -13]: 
             hadronic = "top"
         elif ids[-2] in [1, -1, 2, -2, 3, -3, 4, -4]:
             hadronic = "atop"
@@ -245,7 +275,7 @@ class DelphesReader():
         for tag, ps, uidx in zip(["b", "u", "d"], [b_hadronic, u_hadronic, d_hadronic], [5, 2, 1]):
             drs = []
             for sj in subjets:
-                drs.append(self._deltaR(sj, Momentum4(ps.e, ps.px, ps.py, ps.pz), train_data=True))
+                drs.append(self._deltaR(sj, Momentum4(ps.e, ps.px, ps.py, ps.pz)))
             min_dr = min(drs)
             min_idx = drs.index(min_dr)
             subjets[min_idx].set_user_index(uidx)
@@ -255,7 +285,7 @@ class DelphesReader():
             return None
         if any(match[2] > max_dr for match in matches):
             return None
-
+        
         b_cand = subjets[matches[0][1]]
         subjets = [sj for c, sj in enumerate(subjets) if c in [m[1] for m in matches]]
 
@@ -272,7 +302,7 @@ class DelphesReader():
 
         for sj in subjets:
             for b in b_tagged_jets:
-                dr = self._deltaR(sj, b, train_data=False)
+                dr = self._deltaR(sj, b)
                 if dr < min_dr:
                     min_dr = dr
                     sj_cand = sj
@@ -282,32 +312,140 @@ class DelphesReader():
 
         return None
 
-    def _build_output(self, fatjet, subjets, train_data):
+    def _reconstruct_w(self, l, neutrino, w_mass=80):
+        pxnu, pynu = neutrino.MET * math.cos(neutrino.Phi), neutrino.MET * math.sin(neutrino.Phi)
+
+        coeff = (w_mass**2/2 + l.px()*pxnu + l.py()*pynu)
+        transverse_cond = coeff**2 - (l.pt())**2 * (neutrino.MET)**2
+
+        if transverse_cond < 0:
+            met_corrected = coeff / l.pt()
+            pxnu, pynu = met_corrected * math.cos(neutrino.Phi), met_corrected * math.sin(neutrino.Phi)
+            pznu = coeff * l.pz() / (l.pt())**2
+            enu = math.sqrt(met_corrected**2 + pznu**2)
+        else:
+            pznu1 = coeff * l.pz() / (l.pt())**2 + (l.e() / (l.pt())**2) * math.sqrt( transverse_cond )
+            pznu2 = coeff * l.pz() / (l.pt())**2 - (l.e() / (l.pt())**2) * math.sqrt( transverse_cond )
+            pznu1, pznu2 = pznu1.real, pznu2.real
+            pznu = pznu1 if abs(pznu1) <= abs(pznu2) else pznu2
+            enu = math.sqrt(neutrino.MET**2 + pznu**2)
+
+        nu = fj.PseudoJet(pxnu, pynu, pznu, enu)
+
+        w = l + nu
+
+        return w
+
+    def _top_mass_reco_lep(self, w, l, b_quark):
+
+        b = self._delphes_to_fj(b_quark)
+
+        t1 = w + b
+        if t1.m() < int(self.top_mass[0]) or t1.m() > int(self.top_mass[1]):
+            t2 = w + b - l
+            if t2.m() < int(self.top_mass[0]) or t2.m() > int(self.top_mass[1]):
+                return None
+            else:
+                return t2
+        return t1
+
+    def _hadronic_top_reconstruction(self, top_cand, partons, b_tagged_jets, train_data=True):
+
+        # Decluster hadronic fat jet into subjets
+        subjets = self._decluster(top_cand.Constituents)
+        if subjets is None:
+            self.DeclusteringFail += 1
+            return None, None
+
+        # Reconstruct top mass from subjets
+        top_subjets = self._top_mass_reco_had(subjets)
+        if top_subjets is None:
+            self.TopMassFailHad += 1
+            return None, None
+
+        # Match hadronic subjets to parton jets (training data) or apply b-tagging (test data)
+        if train_data:
+            top_subjets_tagged = self._match_parton_jets(partons, top_subjets)
+        else:
+            top_subjets_tagged = self._match_delphes_b_jet(b_tagged_jets, top_subjets)
+
+        if top_subjets_tagged is None:
+            self.JetMatchFail += 1
+            return None, None
+
+        jets_failfail = self._top_mass_reco_had(top_subjets_tagged)
+        if jets_failfail is None:
+            self.FailFail += 1
+            return None, None
+
+        top = top_subjets_tagged[0]+top_subjets_tagged[1]+top_subjets_tagged[2]
+
+        return top, top_subjets_tagged
+
+    def _leptonic_top_reconstruction(self, partons, lepton_cand, neutrino_cand, b_cand):
+
+        lepton = self._delphes_to_fj(lepton_cand)
+
+        # Reconstruct neutrino pz with w mass criteria
+        w_boson_cand = self._reconstruct_w(lepton, neutrino_cand)
+
+        # Reconstruct top mass
+        top = self._top_mass_reco_lep(w_boson_cand, lepton, b_cand)
+        if top is None:
+            self.TopMassFailLep += 1
+            return None, None
+
+        return top, lepton
+
+    def _build_output(self, tophad, subjets, toplep, lepton, train_data):
 
         '''
         Adds a record for a single event to the output awkward array.
         '''
 
         self.jet_data.begin_record()
-        ## Event record ##
+        ## Begin event record ##
 
-        self.jet_data.field("FatJet")
+        self.jet_data.field("TopLep")
         self.jet_data.begin_record()
-        ## FatJet record ##
+        ## Begin leptonic top record ##
 
-        self.jet_data.field("pt").real(fatjet.PT)
-        self.jet_data.field("phi").real(fatjet.Phi)
-        self.jet_data.field("eta").real(fatjet.Eta)
-        self.jet_data.field("mass").real(fatjet.Mass)
+        self.jet_data.field("pt").real(toplep.pt())
+        self.jet_data.field("phi").real(toplep.phi())
+        self.jet_data.field("eta").real(toplep.eta())
+        self.jet_data.field("mass").real(toplep.m())
 
-        ## FatJet record ##
+        ## End leptonic top record ##
+        self.jet_data.end_record()
+
+        self.jet_data.field("Lepton")
+        self.jet_data.begin_record()
+        ## Begin lepton record ##
+
+        self.jet_data.field("pt").real(lepton.pt())
+        self.jet_data.field("phi").real(lepton.phi())
+        self.jet_data.field("eta").real(lepton.eta())
+
+        ## End lepton record ##
+        self.jet_data.end_record()
+
+        self.jet_data.field("TopHad")
+        self.jet_data.begin_record()
+        ## Begin hadronic top record ##
+
+        self.jet_data.field("pt").real(tophad.pt())
+        self.jet_data.field("phi").real(tophad.phi())
+        self.jet_data.field("eta").real(tophad.eta())
+        self.jet_data.field("mass").real(tophad.m())
+
+        ## End hadronic top record ##
         self.jet_data.end_record()
 
         self.jet_data.field("Subjets")
         self.jet_data.begin_list()
         for c, subjet in enumerate(subjets):
             self.jet_data.begin_record()
-            ## Subjet records ##
+            ## Begin subjet records ## 
 
             self.jet_data.field("pt").real(subjet.pt())
             self.jet_data.field("phi").real(subjet.phi())
@@ -326,7 +464,7 @@ class DelphesReader():
             self.jet_data.begin_list()
             for constit in subjet.constituents():
                 self.jet_data.begin_record()
-                ## Subjet constits records ##
+                ## Begin subjet constits records ##
 
                 self.jet_data.field("pt").real(constit.pt())
                 self.jet_data.field("phi").real(constit.phi())
@@ -335,15 +473,15 @@ class DelphesReader():
                 self.jet_data.field("charge").real((constit.user_index() % 3) - 1)
                 self.jet_data.field("pid").real(constit.user_index() // 3)
 
-                ## Subjet constits records ##
+                ## End subjet constits records ##
                 self.jet_data.end_record()
             self.jet_data.end_list()
 
-            ## Subjet records ##
+            ## End subjet records ## 
             self.jet_data.end_record()
         self.jet_data.end_list()
 
-        ## Event record ##
+        ## End event record ##
         self.jet_data.end_record()
 
     def _get_single_delphes(self, file, file_parton, train_data):
@@ -353,71 +491,90 @@ class DelphesReader():
             delphesTree = inFile.Get('Delphes')
             partonInfo = pylhe.read_lhe_with_attributes(file_parton)
             self.NEvents += delphesTree.GetEntries()
-            # print(f"{delphesTree.GetEntries()} events found in file {file.split('temp_')[-1].split('/')[0]}.")
         except:
             print(f"No event found in file {file}.")
             return
 
         rec_fat_jets = ROOT.TClonesArray("Jet")
         rec_jets = ROOT.TClonesArray("Jet")
+        iso_electrons = ROOT.TClonesArray("Electron")
+        iso_muons = ROOT.TClonesArray("Muon")
+        met = ROOT.TClonesArray("MissingET")
         delphesTree.SetBranchAddress("FatJet", rec_fat_jets)
         delphesTree.SetBranchAddress("Jet", rec_jets)
+        delphesTree.SetBranchAddress("Electron", iso_electrons)
+        delphesTree.SetBranchAddress("Muon", iso_muons)
+        delphesTree.SetBranchAddress("MissingET", met)
 
         for event, event_parton in zip(delphesTree, partonInfo):
-
+            
             # Cut: Require at least 1 FatJet
             if rec_fat_jets.GetEntriesFast() == 0:
                 self.NFatjetFail += 1
                 continue
 
-            # Cut: Require at least 1 B-tagged Jet
-            if rec_jets.GetEntriesFast() == 0 or all(j.BTag == 0 for j in rec_jets):
+            # Cut: Require exactly one isolated lepton. Note that this is a ttbar cut. It should be relaxed to at least one lepton for ttH.
+            if iso_electrons.GetEntriesFast() + iso_muons.GetEntriesFast() != 1:
+                self.NLepFail += 1
+                continue
+
+            # Cut: Require at least 2 B-tagged Jets
+            if rec_jets.GetEntriesFast() == 0 or sum(j.BTag != 0 for j in rec_jets) < 2:
                 self.NBTagFail += 1
                 continue
 
             if rec_fat_jets.GetEntriesFast() < 2:
                 rec_leading_jet = rec_fat_jets.At(0)
+                rec_subleading_jet = None
             else:
                 if rec_fat_jets.At(0).PT > rec_fat_jets.At(1).PT:
                     rec_leading_jet = rec_fat_jets.At(0)
+                    rec_subleading_jet = rec_fat_jets.At(1)
                 else:
                     rec_leading_jet = rec_fat_jets.At(1)
+                    rec_subleading_jet = rec_fat_jets.At(0)
 
-            # Cut: Require minimum pT and maximum eta for leading fat jet
+            # Cut: Require minimum pT and maximum eta for leading fat jet 
             if rec_leading_jet.PT < 250 or abs(rec_leading_jet.Eta) > 3.:
                 self.KinematicsFail += 1
                 continue
 
-            # Decluster hadronic fat jet into subjets
-            subjets = self._decluster(rec_leading_jet.Constituents)
-            if subjets is None:
-                self.DeclusteringFail += 1
-                continue
+            # Get all needed particles
+            partons = event_parton.particles[2:]
+            b_tagged_jets = [j for j in rec_jets if j.BTag == 1]
+            if iso_electrons.GetEntriesFast() == 1:
+                iso_lepton = iso_electrons.At(0)
+            elif iso_muons.GetEntriesFast() == 1:
+                iso_lepton = iso_muons.At(0)
+            missing_et = met.At(0)
 
-            # Reconstruct top mass from subjets
-            top_subjets = self._top_mass_reco(subjets)
-            if top_subjets is None:
-                self.TopmassFail += 1
-                continue
+            # Choose candidate for leptonically decaying top if two FatJets are present
+            if rec_subleading_jet:
+                if self._is_in_jet_radius(iso_lepton, rec_leading_jet) + self._is_in_jet_radius(iso_lepton, rec_subleading_jet) != 1:
+                    self.LeptonIdentificationFail += 1
+                    continue
 
-            # Match hadronic subjets to parton jets (training data) or apply b-tagging (test data)
-            if train_data:
-                partons = event_parton.particles[2:]
-                top_subjets_tagged = self._match_parton_jets(partons, top_subjets)
+                if self._is_in_jet_radius(iso_lepton, rec_leading_jet):
+                    hadronic_top_cand = rec_subleading_jet
+                elif self._is_in_jet_radius(iso_lepton, rec_subleading_jet):
+                    hadronic_top_cand = rec_leading_jet
             else:
-                b_tagged_jets = [j for j in rec_jets if j.BTag == 1]
-                top_subjets_tagged = self._match_delphes_b_jet(b_tagged_jets, top_subjets)
+                hadronic_top_cand = rec_leading_jet
 
-            if top_subjets_tagged is None:
-                self.JetMatchFail += 1
+            hadronic_top, hadronic_top_subjets = self._hadronic_top_reconstruction(hadronic_top_cand, partons, b_tagged_jets, train_data)
+            if not hadronic_top_subjets:
                 continue
 
-            jets_failfail = self._top_mass_reco(top_subjets_tagged)
-            if jets_failfail is None:
-                self.FailFail += 1
+            if self._deltaR(b_tagged_jets[0], hadronic_top_subjets[0]) < self._deltaR(b_tagged_jets[1], hadronic_top_subjets[0]):
+                b_lep_cand = b_tagged_jets[1]
+            else:
+                b_lep_cand = b_tagged_jets[0]
+
+            leptonic_top, lepton = self._leptonic_top_reconstruction(partons, iso_lepton, missing_et, b_lep_cand)
+            if not lepton:
                 continue
 
-            self._build_output(rec_leading_jet, top_subjets_tagged, train_data)
+            self._build_output(hadronic_top, hadronic_top_subjets, leptonic_top, lepton, train_data) # Also save leptonic top and lepton
 
     def change_clustering(self):
         self.pnet_clustering = not self.pnet_clustering
@@ -425,15 +582,31 @@ class DelphesReader():
 
     def inspect_fails(self):
 
-        print(f"Fails due to missing fatjet: {self.NFatjetFail}")
-        print(f"Fails due to missing b-tagged jet: {self.NBTagFail}")
-        print(f"Fails due to kinematic cuts: {self.KinematicsFail}")
-        print(f"Fails due to declustering: {self.DeclusteringFail}")
-        print(f"Fails due to top mass reconstruction: {self.TopmassFail}")
-        print(f"Fails due to parton jet matching: {self.JetMatchFail}")
-        print(f"Fails due to top mass after matching: {self.FailFail}")
+        events = self.NEvents
+        print(f"Percentage of events cut due to missing fatjet: {100 * self.NFatjetFail / events:.2f}%")
+        events -= self.NFatjetFail
+        print(f"Percentage of events cut due to not having exactly one isolated lepton: {100 * self.NLepFail / events:.2f}%")
+        events -= self.NLepFail
+        print(f"Percentage of events cut due to missing b-tagged jet: {100 * self.NBTagFail / events:.2f}%")
+        events -= self.NBTagFail
+        print(f"Percentage of events cut due to kinematic cuts: {100 * self.KinematicsFail / events:.2f}%")
+        events -= self.KinematicsFail
+        print(f"Percentage of events cut due to unclear lepton affiliation: {100 * self.LeptonIdentificationFail / events:.2f}%")
+        events -= self.LeptonIdentificationFail
+        print(f"Percentage of events cut due to unclear b quark affiliation: {100 * self.BIdentificationFail / events:.2f}%")
+        events -= self.BIdentificationFail
+        print(f"Percentage of events cut due to declustering: {100 * self.DeclusteringFail / events:.2f}%")
+        events -= self.DeclusteringFail
+        print(f"Percentage of events cut due to hadronic top mass reconstruction: {100 * self.TopMassFailHad / events:.2f}%")
+        events -= self.TopMassFailHad
+        print(f"Percentage of events cut due to parton jet matching: {100 * self.JetMatchFail / events:.2f}%")
+        events -= self.JetMatchFail
+        print(f"Percentage of events cut due to top mass after matching: {100 * self.FailFail / events:.2f}%")
+        events -= self.FailFail
+        print(f"Percentage of events cut due to leptonic top mass reconstruction: {100 * self.TopMassFailLep / events:.2f}%")
+        events -= self.TopMassFailLep
         print(f"Total events processed: {self.NEvents}")
-        print(f"Surviving number of events: {len(self.jet_data.snapshot().FatJet.pt)}")
+        print(f"Surviving number of events: {events}")
 
     def read_delphes(self, filepath, train_data=True, detect_missing=False):
 

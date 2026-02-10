@@ -21,20 +21,37 @@ And the corresponding fix is here https://github.com/mg5amcnlo/mg5amcnlo/commit/
 
 The data is saved in the form of an awkward array and can be loaded with ak.from_parquet(data)
 
+The two top quarks are reconstructed from the detector level objects. 
+
 The training data hadronic subjets are matched to the respective parton-level objects via their PID (b-quark, u-quark, d-quark)
 
-The test data hadronic subjets are b-tagged according to the information in the Delphes file
+The following cuts are applied to the detector level events:
 
-It data has the following structure:
+        - Exactly one isolated lepton
+        - At least two b-tagged jets
+        - At least one FatJet with pT > 250 GeV and eta < 3
+
+Reconstructed top quarks are required to have a mass within a pre-specified mass window
+
+The saved data has the following structure:
 
 AWKWARD ARRAY
 
-        - FatJet
+        - TopLep (Reconstructed leptonically decaying top quark)
                 - pt
                 - eta
                 - phi
                 - mass
-        -Subjets
+        - Lepton 
+                - pt
+                - eta
+                - phi
+        - TopHad (Reconstructed hadronically decaying top quark)
+                - pt
+                - eta
+                - phi
+                - mass
+        -Subjets (From TopHad)
                 - pt
                 - eta
                 - phi
