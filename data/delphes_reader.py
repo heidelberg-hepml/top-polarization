@@ -397,7 +397,7 @@ class DelphesReader():
 
         return top, lepton
 
-    def _build_output(self, partontop, partonatop, partondown, tophad, subjets, toplep, lepton, lep_charge, train_data):
+    def _build_output(self, tophad, subjets, toplep, lepton, lep_charge, train_data):
 
         '''
         Adds a record for a single event to the output awkward array.
@@ -405,42 +405,6 @@ class DelphesReader():
 
         self.jet_data.begin_record()
         ## Begin event record ##
-
-        self.jet_data.field("PartTop")
-        self.jet_data.begin_record()
-        ## Begin leptonic top record ##
-
-        self.jet_data.field("pt").real(partontop.pt())
-        self.jet_data.field("phi").real(partontop.phi())
-        self.jet_data.field("eta").real(partontop.eta())
-        self.jet_data.field("mass").real(partontop.m())
-
-        ## End leptonic top record ##
-        self.jet_data.end_record()
-
-        self.jet_data.field("PartATop")
-        self.jet_data.begin_record()
-        ## Begin leptonic top record ##
-
-        self.jet_data.field("pt").real(partonatop.pt())
-        self.jet_data.field("phi").real(partonatop.phi())
-        self.jet_data.field("eta").real(partonatop.eta())
-        self.jet_data.field("mass").real(partonatop.m())
-
-        ## End leptonic top record ##
-        self.jet_data.end_record()
-
-        self.jet_data.field("PartDown")
-        self.jet_data.begin_record()
-        ## Begin leptonic top record ##
-
-        self.jet_data.field("pt").real(partondown.pt())
-        self.jet_data.field("phi").real(partondown.phi())
-        self.jet_data.field("eta").real(partondown.eta())
-        self.jet_data.field("mass").real(partondown.m())
-
-        ## End leptonic top record ##
-        self.jet_data.end_record()
 
         self.jet_data.field("TopLep")
         self.jet_data.begin_record()
@@ -615,7 +579,7 @@ class DelphesReader():
 
             lep_charge = iso_lepton.Charge
 
-            self._build_output(parton_top, parton_antitop, parton_down, hadronic_top, hadronic_top_subjets, leptonic_top, lepton, lep_charge, train_data)
+            self._build_output(hadronic_top, hadronic_top_subjets, leptonic_top, lepton, lep_charge, train_data)
 
     def change_clustering(self):
         self.pnet_clustering = not self.pnet_clustering
