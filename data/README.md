@@ -46,6 +46,7 @@ AWKWARD ARRAY
                 - pt
                 - eta
                 - phi
+                - charge
         - TopHad (Reconstructed hadronically decaying top quark)
                 - pt
                 - eta

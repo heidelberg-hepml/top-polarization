@@ -365,7 +365,7 @@ class DelphesReader():
 
         # Match hadronic subjets to parton jets (training data) or apply b-tagging (test data)
         if train_data:
-            top_subjets_tagged = self._match_parton_jets(partons, top_subjets)
+            top_subjets_tagged = self._match_parton_jets(partons, top_subjets, max_dr=0.4)
         else:
             top_subjets_tagged = self._match_delphes_b_jet(b_tagged_jets, top_subjets)
 
@@ -397,7 +397,7 @@ class DelphesReader():
 
         return top, lepton
 
-    def _build_output(self, tophad, subjets, toplep, lepton, train_data):
+    def _build_output(self, partontop, partonatop, partondown, tophad, subjets, toplep, lepton, lep_charge, train_data):
 
         '''
         Adds a record for a single event to the output awkward array.
@@ -405,6 +405,42 @@ class DelphesReader():
 
         self.jet_data.begin_record()
         ## Begin event record ##
+
+        self.jet_data.field("PartTop")
+        self.jet_data.begin_record()
+        ## Begin leptonic top record ##
+
+        self.jet_data.field("pt").real(partontop.pt())
+        self.jet_data.field("phi").real(partontop.phi())
+        self.jet_data.field("eta").real(partontop.eta())
+        self.jet_data.field("mass").real(partontop.m())
+
+        ## End leptonic top record ##
+        self.jet_data.end_record()
+
+        self.jet_data.field("PartATop")
+        self.jet_data.begin_record()
+        ## Begin leptonic top record ##
+
+        self.jet_data.field("pt").real(partonatop.pt())
+        self.jet_data.field("phi").real(partonatop.phi())
+        self.jet_data.field("eta").real(partonatop.eta())
+        self.jet_data.field("mass").real(partonatop.m())
+
+        ## End leptonic top record ##
+        self.jet_data.end_record()
+
+        self.jet_data.field("PartDown")
+        self.jet_data.begin_record()
+        ## Begin leptonic top record ##
+
+        self.jet_data.field("pt").real(partondown.pt())
+        self.jet_data.field("phi").real(partondown.phi())
+        self.jet_data.field("eta").real(partondown.eta())
+        self.jet_data.field("mass").real(partondown.m())
+
+        ## End leptonic top record ##
+        self.jet_data.end_record()
 
         self.jet_data.field("TopLep")
         self.jet_data.begin_record()
@@ -422,9 +458,11 @@ class DelphesReader():
         self.jet_data.begin_record()
         ## Begin lepton record ##
 
+        # Add lepton charge to flip sign in polarization angle
         self.jet_data.field("pt").real(lepton.pt())
         self.jet_data.field("phi").real(lepton.phi())
         self.jet_data.field("eta").real(lepton.eta())
+        self.jet_data.field("charge").real(lep_charge)
 
         ## End lepton record ##
         self.jet_data.end_record()
@@ -491,6 +529,7 @@ class DelphesReader():
             delphesTree = inFile.Get('Delphes')
             partonInfo = pylhe.read_lhe_with_attributes(file_parton)
             self.NEvents += delphesTree.GetEntries()
+            print(f"Found {delphesTree.GetEntries()} entries in file {file}")
         except:
             print(f"No event found in file {file}.")
             return
@@ -574,7 +613,9 @@ class DelphesReader():
             if not lepton:
                 continue
 
-            self._build_output(hadronic_top, hadronic_top_subjets, leptonic_top, lepton, train_data) # Also save leptonic top and lepton
+            lep_charge = iso_lepton.Charge
+
+            self._build_output(parton_top, parton_antitop, parton_down, hadronic_top, hadronic_top_subjets, leptonic_top, lepton, lep_charge, train_data)
 
     def change_clustering(self):
         self.pnet_clustering = not self.pnet_clustering
