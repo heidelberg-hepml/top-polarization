@@ -4,7 +4,7 @@ EPS = 1e-10
 CUTOFF = 10
 
 
-def stable_arctanh(x, eps=1e-10):
+def stable_arctanh(x, eps=EPS):
     # implementation of arctanh that avoids log(0) issues
     return 0.5 * (torch.log((1 + x).clamp(min=eps)) - torch.log((1 - x).clamp(min=eps)))
 
@@ -30,6 +30,30 @@ def PtPhiEtaM2_to_EPPP(x: torch.Tensor) -> torch.Tensor:
     pz = pt * torch.sinh(eta)
     E = torch.sqrt((m2 + pt**2 * torch.cosh(eta) ** 2).clamp(min=EPS))
     return torch.stack((E, px, py, pz), dim=-1)
+
+
+
+def lorentz_boost(particle, frame, eps=EPS):
+    # lorentz boost particle to rest frame
+    E  = particle[:, 0]
+    p  = particle[:, 1:]
+    Ef = frame[:, 0]
+    pf = frame[:, 1:]
+
+    beta = pf / (Ef.unsqueeze(1) + eps)
+    beta2 = (beta * beta).sum(dim=1)
+    gamma = 1.0 / torch.sqrt(1.0 - beta2 + eps)
+    bp = (beta * p).sum(dim=1)
+
+    Eprime = gamma * (E - bp)
+    factor = ((gamma - 1.0) * bp / (beta2 + eps) - gamma * E)
+    pprime = p + factor.unsqueeze(1) * beta
+
+    mask = beta2 > eps
+    Eprime = torch.where(mask, Eprime, E)
+    pprime = torch.where(mask.unsqueeze(1), pprime, p)
+
+    return torch.cat([Eprime.unsqueeze(1), pprime], dim=1)
 
 
 def get_pt(p):

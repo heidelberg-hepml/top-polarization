@@ -649,6 +649,7 @@ class BaseExperiment:
                 dt_estimate = dt_corrected * self.cfg.training.iterations / (step + 1)
                 LOGGER.info(
                     f"Finished iteration {step + 1} after {dt:.2f}s, "
+                    f"current training loss: {self.train_loss[-1]:.3f}, "
                     f"training time estimate: {dt_estimate / 60:.2f}min "
                     f"= {dt_estimate / 60**2:.2f}h"
                 )

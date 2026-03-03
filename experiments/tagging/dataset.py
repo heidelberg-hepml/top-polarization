@@ -265,6 +265,7 @@ class QuarkTaggingDataset(TaggingDataset):
         shuffle=True,
         length=-1,
         pid=False,
+        use_ditop=False,
         use_cache=True,
     ):
         super().__init__(length=length)
@@ -273,6 +274,7 @@ class QuarkTaggingDataset(TaggingDataset):
         self.split_fracs = split_fracs
         self.shuffle = shuffle
         self.include_pid = pid
+        self.use_ditop = use_ditop 
         self.use_cache = use_cache
         self.filename = None
         self.cache_key = {}
@@ -343,6 +345,7 @@ class QuarkTaggingDataset(TaggingDataset):
             tuple(self.split_fracs),
             self.seed,
             bool(self.shuffle),
+            bool(self.use_ditop),
             target_length,
         )
 
@@ -456,12 +459,15 @@ class QuarkTaggingDataset(TaggingDataset):
         return split_indices
 
     def _build_event_graph(self, event, network_dtype, momentum_dtype, label_ext=-1):
-        fat_jet = event["FatJet"]
+
+        ncat_ditop = 2 if self.use_ditop else 0
+
+        top_had = event["TopHad"]
         subjets = event["Subjets"]
 
         jet_kin = torch.stack(
             [
-                torch.as_tensor(fat_jet[k], dtype=momentum_dtype)
+                torch.as_tensor(top_had[k], dtype=momentum_dtype)
                 for k in ["pt", "phi", "eta", "mass"]
             ],
             dim=-1,
@@ -477,6 +483,32 @@ class QuarkTaggingDataset(TaggingDataset):
         )
         subjet_tags = torch.as_tensor(subjets["tag"], dtype=torch.long)
         subjet_four = PtPhiEtaM2_to_EPPP(subjet_kin)
+
+        top_lep = event["TopLep"]
+        lepton = event["Lepton"]
+
+        toplep_kin = torch.stack(
+            [
+                torch.as_tensor(top_lep[k], dtype=momentum_dtype)
+                for k in ["pt", "phi", "eta", "mass"]
+            ],
+            dim=-1,
+        )
+        toplep_four = PtPhiEtaM2_to_EPPP(toplep_kin).unsqueeze(0)
+
+        lep_kin = torch.stack(
+            [
+                torch.as_tensor(lepton[k], dtype=momentum_dtype)
+                for k in ["pt", "phi", "eta"]
+            ] 
+            +
+            [   
+                torch.as_tensor(0., dtype=momentum_dtype)
+            ],
+            dim=-1
+        )
+        lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
+        lep_four = PtPhiEtaM2_to_EPPP(lep_kin).unsqueeze(0)
 
         b_idx = torch.argmax((subjet_tags == 5).to(torch.int)).item()
         other_indices = [i for i in range(len(subjet_tags)) if i != b_idx]
@@ -523,8 +555,8 @@ class QuarkTaggingDataset(TaggingDataset):
 
         n_constituents = const_four_sorted.shape[0]
 
-        category = torch.zeros(4 + n_constituents, 5, dtype=network_dtype)
-        # Jet: [1, 0, 0, 0, 0]
+        category = torch.zeros(4 + n_constituents + ncat_ditop, 5 + ncat_ditop, dtype=network_dtype)
+        # Hadronic top: [1, 0, 0, 0, 0]
         category[0, 0] = 1
 
         # 3 Subjets: [0, 1, X, X, X] where one X=1 for subjet index
@@ -537,12 +569,24 @@ class QuarkTaggingDataset(TaggingDataset):
         for j, parent_idx in enumerate(const_parents_sorted):
             category[4 + j, 2 + parent_idx] = 1
 
+        if self.use_ditop:
+            # Leptonic top: [0, 0, 0, 0, 0, 1, 0]
+            category[4 + len(const_parents_sorted), 5] = 1
+
+            # Lepton: [0, 0, 0, 0, 0, 0, charge]
+            category[4 + len(const_parents_sorted) + 1, 6] = lep_charge
+
         if self.include_pid:
-            pid_features = torch.zeros(4 + n_constituents, 6, dtype=network_dtype)
+            pid_features = torch.zeros(4 + n_constituents + ncat_ditop, 6, dtype=network_dtype)
             pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
-            pid_features[4:] = pid_encoded.to(network_dtype)
+            pid_features[4:4+n_constituents] = pid_encoded.to(network_dtype)
             scalars = torch.cat([category, pid_features], dim=-1)
         else:
             scalars = category
 
-        return Data(x=sequence, scalars=scalars, label=label)
+        if self.use_ditop:
+            sequence = torch.cat([sequence, toplep_four, lep_four], dim=0)
+            return Data(x=sequence, scalars=scalars, label=label, lep_vec=None, lep_charge=None)
+
+        lep_vec = torch.cat([toplep_four, lep_four], dim=0)
+        return Data(x=sequence, scalars=scalars, label=label, lep_vec=lep_vec, lep_charge=lep_charge)

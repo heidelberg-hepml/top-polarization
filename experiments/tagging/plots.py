@@ -70,7 +70,7 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                     key,
                 )
 
-    if cfg.plotting.score and cfg.evaluate:
+    if cfg.plotting.score and cfg.evaluate and not cfg.data.dataset_eval:
         file = f"{plot_path}/score.pdf"
         with PdfPages(file) as out:
             plot_score(
@@ -89,7 +89,7 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                 logy=True,
             )
 
-    if cfg.plotting.roc and cfg.evaluate:
+    if cfg.plotting.roc and cfg.evaluate and not cfg.data.dataset_eval:
         file = f"{plot_path}/roc.pdf"
         with PdfPages(file) as out:
             plot_roc(
@@ -97,6 +97,16 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                 plot_dict["results_test"]["fpr"],
                 plot_dict["results_test"]["tpr"],
                 plot_dict["results_test"]["auc"],
+                title=title,
+            )
+
+    if cfg.plotting.polarization and cfg.evaluate:
+        file = f"{plot_path}/polarization.pdf"
+        with PdfPages(file) as out:
+            plot_pol(
+                out,
+                plot_dict["results_test"]["score_l"],
+                plot_dict["results_test"]["score_r"],
                 title=title,
             )
 
@@ -217,6 +227,47 @@ def plot_score(
         label=label_1,
         alpha=0.5,
         density=True,
+        color=cols[1],
+    )
+    ax.set_xlim(xrange)
+    ax.legend(frameon=False, fontsize=FONTSIZE, loc="upper left")
+    ax.text(
+        0.95,
+        0.95,
+        s=title,
+        horizontalalignment="right",
+        verticalalignment="top",
+        transform=ax.transAxes,
+        fontsize=FONTSIZE,
+    )
+
+    fig.savefig(out, bbox_inches="tight", format="pdf")
+    plt.close()
+
+def plot_pol(
+    out, score_l, score_r, title=None, xrange=[-1, 1], bins=20
+):
+    cols = [colors[1], colors[2]]
+
+    fig, ax = plt.subplots(figsize=(5, 4))
+    ax.set_ylabel("Normalized", fontsize=FONTSIZE)
+    ax.set_xlabel("Polarization distribution", fontsize=FONTSIZE)
+    ax.hist(
+        score_l,
+        range=xrange,
+        bins=bins,
+        label="L",
+        histtype='step',
+        weights=np.ones_like(score_l)/len(score_l),
+        color=cols[0],
+    )
+    ax.hist(
+        score_r,
+        range=xrange,
+        bins=bins,
+        label="R",
+        histtype='step',
+        weights=np.ones_like(score_r)/len(score_r),
         color=cols[1],
     )
     ax.set_xlim(xrange)

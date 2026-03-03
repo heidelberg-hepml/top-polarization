@@ -1,53 +1,65 @@
 import torch
 import numpy as np
-from lloca.utils.polar_decomposition import restframe_boost
+from experiments.hep import lorentz_boost
 
 
-def get_polarization(cfg, results, momenta):
-    pol = {"efficiency": [], "pol_l": [], "pol_r": []}
+def get_polarization(cfg, results):
+    pol = {"efficiency": [], "pol_l": [], "pol_r": [], "score_l": [], "score_r": []}
     labels = torch.stack(
-        (results["test"]["labels_true"], 
-        results["test"]["labels_predict"]), 
+        (results["labels_true"], 
+        results["labels_predict"]), 
         axis=-1,
         )
     jets = torch.stack(
-        (momenta["test"]["q_b"], 
-        momenta["test"]["q_hard"], 
-        momenta["test"]["q_soft"]), 
+        (results["q_hadtop"],
+        results["q_b"], 
+        results["q_hard"], 
+        results["q_soft"], 
+        results["q_leptop"],
+        results["q_lep"]),
         axis=-1,
     )
-    efficiencies = [1., 0.5, 0.2]
+    charge = results["charge"]
+    efficiencies = [1.] #[1., 0.5, 0.2]
     for eff in efficiencies:
         pol["efficiency"].append(eff)
         if cfg.data.dataset == "polarized":
-            beta_l, beta_r = polarized(labels, efficiency=eff)
+            beta_l, beta_r, score_l, score_r = polarized(labels, efficiency=eff)
         if cfg.data.dataset == "unpolarized":
-            beta_l, beta_r = unpolarized(labels, jets, efficiency=eff)
+            beta_l, beta_r, score_l, score_r = unpolarized(labels, jets, charge, efficiency=eff)
         pol["pol_l"].append(beta_l)
         pol["pol_r"].append(beta_r)
+        pol["score_l"].append(score_l)
+        pol["score_r"].append(score_r)
     return pol
 
 
 def polarized(labels, efficiency=1):
     mask = cut_efficiency(labels, efficiency=efficiency)
     labels_cut = labels[mask]
-    neg_pred = 2 * labels_cut[labels_cut[:, 0] == 0, 1] - 1
-    pos_pred = 2 * labels_cut[labels_cut[:, 0] == 1, 1] - 1
-    beta_l = (neg_pred < 0).float().mean()
-    beta_r = (pos_pred >= 0).float().mean()
+    score_l = 2 * labels_cut[labels_cut[:, 0] == 0, 1] - 1
+    score_r = 2 * labels_cut[labels_cut[:, 0] == 1, 1] - 1
+    beta_l = (score_l < 0).float().mean()
+    beta_r = (score_r >= 0).float().mean()
 
-    return beta_l, beta_r
+    return beta_l, beta_r, score_l, score_r
 
 
-def unpolarized(labels, jets, efficiency=1):
+def unpolarized(labels, jets, charge, efficiency=1):
     mask = cut_efficiency(labels, efficiency=efficiency)
     labels_cut = labels[mask]
     jets_cut = jets[mask]
-    beta = pol_opt(labels_cut[:, -1], jets_cut)
-    beta_l = torch.mean(beta[labels_cut[:, 0] == 0])
-    beta_r = torch.mean(beta[labels_cut[:, 0] == 1])
+    charge_cut = charge[mask]
+    # beta, costheta = pol_opt(labels_cut[:, 0], jets_cut, charge_cut) # Use true labels for check
+    # beta, costheta = pol_opt(labels_cut[:, -1], jets_cut, charge_cut) # Use predicted labels
+    # beta_l, costheta_l = torch.mean(beta[labels_cut[:, 0] == 0]), costheta[labels_cut[:, 0] == 0]
+    # beta_r, costheta_r = torch.mean(beta[labels_cut[:, 0] == 1]), costheta[labels_cut[:, 0] == 1]
+    beta_l, costheta_l = pol_opt(labels_cut[labels_cut[:, 0] == 0][:, -1], jets_cut[labels_cut[:, 0] == 0], charge_cut[labels_cut[:, 0] == 0])
+    beta_l = torch.mean(beta_l)
+    beta_r, costheta_r = pol_opt(labels_cut[labels_cut[:, 0] == 1][:, -1], jets_cut[labels_cut[:, 0] == 1], charge_cut[labels_cut[:, 0] == 1])
+    beta_r = torch.mean(beta_r)
 
-    return beta_l, beta_r
+    return beta_l, beta_r, costheta_l, costheta_r
 
 
 def cut_efficiency(labels, efficiency=1):
@@ -55,24 +67,50 @@ def cut_efficiency(labels, efficiency=1):
     return cut_mask
 
 
-def pol_opt(p, q):
-    top_mom = torch.sum(q, axis=-1)[:, 1:4]
-    top_e = torch.sqrt(173.5**2 + torch.linalg.norm(top_mom, axis=1) ** 2)[:, None]
-    top_fourmom = torch.concatenate((top_e, top_mom), axis=1)
-    top_rest = restframe_boost(top_fourmom)
-    p = p[:, None]
-    q_hard, q_soft = (
-        torch.einsum("ijk,ik->ij", top_rest, q[:, :, 1]),
-        torch.einsum("ijk,ik->ij", top_rest, q[:, :, 2]),
+def pol_opt(p, mom, sign):
+    hadtop, q_hard, q_soft, leptop, lep, = (
+        mom[:, :, 0],
+        mom[:, :, 2],
+        mom[:, :, 3],
+        mom[:, :, 4],
+        mom[:, :, 5],
     )
-    q_hard, q_soft = q_hard[:, 1:4], q_soft[:, 1:4]
-    qhat_hard, qhat_soft = (
-        q_hard / torch.linalg.norm(q_hard, axis=1, keepdims=True),
-        q_soft / torch.linalg.norm(q_soft, axis=1, keepdims=True),
-    )
-    q_opt = p * qhat_hard + (1 - p) * qhat_soft
 
-    return torch.linalg.norm(q_opt, axis=1)
+    spin_mom = lorentz_boost(hadtop, leptop)
+    # spin_mom = lorentz_boost(leptop, hadtop)
+    spin_ax = spin_mom[:, 1:4]
+
+    # idx = torch.where(p == 1, 2, 3) # If true label is one, choose harder subjet, else softer subjet
+    # idx = idx.view(len(idx), 1, 1).expand(-1, 4, 1)
+    # q_down = torch.gather(mom, dim=2, index=idx) # Should be true down quark
+    # q_down = q_down.squeeze(-1)
+    # print(f"Down quark momentum in lab frame: {q_down}")
+    # q_down_t = torch.einsum("ijk,ik->ij", top_rest_frame, q_down)
+    # print(f"Down quark momentum in top frame: {q_down_t}")
+    # pol_vec = q_down_t[:, 1:4]
+
+    lep_mom_t = lorentz_boost(lep, leptop)
+    pol_vec = lep_mom_t[:, 1:4]
+
+    # p = p[:, None]
+    # q_hard, q_soft = (
+    #     lorentz_boost(q_hard, hadtop),
+    #     lorentz_boost(q_soft, hadtop),
+    # )
+    # q_hard, q_soft = q_hard[:, 1:4], q_soft[:, 1:4]
+    # qhat_hard, qhat_soft = (
+    #     q_hard / torch.linalg.norm(q_hard, axis=1, keepdims=True),
+    #     q_soft / torch.linalg.norm(q_soft, axis=1, keepdims=True),
+    # )
+    # pol_vec = p * qhat_hard + (1 - p) * qhat_soft
+    
+    costheta = sign * torch.einsum('ij,ij->i', spin_ax, pol_vec) / (torch.linalg.norm(spin_ax, axis=1) * torch.linalg.norm(pol_vec, axis=1))
+    # print(f"Top vector: {hadtop[:, 1:4] / torch.linalg.norm(hadtop[:, 1:4], axis=1, keepdims=True)}")
+    # print(f"Anti-top vector: {leptop[:, 1:4] / torch.linalg.norm(leptop[:, 1:4], axis=1, keepdims=True)}")
+    # print(f"Polarization vector: {pol_vec / torch.linalg.norm(pol_vec, axis=1, keepdims=True)}")
+    print(f"Polarization angle mean: {torch.mean(costheta)}")
+
+    return torch.linalg.norm(pol_vec, axis=1), costheta
 
 
 def get_likelihood(vals, bins=40, threshold=3):
