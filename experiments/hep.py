@@ -21,9 +21,10 @@ def EPPP_to_PtPhiEtaM2(fourmomenta, sqrt_mass=False):
     return torch.stack((pt, phi, eta, m2), dim=-1)
 
 
-def PtPhiEtaM2_to_EPPP(x: torch.Tensor) -> torch.Tensor:
+def PtPhiEtaM2_to_EPPP(x: torch.Tensor, lin_mass=False) -> torch.Tensor:
     assert x.shape[-1] == 4, "Input tensor must have last dimension of size 4"
     pt, phi, eta, m2 = torch.unbind(x, dim=-1)
+    m2 = m2**2 if lin_mass else m2
     eta = eta.clamp(min=-CUTOFF, max=CUTOFF)
     px = pt * torch.cos(phi)
     py = pt * torch.sin(phi)

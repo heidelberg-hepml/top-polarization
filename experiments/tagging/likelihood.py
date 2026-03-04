@@ -20,7 +20,16 @@ def get_polarization(cfg, results):
         axis=-1,
     )
     charge = results["charge"]
-    efficiencies = [1.] #[1., 0.5, 0.2]
+    # print(f"Example lepton 4-momentum: {results['q_lep'][0]}")
+    # print(f"Example leptop 4-momentum: {results['q_leptop'][0]}")
+    # print(f"Example hadtop 4-momentum: {results['q_hadtop'][0]}")
+    # spin_ax = lorentz_boost(results['q_hadtop'][0].unsqueeze(0), results['q_leptop'][0].unsqueeze(0))
+    # pol_vec = lorentz_boost(results['q_lep'][0].unsqueeze(0), results['q_leptop'][0].unsqueeze(0))
+    # print(f"Example spin axis: {spin_ax}")
+    # print(f"Example pol vec: {pol_vec}")
+    # costheta = torch.einsum('i,i->', spin_ax[0][1:4], pol_vec[0][1:4]) / (torch.linalg.norm(spin_ax[0][1:4]) * torch.linalg.norm(pol_vec[0][1:4]))
+    # print(f"Exampe costheta value: {costheta}")
+    efficiencies = [1., 0.5, 0.2]
     for eff in efficiencies:
         pol["efficiency"].append(eff)
         if cfg.data.dataset == "polarized":
@@ -50,14 +59,9 @@ def unpolarized(labels, jets, charge, efficiency=1):
     labels_cut = labels[mask]
     jets_cut = jets[mask]
     charge_cut = charge[mask]
-    # beta, costheta = pol_opt(labels_cut[:, 0], jets_cut, charge_cut) # Use true labels for check
-    # beta, costheta = pol_opt(labels_cut[:, -1], jets_cut, charge_cut) # Use predicted labels
-    # beta_l, costheta_l = torch.mean(beta[labels_cut[:, 0] == 0]), costheta[labels_cut[:, 0] == 0]
-    # beta_r, costheta_r = torch.mean(beta[labels_cut[:, 0] == 1]), costheta[labels_cut[:, 0] == 1]
     beta_l, costheta_l = pol_opt(labels_cut[labels_cut[:, 0] == 0][:, -1], jets_cut[labels_cut[:, 0] == 0], charge_cut[labels_cut[:, 0] == 0])
-    beta_l = torch.mean(beta_l)
     beta_r, costheta_r = pol_opt(labels_cut[labels_cut[:, 0] == 1][:, -1], jets_cut[labels_cut[:, 0] == 1], charge_cut[labels_cut[:, 0] == 1])
-    beta_r = torch.mean(beta_r)
+    beta_l, beta_r = torch.mean(beta_l), torch.mean(beta_r)
 
     return beta_l, beta_r, costheta_l, costheta_r
 

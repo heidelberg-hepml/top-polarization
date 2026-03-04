@@ -361,14 +361,14 @@ class TaggingExperiment(BaseExperiment):
     def _validate(self, step):
         if self.ema is not None:
             with self.ema.average_parameters():
-                metrics, _ = self._evaluate_single(self.val_loader, "val", mode="val", step=step)
+                metrics = self._evaluate_single(self.val_loader, "val", mode="val", step=step)
         else:
-            metrics, _ = self._evaluate_single(self.val_loader, "val", mode="val", step=step)
+            metrics = self._evaluate_single(self.val_loader, "val", mode="val", step=step)
         self.val_loss.append(metrics["loss"])
         return metrics["loss"]
 
     def _batch_loss(self, batch):
-        y_pred, label, tracker, _ = self._get_ypred_and_label(batch)
+        y_pred, label, tracker, *_ = self._get_ypred_and_label(batch)
         loss = self.loss(y_pred, label)
 
         metrics = tracker
