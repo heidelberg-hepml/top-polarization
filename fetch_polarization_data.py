@@ -5,14 +5,14 @@ import requests
 
 parser = argparse.ArgumentParser(description="Download data.")
 parser.add_argument("--out", type=str)
-parser.add_argument("--mass", type=str, default="strict")
+parser.add_argument("--mass", type=str, default="loose")
 
 args = parser.parse_args()
 
 OUT = args.out
 MASS = args.mass
 
-BASE_URL = "https://seafile.cloud.uni-hannover.de/d/bed29fcc630340d4a131/files"
+BASE_URL = "https://seafile.cloud.uni-hannover.de/d/053ac05f748d4f0583fa/files"
 POLARIZATIONS = ["L", "R", "0"]
 MASS_WINDOWS = {"strict": (165, 190), "loose": (120, 220)}
 
@@ -35,10 +35,9 @@ def load(filename, out):
 def main():
     m = MASS_WINDOWS[MASS]
     for pol in POLARIZATIONS:
-        for nr in range(1, 4):
-            load(f"polarization_top_{pol}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT)
-        load(f"polarization_top_{pol}_{m[0]}_{m[1]}_test.parquet", OUT)
-
+        for decay in [1, 2]:
+            for nr in [1]:
+                load(f"top_pol_{pol}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT)
 
 if __name__ == "__main__":
     main()
