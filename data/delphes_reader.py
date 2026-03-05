@@ -9,7 +9,7 @@ import pylhe
 from pylorentz import Momentum4
 import ROOT
 import fastjet as fj
-ROOT.gSystem.Load('/bigwork/nhbbmene/PHD/MadGraph/MG5_aMC_v3_5_4/Delphes/libDelphes.so')
+ROOT.gSystem.Load('MG/Delphes/libDelphes.so')
 
 class DelphesReader():
 
@@ -37,7 +37,6 @@ class DelphesReader():
 
         f_delphes = glob.glob(os.path.join(filepath, '**', '*.root'), recursive=True)
         f_parton = glob.glob(os.path.join(filepath, '**', '*.lhe'), recursive=True)
-
         delphes_sorted = sorted([f.split('/')[-1].split('_')[1] for f in f_delphes], key=lambda x: int(re.search(r'\d+', x).group()))
         files_delphes = [f"{filepath}/tag_{n}_delphes_events.root" for n in delphes_sorted]
 
@@ -402,7 +401,7 @@ class DelphesReader():
         '''
         Adds a record for a single event to the output awkward array.
         '''
-
+    
         self.jet_data.begin_record()
         ## Begin event record ##
 
