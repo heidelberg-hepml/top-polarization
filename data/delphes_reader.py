@@ -10,6 +10,7 @@ from pylorentz import Momentum4
 import ROOT
 import fastjet as fj
 ROOT.gSystem.Load('MG/Delphes/libDelphes.so')
+print(ROOT.Jet) # necessary to avoid Delphes not finding header files
 
 class DelphesReader():
 
