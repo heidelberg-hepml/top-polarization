@@ -479,7 +479,7 @@ class QuarkTaggingExperiment(TaggingExperiment):
                     glob.glob(
                         os.path.join(
                             self.cfg.data.data_dir,
-                            f"top_pol_L_*_{top_window}_train_*.parquet",
+                            f"top_pol_had_L_*_{top_window}_train_*.parquet",
                         )
                     )
                 ),
@@ -487,7 +487,7 @@ class QuarkTaggingExperiment(TaggingExperiment):
                     glob.glob(
                         os.path.join(
                             self.cfg.data.data_dir,
-                            f"top_pol_R_*_{top_window}_train_*.parquet",
+                            f"top_pol_had_R_*_{top_window}_train_*.parquet",
                         )
                     )
                 ),
@@ -510,12 +510,14 @@ class QuarkTaggingExperiment(TaggingExperiment):
         for set_label in self.cfg.evaluation.eval_set:
             pol = get_polarization(self.cfg, self.results[set_label])
             LOGGER.info(
-                f'Degrees of polarization: '
-                f'{pol["pol_l"][0]} (L) and {pol["pol_r"][0]} (R) at efficiency {pol["efficiency"][0]}, '
-                f'{pol["pol_l"][-1]} (L) and {pol["pol_r"][-1]} (R) at efficiency {pol["efficiency"][-1]}'
+                f'Degree of polarization: '
+                f'{pol["pol_l"][-1]:.3f} (L) and {pol["pol_r"][-1]:.3f} (R) at efficiency {pol["efficiency"][-1]}'
             )
-            self.results[set_label]["score_l"] = pol["score_l"][0]
-            self.results[set_label]["score_r"] = pol["score_r"][0]
+            self.results[set_label]["efficiencies"] = pol["efficiency"]
+            self.results[set_label]["pol_l"] = pol["pol_l"]
+            self.results[set_label]["pol_r"] = pol["pol_r"]
+            self.results[set_label]["score_l"] = pol["score_l"][-1]
+            self.results[set_label]["score_r"] = pol["score_r"][-1]
 
     @torch.no_grad()
     def _evaluate_single(self, loader, title, mode, step=None):

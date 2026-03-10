@@ -4,7 +4,7 @@ from experiments.hep import lorentz_boost
 
 
 def get_polarization(cfg, results):
-    pol = {"efficiency": [], "pol_l": [], "pol_r": [], "score_l": [], "score_r": []}
+    pol = {"efficiency": [], "pol_l": [], "pol_r": [], "score_l": [], "score_r": [], "like_ratio": []}
     labels = torch.stack(
         (results["labels_true"], 
         results["labels_predict"]), 
@@ -20,26 +20,20 @@ def get_polarization(cfg, results):
         axis=-1,
     )
     charge = results["charge"]
-    # print(f"Example lepton 4-momentum: {results['q_lep'][0]}")
-    # print(f"Example leptop 4-momentum: {results['q_leptop'][0]}")
-    # print(f"Example hadtop 4-momentum: {results['q_hadtop'][0]}")
-    # spin_ax = lorentz_boost(results['q_hadtop'][0].unsqueeze(0), results['q_leptop'][0].unsqueeze(0))
-    # pol_vec = lorentz_boost(results['q_lep'][0].unsqueeze(0), results['q_leptop'][0].unsqueeze(0))
-    # print(f"Example spin axis: {spin_ax}")
-    # print(f"Example pol vec: {pol_vec}")
-    # costheta = torch.einsum('i,i->', spin_ax[0][1:4], pol_vec[0][1:4]) / (torch.linalg.norm(spin_ax[0][1:4]) * torch.linalg.norm(pol_vec[0][1:4]))
-    # print(f"Exampe costheta value: {costheta}")
-    efficiencies = [1., 0.5, 0.2]
+
+    efficiencies = np.linspace(0.2, 1., num=1000)
     for eff in efficiencies:
         pol["efficiency"].append(eff)
         if cfg.data.dataset == "polarized":
             beta_l, beta_r, score_l, score_r = polarized(labels, efficiency=eff)
         if cfg.data.dataset == "unpolarized":
             beta_l, beta_r, score_l, score_r = unpolarized(labels, jets, charge, efficiency=eff)
+        # like_ratio = get_likelihood(score_l, score_r)
         pol["pol_l"].append(beta_l)
         pol["pol_r"].append(beta_r)
         pol["score_l"].append(score_l)
         pol["score_r"].append(score_r)
+        # pol["like_ratio"].append(like_ratio)
     return pol
 
 
@@ -80,54 +74,36 @@ def pol_opt(p, mom, sign):
         mom[:, :, 5],
     )
 
-    spin_mom = lorentz_boost(hadtop, leptop)
-    # spin_mom = lorentz_boost(leptop, hadtop)
+    spin_mom = lorentz_boost(leptop, hadtop)
     spin_ax = spin_mom[:, 1:4]
 
-    # idx = torch.where(p == 1, 2, 3) # If true label is one, choose harder subjet, else softer subjet
-    # idx = idx.view(len(idx), 1, 1).expand(-1, 4, 1)
-    # q_down = torch.gather(mom, dim=2, index=idx) # Should be true down quark
-    # q_down = q_down.squeeze(-1)
-    # print(f"Down quark momentum in lab frame: {q_down}")
-    # q_down_t = torch.einsum("ijk,ik->ij", top_rest_frame, q_down)
-    # print(f"Down quark momentum in top frame: {q_down_t}")
-    # pol_vec = q_down_t[:, 1:4]
-
-    lep_mom_t = lorentz_boost(lep, leptop)
-    pol_vec = lep_mom_t[:, 1:4]
-
-    # p = p[:, None]
-    # q_hard, q_soft = (
-    #     lorentz_boost(q_hard, hadtop),
-    #     lorentz_boost(q_soft, hadtop),
-    # )
-    # q_hard, q_soft = q_hard[:, 1:4], q_soft[:, 1:4]
-    # qhat_hard, qhat_soft = (
-    #     q_hard / torch.linalg.norm(q_hard, axis=1, keepdims=True),
-    #     q_soft / torch.linalg.norm(q_soft, axis=1, keepdims=True),
-    # )
-    # pol_vec = p * qhat_hard + (1 - p) * qhat_soft
+    p = p[:, None]
+    q_hard, q_soft = (
+        lorentz_boost(q_hard, hadtop),
+        lorentz_boost(q_soft, hadtop),
+    )
+    q_hard, q_soft = q_hard[:, 1:4], q_soft[:, 1:4]
+    qhat_hard, qhat_soft = (
+        q_hard / torch.linalg.norm(q_hard, axis=1, keepdims=True),
+        q_soft / torch.linalg.norm(q_soft, axis=1, keepdims=True),
+    )
+    pol_vec = p * qhat_hard + (1 - p) * qhat_soft
     
     costheta = sign * torch.einsum('ij,ij->i', spin_ax, pol_vec) / (torch.linalg.norm(spin_ax, axis=1) * torch.linalg.norm(pol_vec, axis=1))
-    # print(f"Top vector: {hadtop[:, 1:4] / torch.linalg.norm(hadtop[:, 1:4], axis=1, keepdims=True)}")
-    # print(f"Anti-top vector: {leptop[:, 1:4] / torch.linalg.norm(leptop[:, 1:4], axis=1, keepdims=True)}")
-    # print(f"Polarization vector: {pol_vec / torch.linalg.norm(pol_vec, axis=1, keepdims=True)}")
-    print(f"Polarization angle mean: {torch.mean(costheta)}")
 
     return torch.linalg.norm(pol_vec, axis=1), costheta
 
 
-def get_likelihood(vals, bins=40, threshold=3):
-    """
-    Not used right now
-    """
+def get_likelihood(l, r, bins=40, threshold=3):
+
+    'Not used right now'
 
     if int(bins) % 2 == 1:
         bins += 1
 
     def asym(binned):
-        Nm, Np = torch.split(binned, 2)
-        Nm = torch.flip(Nm)
+        Nm, Np = torch.chunk(binned, 2)
+        Nm = torch.flip(Nm, [0])
 
         sm, sp = torch.sqrt(Nm), torch.sqrt(Np)
 
@@ -136,10 +112,20 @@ def get_likelihood(vals, bins=40, threshold=3):
 
         return asym_val, asym_err
 
-    neg, pos = vals
-    neg_binned, pos_binned = (
-        np.histogram(neg, bins=int(bins), range=(-1, 1))[0],
-        np.histogram(pos, bins=int(bins), range=(-1, 1))[0],
+    def stat_q(asym_pol, err_pol, asym_unpol, err_unpol):
+        q = torch.where(asym_pol >= 3, (asym_pol - asym_unpol)**2 / (err_pol)**2 + torch.log( (err_pol)**2 / (err_unpol)**2 ), 0)
+
+        return torch.sum(q)
+
+    l_binned, r_binned = (
+        torch.histogram(l, bins=int(bins), range=(-1, 1))[0],
+        torch.histogram(r, bins=int(bins), range=(-1, 1))[0],
     )
-    asym_neg, err_neg = asym(neg_binned)
-    asym_pos, err_pos = asym(pos_binned)
+    unpol_binned = (l_binned + r_binned) / 2
+    asym_l, err_l = asym(l_binned)
+    asym_r, err_r = asym(r_binned)
+    asym_unpol, err_unpol = asym(unpol_binned)
+
+    stat_q_l = stat_q(asym_l, err_l, asym_unpol, err_unpol)
+    stat_q_r = stat_q(asym_r, err_r, asym_unpol, err_unpol)
+    return (stat_q_l + stat_q_r) / 2

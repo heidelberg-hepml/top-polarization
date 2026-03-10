@@ -1,11 +1,12 @@
 # L-GATr top-tagging parameters, see https://arxiv.org/abs/2411.00446
+# Parameter values taken from best optuna run
 iterations: 200000
-batchsize: 128
+batchsize: 256
 
 optimizer: Lion
-weight_decay: 0.2
+weight_decay: 2.
 
-lr: 3e-4
+lr: 2e-4
 
 defaults:
   - tag_default

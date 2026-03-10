@@ -13,7 +13,7 @@ OUT = args.out
 MASS = args.mass
 
 BASE_URL = "https://seafile.cloud.uni-hannover.de/d/053ac05f748d4f0583fa/files"
-POLARIZATIONS = ["L", "R", "0"]
+POLARIZATIONS = ["0", ("L","L"), ("L","R"), ("R","L"), ("R","R")]
 MASS_WINDOWS = {"strict": (165, 190), "loose": (120, 220)}
 
 
@@ -36,8 +36,12 @@ def main():
     m = MASS_WINDOWS[MASS]
     for pol in POLARIZATIONS:
         for decay in [1, 2]:
-            for nr in [1]:
-                load(f"top_pol_{pol}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT)
+            if pol == "0":
+                for nr in range(1,4):
+                    load(f"top_pol_{pol}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT)
+            else:
+                for nr in [1]:
+                    load(f"top_pol_had_{pol[0]}_lep_{pol[1]}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT)
 
 if __name__ == "__main__":
     main()

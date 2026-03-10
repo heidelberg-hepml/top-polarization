@@ -109,6 +109,13 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                 plot_dict["results_test"]["score_r"],
                 title=title,
             )
+            plot_eff(
+                out,
+                plot_dict["results_test"]["efficiencies"],
+                plot_dict["results_test"]["pol_l"],
+                plot_dict["results_test"]["pol_r"],
+                title=title,
+            )
 
 
 def plot_roc(out, fpr, tpr, auc, title=None):
@@ -272,6 +279,43 @@ def plot_pol(
     )
     ax.set_xlim(xrange)
     ax.legend(frameon=False, fontsize=FONTSIZE, loc="upper left")
+    ax.text(
+        0.95,
+        0.95,
+        s=title,
+        horizontalalignment="right",
+        verticalalignment="top",
+        transform=ax.transAxes,
+        fontsize=FONTSIZE,
+    )
+
+    fig.savefig(out, bbox_inches="tight", format="pdf")
+    plt.close()
+
+def plot_eff(
+    out, efficiencies, pol_l, pol_r, title=None, xrange=[0.2, 1.], yrange=[0.6, 1.]
+):
+    cols = [colors[1], colors[2]]
+
+    fig, ax = plt.subplots(figsize=(5, 4))
+    ax.set_ylabel(r"$\beta_{\mathrm{opt}}$", fontsize=FONTSIZE)
+    ax.set_xlabel("Efficiency", fontsize=FONTSIZE)
+    ax.plot(
+        efficiencies,
+        pol_l,
+        label = "L",
+        color = cols[0],
+    )
+    ax.plot(
+        efficiencies,
+        pol_r,
+        label = "R",
+        color = cols[1],
+    )
+    ax.set_xlim(xrange)
+    ax.set_ylim(yrange)
+    ax.legend(frameon=False, fontsize=FONTSIZE, loc="upper left")
+
     ax.text(
         0.95,
         0.95,
