@@ -281,7 +281,6 @@ class BaseExperiment:
             return
 
         # create experiment directory
-        LOGGER.info(self.cfg.run_dir)
         run_dir = Path(self.cfg.run_dir).resolve()
         if run_dir.exists() and self.cfg.train and not self.warm_start:
             if self.cfg.allow_overwrite:
