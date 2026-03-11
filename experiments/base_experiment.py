@@ -215,7 +215,7 @@ class BaseExperiment:
             else:
                 model_load_idx = self.cfg.model_load_idx
                 saved_cfg = self._load_config(run_dir, "config.yaml")
-                self.cfg = OmegaConf.merge(self.cfg, saved_cfg)
+                self.cfg = OmegaConf.merge(saved_cfg, self.cfg)
                 run_idx = self.cfg.run_idx + 1
                 LOGGER.info(
                     f"Warm-starting from existing experiment {self.cfg.exp_name}/{run_name} for run {run_idx}"
@@ -229,12 +229,10 @@ class BaseExperiment:
 
         with open_dict(self.cfg):
             self.cfg.run_idx = run_idx
-            if not self.cfg.train:
-                self.cfg.run_dir = run_dir
+            self.cfg.run_dir = run_dir
             if not self.warm_start:
                 self.cfg.model_load_idx = 0
                 self.cfg.run_name = run_name
-                self.cfg.run_dir = run_dir
             else:
                 self.cfg.model_load_idx = model_load_idx
 
@@ -649,6 +647,7 @@ class BaseExperiment:
                 dt_estimate = dt_corrected * self.cfg.training.iterations / (step + 1)
                 LOGGER.info(
                     f"Finished iteration {step + 1} after {dt:.2f}s, "
+                    f"current training loss: {self.train_loss[-1]:.3f}, "
                     f"training time estimate: {dt_estimate / 60:.2f}min "
                     f"= {dt_estimate / 60**2:.2f}h"
                 )

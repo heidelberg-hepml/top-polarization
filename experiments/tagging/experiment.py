@@ -133,7 +133,7 @@ class TaggingExperiment(BaseExperiment):
     def init_standardization(self):
         if hasattr(self.model, "init_standardization"):
             batch = next(iter(self.train_loader))
-            fourmomenta, scalars, ptr, _ = self._extract_batch(batch)
+            fourmomenta, scalars, ptr, *_ = self._extract_batch(batch)
             embedding = embed_tagging_data(
                 fourmomenta,
                 scalars,
@@ -146,6 +146,7 @@ class TaggingExperiment(BaseExperiment):
         run_name_add = [
             f"dataset={self.cfg.data.dataset}",
             f"mass={self.cfg.data.mass_window}",
+            f"ditop={self.cfg.data.use_ditop}",
             f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
             f"lr={self.cfg.training.lr}",
             f"opt={self.cfg.training.optimizer}",
@@ -195,7 +196,6 @@ class TaggingExperiment(BaseExperiment):
 
     def evaluate(self):
         self.results = {}
-        self.momenta = {}
         loader_dict = {
             "train": self.train_loader,
             "test": self.test_loader,
@@ -204,7 +204,7 @@ class TaggingExperiment(BaseExperiment):
         for set_label in self.cfg.evaluation.eval_set:
             if self.ema is not None:
                 with self.ema.average_parameters():
-                    self.results[set_label], self.momenta[set_label] = self._evaluate_single(
+                    self.results[set_label] = self._evaluate_single(
                         loader_dict[set_label],
                         f"{set_label}_ema",
                         mode="eval",
@@ -213,16 +213,9 @@ class TaggingExperiment(BaseExperiment):
                 self._evaluate_single(loader_dict[set_label], set_label, mode="eval")
 
             else:
-                self.results[set_label], self.momenta[set_label] = self._evaluate_single(
+                self.results[set_label] = self._evaluate_single(
                     loader_dict[set_label], set_label, mode="eval"
                 )
-
-        pol = get_polarization(self.cfg, self.results, self.momenta)
-        LOGGER.info(
-            f'Degrees of polarization: '
-            f'{pol["pol_l"][0]} (L) and {pol["pol_r"][0]} (R) at efficiency {pol["efficiency"][0]}, '
-            f'{pol["pol_l"][-1]} (L) and {pol["pol_r"][-1]} (R) at efficiency {pol["efficiency"][-1]}, '
-        )
 
         if self.cfg.evaluation.save_labels:
             self._save_metrics()
@@ -237,30 +230,17 @@ class TaggingExperiment(BaseExperiment):
                 f"{len(loader.dataset)} elements, batchsize {loader.batch_size} ###"
             )
         metrics = {}
-        momenta = {}
 
         # predictions
-        labels_true, labels_predict, mom_b, mom_hard, mom_soft = [], [], [], [], []
+        labels_true, labels_predict = [], []
         self.model.eval()
         for batch in loader:
-            fourmomenta, scalars, _, _ = self._extract_batch(batch)
             y_pred, label, _, _ = self._get_ypred_and_label(batch)
             labels_true.append(label)
             labels_predict.append(y_pred)
-            mask_b, mask_hard, mask_soft = (
-                (scalars[:, 1] + scalars[:, 2] == 2),
-                (scalars[:, 1] + scalars[:, 3] == 2),
-                (scalars[:, 1] + scalars[:, 4] == 2),
-            )
-            mom_b.append(fourmomenta[mask_b])
-            mom_hard.append(fourmomenta[mask_hard])
-            mom_soft.append(fourmomenta[mask_soft])
-        labels_true, labels_predict, mom_b, mom_hard, mom_soft = (
+        labels_true, labels_predict = (
             torch.cat(labels_true).cpu().float(),
             torch.cat(labels_predict).cpu().float(),
-            torch.cat(mom_b).cpu(),
-            torch.cat(mom_hard).cpu(),
-            torch.cat(mom_soft).cpu(),
         )
 
         # bce loss
@@ -284,11 +264,6 @@ class TaggingExperiment(BaseExperiment):
             metrics["labels_true"], metrics["labels_predict"] = (
                 labels_true,
                 labels_predict,
-            )
-            momenta["q_b"], momenta["q_hard"], momenta["q_soft"] = (
-                mom_b,
-                mom_hard,
-                mom_soft,
             )
 
         labels_true, labels_predict = labels_true.numpy(), labels_predict.numpy()
@@ -337,7 +312,7 @@ class TaggingExperiment(BaseExperiment):
                 f" & {num_parameters} & {metrics['accuracy']:.4f} & {metrics['auc']:.4f}"
                 f" & {metrics['rej03']:.0f} & {metrics['rej05']:.0f} & {metrics['rej08']:.0f} \\\\"
             )
-        return metrics, momenta
+        return metrics
 
     def _save_metrics(self):
         metric_path = os.path.join(self.cfg.run_dir, f"preds_{self.cfg.run_idx}")
@@ -386,14 +361,14 @@ class TaggingExperiment(BaseExperiment):
     def _validate(self, step):
         if self.ema is not None:
             with self.ema.average_parameters():
-                metrics, _ = self._evaluate_single(self.val_loader, "val", mode="val", step=step)
+                metrics = self._evaluate_single(self.val_loader, "val", mode="val", step=step)
         else:
-            metrics, _ = self._evaluate_single(self.val_loader, "val", mode="val", step=step)
+            metrics = self._evaluate_single(self.val_loader, "val", mode="val", step=step)
         self.val_loss.append(metrics["loss"])
         return metrics["loss"]
 
     def _batch_loss(self, batch):
-        y_pred, label, tracker, _ = self._get_ypred_and_label(batch)
+        y_pred, label, tracker, *_ = self._get_ypred_and_label(batch)
         loss = self.loss(y_pred, label)
 
         metrics = tracker
@@ -408,7 +383,7 @@ class TaggingExperiment(BaseExperiment):
         return fourmomenta, scalars, ptr, label
 
     def _get_ypred_and_label(self, batch):
-        fourmomenta, scalars, ptr, label = self._extract_batch(batch)
+        fourmomenta, scalars, ptr, label, *_ = self._extract_batch(batch)
         embedding = embed_tagging_data(
             fourmomenta,
             scalars,
@@ -458,6 +433,18 @@ class QuarkTaggingExperiment(TaggingExperiment):
         self.extra_scalars = 5  # Differentiate between fatjet, subjets, and constituents
         if self.cfg.data.pid:
             self.extra_scalars += 6
+        if self.cfg.data.use_ditop:
+            self.extra_scalars += 2
+
+    def _extract_batch(self, batch):
+        batch = batch.to(self.device)
+        fourmomenta = batch.x.to(self.momentum_dtype)
+        scalars = batch.scalars.to(self.dtype)
+        ptr = batch.ptr
+        label = batch.label.to(self.dtype)
+        lep_vec = batch.lep_vec.to(self.momentum_dtype) if not self.cfg.data.use_ditop else None
+        lep_charge = batch.lep_charge.to(self.dtype) if not self.cfg.data.use_ditop else None
+        return fourmomenta, scalars, ptr, label, lep_vec, lep_charge
 
     def init_data(self, mode="train"):
         if self.cfg.data.dataset_eval and mode != "train":
@@ -481,7 +468,7 @@ class QuarkTaggingExperiment(TaggingExperiment):
                 glob.glob(
                     os.path.join(
                         self.cfg.data.data_dir,
-                        f"polarization_top_0_{top_window}_train_*.parquet",
+                        f"top_pol_0_*_{top_window}_train_*.parquet",
                     )
                 )
             )
@@ -492,7 +479,7 @@ class QuarkTaggingExperiment(TaggingExperiment):
                     glob.glob(
                         os.path.join(
                             self.cfg.data.data_dir,
-                            f"polarization_top_L_{top_window}_train_*.parquet",
+                            f"top_pol_had_L_*_{top_window}_train_*.parquet",
                         )
                     )
                 ),
@@ -500,7 +487,7 @@ class QuarkTaggingExperiment(TaggingExperiment):
                     glob.glob(
                         os.path.join(
                             self.cfg.data.data_dir,
-                            f"polarization_top_R_{top_window}_train_*.parquet",
+                            f"top_pol_had_R_*_{top_window}_train_*.parquet",
                         )
                     )
                 ),
@@ -512,6 +499,82 @@ class QuarkTaggingExperiment(TaggingExperiment):
             "length": getattr(self.cfg.data, "length", None),
             "tag": tag_id,
             "pid": self.cfg.data.pid,
+            "use_ditop": self.cfg.data.use_ditop,
             "use_cache": self.cfg.data.use_cache,
         }
         self._init_data(QuarkTaggingDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
+
+    def evaluate(self):
+        super().evaluate()
+
+        for set_label in self.cfg.evaluation.eval_set:
+            pol = get_polarization(self.cfg, self.results[set_label])
+            LOGGER.info(
+                f'Degree of polarization: '
+                f'{pol["pol_l"][-1]:.3f} (L) and {pol["pol_r"][-1]:.3f} (R) at efficiency {pol["efficiency"][-1]}'
+            )
+            self.results[set_label]["efficiencies"] = pol["efficiency"]
+            self.results[set_label]["pol_l"] = pol["pol_l"]
+            self.results[set_label]["pol_r"] = pol["pol_r"]
+            self.results[set_label]["score_l"] = pol["score_l"][-1]
+            self.results[set_label]["score_r"] = pol["score_r"][-1]
+
+    @torch.no_grad()
+    def _evaluate_single(self, loader, title, mode, step=None):
+        assert mode in ["val", "eval"]
+
+        metrics = super()._evaluate_single(loader, title, mode, step)
+        momenta = {}
+
+        # predictions
+        mom_hadtop, mom_b, mom_hard, mom_soft, mom_leptop, mom_lep, charge = [], [], [], [], [], [], []
+        self.model.eval()
+        for batch in loader:
+            fourmomenta, scalars, _, _, lep_vec, lep_charge = self._extract_batch(batch)
+            mask_hadtop, mask_b, mask_hard, mask_soft = (
+                (scalars[:, 0] == 1),
+                (scalars[:, 1] + scalars[:, 2] == 2),
+                (scalars[:, 1] + scalars[:, 3] == 2),
+                (scalars[:, 1] + scalars[:, 4] == 2),
+            )
+            mom_hadtop.append(fourmomenta[mask_hadtop])
+            mom_b.append(fourmomenta[mask_b])
+            mom_hard.append(fourmomenta[mask_hard])
+            mom_soft.append(fourmomenta[mask_soft])
+            if lep_vec is None:
+                mask_leptop, mask_lep = (
+                    (scalars[:, 5] == 1),
+                    (scalars[:, 6] != 0),
+                )
+                mom_leptop.append(fourmomenta[mask_leptop])
+                mom_lep.append(fourmomenta[mask_lep])
+                charge.append(scalars[scalars[:, 6] != 0][:, 6])
+            else:
+                mom_leptop.append(lep_vec[::2])
+                mom_lep.append(lep_vec[1::2])
+                charge.append(lep_charge)
+
+        mom_hadtop, mom_b, mom_hard, mom_soft, mom_leptop, mom_lep, charge = (
+            torch.cat(mom_hadtop).cpu(),
+            torch.cat(mom_b).cpu(),
+            torch.cat(mom_hard).cpu(),
+            torch.cat(mom_soft).cpu(),
+            torch.cat(mom_leptop).cpu(),
+            torch.cat(mom_lep).cpu(),
+            torch.cat(charge).cpu(),
+        )
+
+        if mode == "eval":
+            momenta["q_hadtop"], momenta["q_b"], momenta["q_hard"], momenta["q_soft"], momenta["q_leptop"], momenta["q_lep"], momenta["charge"] = (
+                mom_hadtop,
+                mom_b,
+                mom_hard,
+                mom_soft,
+                mom_leptop,
+                mom_lep,
+                charge,
+            )
+
+        results = metrics | momenta
+
+        return results

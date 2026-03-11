@@ -11,7 +11,7 @@ use_float64: false
 float32_matmul_precision: highest
 
 model_load_idx: null
-run_idx: null
+run_idx: ???
 run_dir: null
 save: true
 use_mlflow: false

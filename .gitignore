@@ -19,6 +19,7 @@ scripts/
 data/cache/
 data/jetclass/
 data/old/
+data/new/
 notebooks/
 *~
 *.db
