@@ -10,7 +10,7 @@ from torch_geometric.data import Data
 from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr
 from torch_geometric.data.storage import GlobalStorage
 
-from experiments.hep import PtPhiEtaM2_to_EPPP
+from experiments.hep import PtPhiEtaM_to_EPPP
 from experiments.logger import LOGGER
 
 torch.serialization.add_safe_globals(
@@ -472,7 +472,7 @@ class QuarkTaggingDataset(TaggingDataset):
             ],
             dim=-1,
         )
-        jet_four = PtPhiEtaM2_to_EPPP(jet_kin, lin_mass=True).unsqueeze(0)
+        jet_four = PtPhiEtaM_to_EPPP(jet_kin).unsqueeze(0)
 
         subjet_kin = torch.stack(
             [
@@ -482,7 +482,7 @@ class QuarkTaggingDataset(TaggingDataset):
             dim=-1,
         )
         subjet_tags = torch.as_tensor(subjets["tag"], dtype=torch.long)
-        subjet_four = PtPhiEtaM2_to_EPPP(subjet_kin, lin_mass=True)
+        subjet_four = PtPhiEtaM_to_EPPP(subjet_kin)
 
         top_lep = event["TopLep"]
         lepton = event["Lepton"]
@@ -494,7 +494,7 @@ class QuarkTaggingDataset(TaggingDataset):
             ],
             dim=-1,
         )
-        toplep_four = PtPhiEtaM2_to_EPPP(toplep_kin, lin_mass=True).unsqueeze(0)
+        toplep_four = PtPhiEtaM_to_EPPP(toplep_kin).unsqueeze(0)
 
         lep_kin = torch.stack(
             [
@@ -508,7 +508,7 @@ class QuarkTaggingDataset(TaggingDataset):
             dim=-1
         )
         lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
-        lep_four = PtPhiEtaM2_to_EPPP(lep_kin, lin_mass=True).unsqueeze(0)
+        lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
 
         b_idx = torch.argmax((subjet_tags == 5).to(torch.int)).item()
         other_indices = [i for i in range(len(subjet_tags)) if i != b_idx]
@@ -541,7 +541,7 @@ class QuarkTaggingDataset(TaggingDataset):
             const_pid = torch.as_tensor(subj_const["pid"], dtype=momentum_dtype)
 
             const_order = torch.argsort(const_kin[:, 0], descending=True)
-            const_four_list.append(PtPhiEtaM2_to_EPPP(const_kin[const_order], lin_mass=True))
+            const_four_list.append(PtPhiEtaM_to_EPPP(const_kin[const_order]))
             const_pid_list.append(const_pid[const_order])
             const_parent_list.append(
                 torch.full((const_order.numel(),), parent_idx, dtype=torch.long)

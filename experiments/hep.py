@@ -9,7 +9,7 @@ def stable_arctanh(x, eps=EPS):
     return 0.5 * (torch.log((1 + x).clamp(min=eps)) - torch.log((1 - x).clamp(min=eps)))
 
 
-def EPPP_to_PtPhiEtaM2(fourmomenta, sqrt_mass=False):
+def EPPP_to_PtPhiEtaM(fourmomenta):
     E, px, py, pz = torch.unbind(fourmomenta, dim=-1)
 
     pt = torch.sqrt((px**2 + py**2).clamp(min=EPS))
@@ -17,14 +17,14 @@ def EPPP_to_PtPhiEtaM2(fourmomenta, sqrt_mass=False):
     p_abs = torch.sqrt((pz**2 + pt**2).clamp(min=EPS))
     eta = stable_arctanh(pz / p_abs).clamp(min=-CUTOFF, max=CUTOFF)
     m2 = E**2 - px**2 - py**2 - pz**2
-    m2 = torch.sqrt(m2.clamp(min=EPS)) if sqrt_mass else m2
-    return torch.stack((pt, phi, eta, m2), dim=-1)
+    m = torch.sqrt(m2.clamp(min=EPS))
+    return torch.stack((pt, phi, eta, m), dim=-1)
 
 
-def PtPhiEtaM2_to_EPPP(x: torch.Tensor, lin_mass=False) -> torch.Tensor:
+def PtPhiEtaM_to_EPPP(x: torch.Tensor) -> torch.Tensor:
     assert x.shape[-1] == 4, "Input tensor must have last dimension of size 4"
     pt, phi, eta, m2 = torch.unbind(x, dim=-1)
-    m2 = m2**2 if lin_mass else m2
+    m2 = m2**2
     eta = eta.clamp(min=-CUTOFF, max=CUTOFF)
     px = pt * torch.cos(phi)
     py = pt * torch.sin(phi)

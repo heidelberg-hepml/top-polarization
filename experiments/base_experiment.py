@@ -215,7 +215,7 @@ class BaseExperiment:
             else:
                 model_load_idx = self.cfg.model_load_idx
                 saved_cfg = self._load_config(run_dir, "config.yaml")
-                self.cfg = OmegaConf.merge(self.cfg, saved_cfg)
+                self.cfg = OmegaConf.merge(saved_cfg, self.cfg)
                 run_idx = self.cfg.run_idx + 1
                 LOGGER.info(
                     f"Warm-starting from existing experiment {self.cfg.exp_name}/{run_name} for run {run_idx}"
@@ -229,12 +229,10 @@ class BaseExperiment:
 
         with open_dict(self.cfg):
             self.cfg.run_idx = run_idx
-            if not self.cfg.train:
-                self.cfg.run_dir = run_dir
+            self.cfg.run_dir = run_dir
             if not self.warm_start:
                 self.cfg.model_load_idx = 0
                 self.cfg.run_name = run_name
-                self.cfg.run_dir = run_dir
             else:
                 self.cfg.model_load_idx = model_load_idx
 
@@ -283,6 +281,7 @@ class BaseExperiment:
             return
 
         # create experiment directory
+        LOGGER.info(self.cfg.run_dir)
         run_dir = Path(self.cfg.run_dir).resolve()
         if run_dir.exists() and self.cfg.train and not self.warm_start:
             if self.cfg.allow_overwrite:
