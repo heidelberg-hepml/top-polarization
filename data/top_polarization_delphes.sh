@@ -4,7 +4,7 @@
 #SBATCH --time=4:00:00
 #SBATCH --error=logs/pbs/%j.log
 #SBATCH --output=logs/pbs/%j.log
-#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-type=NONE
 
 # source ~/.zshrc
 # conda activate base

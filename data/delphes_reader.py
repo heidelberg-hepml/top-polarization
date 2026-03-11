@@ -14,11 +14,12 @@ print(ROOT.Jet) # necessary to avoid Delphes not finding header files
 
 class DelphesReader():
 
-    def __init__(self, pnet=True, top_mass=[165,190]):
+    def __init__(self, pnet=True, top_mass=[165,190], ttH=False):
 
         self.jet_data = ak.ArrayBuilder()
         self.pnet_clustering = pnet
         self.top_mass = top_mass
+        self.ttH = ttH
         self.NEvents = 0
         self.NFatjetFail = 0
         self.NLepFail = 0
@@ -31,6 +32,10 @@ class DelphesReader():
         self.TopMassFailLep = 0
         self.JetMatchFail = 0
         self.FailFail = 0
+        self.NPhotonFail = 0
+        self.NPhotonPtEtaFail = 0
+        self.NPhotonISRFail = 0
+        self.NPhotonMgamgamFail = 0
 
         print(f"DelphesReader initialized with {'ParticleNet' if self.pnet_clustering else 'CA'} declustering strategy.")
 
@@ -256,12 +261,13 @@ class DelphesReader():
         matches = []
 
         ids = [p.id for p in partons]
-        if ids[-2] in [11, -11, 13, -13]: 
+        test_id = -5 if self.ttH else -2
+        if ids[test_id] in [11, -11, 13, -13]: 
             hadronic = "top"
-        elif ids[-2] in [1, -1, 2, -2, 3, -3, 4, -4]:
+        elif ids[test_id] in [1, -1, 2, -2, 3, -3, 4, -4]:
             hadronic = "atop"
         else:
-            raise ValueError(f"Parton-level objets do not match to expected IDs. The ID of the lepton/quark is {ids[-2]}.")
+            raise ValueError(f"Parton-level objets do not match to expected IDs. The ID of the lepton/quark is {ids[test_id]}.")
 
         if hadronic == "top":
             b_hadronic = partons[1]
@@ -503,11 +509,13 @@ class DelphesReader():
         iso_electrons = ROOT.TClonesArray("Electron")
         iso_muons = ROOT.TClonesArray("Muon")
         met = ROOT.TClonesArray("MissingET")
+        photons = ROOT.TClonesArray("Photon")
         delphesTree.SetBranchAddress("FatJet", rec_fat_jets)
         delphesTree.SetBranchAddress("Jet", rec_jets)
         delphesTree.SetBranchAddress("Electron", iso_electrons)
         delphesTree.SetBranchAddress("Muon", iso_muons)
         delphesTree.SetBranchAddress("MissingET", met)
+        delphesTree.SetBranchAddress("Photon", photons)
 
         for event, event_parton in zip(delphesTree, partonInfo):
             
@@ -541,6 +549,31 @@ class DelphesReader():
             if rec_leading_jet.PT < 250 or abs(rec_leading_jet.Eta) > 3.:
                 self.KinematicsFail += 1
                 continue
+            
+            if self.ttH: # ttH specific cuts
+                # Cut: Require two photons
+                if photons.GetEntriesFast() < 2:
+                    self.NPhotonFail += 1
+                    continue
+                leading_photon, subleading_photon = photons.At(0), photons.At(1)
+                assert leading_photon.PT >= subleading_photon.PT, "Photons are not ordered by pT in Delphes output."
+                
+                # Cut: Require two photons to have pT > 20 GeV and |eta| < 2.5
+                if leading_photon.PT < 20 or abs(leading_photon.Eta) > 2.5 or subleading_photon.PT < 20 or abs(subleading_photon.Eta) > 2.5:
+                    self.NPhotonPtEtaFail += 1
+                    continue
+                
+                # Cut: photon ISR cut, leading photon pt/mgaga > .35, and subleading photon pt/mgaga > .25
+                m_gaga = (leading_photon.P4() + subleading_photon.P4()).M()
+                if leading_photon.PT / m_gaga < 0.35 or subleading_photon.PT / m_gaga < 0.25:
+                    self.NPhotonISRFail += 1
+                    continue
+                
+                # Cut: 110 GeV < m_gamma_gamma < 140 GeV
+                if m_gaga < 110 or m_gaga > 140:
+                    self.NPhotonMgamgamFail += 1
+                    continue
+                 
 
             # Get all needed particles
             partons = event_parton.particles[2:]
@@ -610,6 +643,15 @@ class DelphesReader():
         events -= self.FailFail
         print(f"Percentage of events cut due to leptonic top mass reconstruction: {100 * self.TopMassFailLep / events:.2f}%")
         events -= self.TopMassFailLep
+        if self.ttH:
+            print(f"Percentage of events cut due to missing photons: {100 * self.NPhotonFail / events:.2f}%")
+            events -= self.NPhotonFail
+            print(f"Percentage of events cut due to photon pT/eta cuts: {100 * self.NPhotonPtEtaFail / events:.2f}%")
+            events -= self.NPhotonPtEtaFail
+            print(f"Percentage of events cut due to photon ISR cuts: {100 * self.NPhotonISRFail / events:.2f}%")
+            events -= self.NPhotonISRFail
+            print(f"Percentage of events cut due to m_gamma_gamma cuts: {100 * self.NPhotonMgamgamFail / events:.2f}%")
+            events -= self.NPhotonMgamgamFail
         print(f"Total events processed: {self.NEvents}")
         print(f"Surviving number of events: {events}")
 
