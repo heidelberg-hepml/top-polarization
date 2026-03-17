@@ -10,7 +10,8 @@ import torch.multiprocessing as mp
 from lgatr.primitives.config import gatr_config
 
 from experiments.tagging.experiment import (
-    QuarkTaggingExperiment,
+    PolarizationExperiment,
+    DownTaggingExperiment,
     TestExperiment,
 )
 
@@ -110,7 +111,12 @@ def ddp_worker(rank, cfg, trial=None):
         )
 
     if cfg.exp_type == "tagging":
-        constructor = QuarkTaggingExperiment
+        if cfg.data.dataset == "polarized":
+            constructor = PolarizationExperiment
+        elif cfg.data.dataset == "unpolarized":
+            constructor = DownTaggingExperiment
+        else:
+            raise ValueError(f"dataset {cfg.data.dataset} not implemented")
     elif cfg.exp_type == "test":
         constructor = TestExperiment
     else:
