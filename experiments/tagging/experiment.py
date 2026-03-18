@@ -11,7 +11,7 @@ from torch_geometric.loader import DataLoader
 from experiments.base_experiment import BaseExperiment
 from experiments.logger import LOGGER
 from experiments.mlflow import log_mlflow
-from experiments.tagging.dataset import QuarkTaggingDataset, TestDataset
+from experiments.tagging.dataset import DownTaggingDataset, PolarizationDataset, TestDataset
 from experiments.tagging.embedding import embed_tagging_data, get_num_tagging_features
 from experiments.tagging.likelihood import get_polarization
 from experiments.tagging.plots import plot_mixer
@@ -426,7 +426,7 @@ class TestExperiment(TaggingExperiment):
         self._init_data(TestDataset, data_path, dataset_kwargs)
 
 
-class QuarkTaggingExperiment(TaggingExperiment):
+class DownTaggingExperiment(TaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_outputs = 1
@@ -447,22 +447,24 @@ class QuarkTaggingExperiment(TaggingExperiment):
         return fourmomenta, scalars, ptr, label, lep_vec, lep_charge
 
     def init_data(self, mode="train"):
-        if self.cfg.data.dataset_eval and mode != "train":
+        if self.cfg.train == False and self.cfg.data.dataset_eval == "polarized":
             dataset = self.cfg.data.dataset_eval
+            pol_experiment = PolarizationExperiment
+            pol_experiment.init_data(self, mode=mode)
+        
         else:
             dataset = self.cfg.data.dataset
 
-        if self.data and (dataset == self.cfg.data.dataset):
-            return
+            if self.data and (dataset == self.cfg.data.dataset):
+                return
 
-        if self.cfg.data.mass_window == "strict":
-            top_window = "165_190"
-        elif self.cfg.data.mass_window == "loose":
-            top_window = "120_220"
-        else:
-            raise ValueError(f"Unknown mass window definition '{self.cfg.data.mass_window}'")
+            if self.cfg.data.mass_window == "strict":
+                top_window = "165_190"
+            elif self.cfg.data.mass_window == "loose":
+                top_window = "120_220"
+            else:
+                raise ValueError(f"Unknown mass window definition '{self.cfg.data.mass_window}'")
 
-        if dataset == "unpolarized":
             tag_id = 1
             filenames = sorted(
                 glob.glob(
@@ -472,43 +474,21 @@ class QuarkTaggingExperiment(TaggingExperiment):
                     )
                 )
             )
-        elif dataset == "polarized":
-            tag_id = -1
-            filenames = {
-                "L": sorted(
-                    glob.glob(
-                        os.path.join(
-                            self.cfg.data.data_dir,
-                            f"top_pol_had_L_*_{top_window}_train_*.parquet",
-                        )
-                    )
-                ),
-                "R": sorted(
-                    glob.glob(
-                        os.path.join(
-                            self.cfg.data.data_dir,
-                            f"top_pol_had_R_*_{top_window}_train_*.parquet",
-                        )
-                    )
-                ),
-            }
-        else:
-            raise ValueError(f"Unknown dataset type '{self.cfg.data.dataset}'")
 
-        dataset_kwargs = {
-            "length": getattr(self.cfg.data, "length", None),
-            "tag": tag_id,
-            "pid": self.cfg.data.pid,
-            "use_ditop": self.cfg.data.use_ditop,
-            "use_cache": self.cfg.data.use_cache,
-        }
-        self._init_data(QuarkTaggingDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
+            dataset_kwargs = {
+                "length": getattr(self.cfg.data, "length", None),
+                "tag": tag_id,
+                "pid": self.cfg.data.pid,
+                "use_ditop": self.cfg.data.use_ditop,
+                "use_cache": self.cfg.data.use_cache,
+            }
+            self._init_data(DownTaggingDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
     def evaluate(self):
         super().evaluate()
 
         for set_label in self.cfg.evaluation.eval_set:
-            pol = get_polarization(self.cfg, self.results[set_label])
+            pol = get_polarization(self.results[set_label], exp="downtagging")
             LOGGER.info(
                 f'Degree of polarization: '
                 f'{pol["pol_l"][-1]:.3f} (L) and {pol["pol_r"][-1]:.3f} (R) at efficiency {pol["efficiency"][-1]}'
@@ -578,3 +558,69 @@ class QuarkTaggingExperiment(TaggingExperiment):
         results = metrics | momenta
 
         return results
+
+
+class PolarizationExperiment(TaggingExperiment):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_outputs = 1
+        self.extra_scalars = 5  # Differentiate between fatjet, subjets, and constituents
+        if self.cfg.data.pid:
+            self.extra_scalars += 6
+        if self.cfg.data.use_ditop:
+            self.extra_scalars += 2
+
+    def init_data(self, mode="train"):
+        dataset = self.cfg.data.dataset
+
+        if self.data and (dataset == self.cfg.data.dataset):
+            return
+
+        if self.cfg.data.mass_window == "strict":
+            top_window = "165_190"
+        elif self.cfg.data.mass_window == "loose":
+            top_window = "120_220"
+        else:
+            raise ValueError(f"Unknown mass window definition '{self.cfg.data.mass_window}'")
+
+        filenames = {
+            "L": sorted(
+                glob.glob(
+                    os.path.join(
+                        self.cfg.data.data_dir,
+                        f"top_pol_had_L_*_{top_window}_train_*.parquet",
+                    )
+                )
+            ),
+            "R": sorted(
+                glob.glob(
+                    os.path.join(
+                        self.cfg.data.data_dir,
+                        f"top_pol_had_R_*_{top_window}_train_*.parquet",
+                    )
+                )
+            ),
+        }
+
+        dataset_kwargs = {
+            "length": getattr(self.cfg.data, "length", None),
+            "pid": self.cfg.data.pid,
+            "use_ditop": self.cfg.data.use_ditop,
+            "use_cache": self.cfg.data.use_cache,
+        }
+        self._init_data(PolarizationDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
+
+    def evaluate(self):
+        super().evaluate()
+
+        for set_label in self.cfg.evaluation.eval_set:
+            pol = get_polarization(self.results[set_label], exp="polarization")
+            LOGGER.info(
+                f'Degree of polarization: '
+                f'{pol["pol_l"][-1]:.3f} (L) and {pol["pol_r"][-1]:.3f} (R) at efficiency {pol["efficiency"][-1]}'
+            )
+            self.results[set_label]["efficiencies"] = pol["efficiency"]
+            self.results[set_label]["pol_l"] = pol["pol_l"]
+            self.results[set_label]["pol_r"] = pol["pol_r"]
+            self.results[set_label]["score_l"] = pol["score_l"][-1]
+            self.results[set_label]["score_r"] = pol["score_r"][-1]

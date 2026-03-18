@@ -3,31 +3,36 @@ import numpy as np
 from experiments.hep import lorentz_boost
 
 
-def get_polarization(cfg, results):
+def get_polarization(results, exp):
     pol = {"efficiency": [], "pol_l": [], "pol_r": [], "score_l": [], "score_r": [], "like_ratio": []}
+
     labels = torch.stack(
         (results["labels_true"], 
         results["labels_predict"]), 
         axis=-1,
         )
-    jets = torch.stack(
-        (results["q_hadtop"],
-        results["q_b"], 
-        results["q_hard"], 
-        results["q_soft"], 
-        results["q_leptop"],
-        results["q_lep"]),
-        axis=-1,
-    )
-    charge = results["charge"]
+    
+    if exp == "downtagging":
+        jets = torch.stack(
+            (results["q_hadtop"],
+            results["q_b"], 
+            results["q_hard"], 
+            results["q_soft"], 
+            results["q_leptop"],
+            results["q_lep"]),
+            axis=-1,
+        )
+        charge = results["charge"]
 
     efficiencies = np.linspace(0.2, 1., num=1000)
     for eff in efficiencies:
         pol["efficiency"].append(eff)
-        if cfg.data.dataset == "polarized":
+        if exp == "polarization":
             beta_l, beta_r, score_l, score_r = polarized(labels, efficiency=eff)
-        if cfg.data.dataset == "unpolarized":
+        elif exp == "downtagging":
             beta_l, beta_r, score_l, score_r = unpolarized(labels, jets, charge, efficiency=eff)
+        else:
+            raise ValueError(f"Experiment type {exp} not implemented")
         # like_ratio = get_likelihood(score_l, score_r)
         pol["pol_l"].append(beta_l)
         pol["pol_r"].append(beta_r)
@@ -96,7 +101,7 @@ def pol_opt(p, mom, sign):
 
 def get_likelihood(l, r, bins=40, threshold=3):
 
-    'Not used right now'
+    'Not used right now. Need expected number of events to obtain valid likelihood'
 
     if int(bins) % 2 == 1:
         bins += 1
