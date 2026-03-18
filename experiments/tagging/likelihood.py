@@ -1,30 +1,39 @@
-import torch
 import numpy as np
+import torch
+
 from experiments.hep import lorentz_boost
 
 
 def get_polarization(results, exp):
-    pol = {"efficiency": [], "pol_l": [], "pol_r": [], "score_l": [], "score_r": [], "like_ratio": []}
+    pol = {
+        "efficiency": [],
+        "pol_l": [],
+        "pol_r": [],
+        "score_l": [],
+        "score_r": [],
+        "like_ratio": [],
+    }
 
     labels = torch.stack(
-        (results["labels_true"], 
-        results["labels_predict"]), 
+        (results["labels_true"], results["labels_predict"]),
         axis=-1,
-        )
-    
+    )
+
     if exp == "downtagging":
         jets = torch.stack(
-            (results["q_hadtop"],
-            results["q_b"], 
-            results["q_hard"], 
-            results["q_soft"], 
-            results["q_leptop"],
-            results["q_lep"]),
+            (
+                results["q_hadtop"],
+                results["q_b"],
+                results["q_hard"],
+                results["q_soft"],
+                results["q_leptop"],
+                results["q_lep"],
+            ),
             axis=-1,
         )
         charge = results["charge"]
 
-    efficiencies = np.linspace(0.2, 1., num=1000)
+    efficiencies = np.linspace(0.2, 1.0, num=1000)
     for eff in efficiencies:
         pol["efficiency"].append(eff)
         if exp == "polarization":
@@ -58,20 +67,36 @@ def unpolarized(labels, jets, charge, efficiency=1):
     labels_cut = labels[mask]
     jets_cut = jets[mask]
     charge_cut = charge[mask]
-    beta_l, costheta_l = pol_opt(labels_cut[labels_cut[:, 0] == 0][:, -1], jets_cut[labels_cut[:, 0] == 0], charge_cut[labels_cut[:, 0] == 0])
-    beta_r, costheta_r = pol_opt(labels_cut[labels_cut[:, 0] == 1][:, -1], jets_cut[labels_cut[:, 0] == 1], charge_cut[labels_cut[:, 0] == 1])
+    beta_l, costheta_l = pol_opt(
+        labels_cut[labels_cut[:, 0] == 0][:, -1],
+        jets_cut[labels_cut[:, 0] == 0],
+        charge_cut[labels_cut[:, 0] == 0],
+    )
+    beta_r, costheta_r = pol_opt(
+        labels_cut[labels_cut[:, 0] == 1][:, -1],
+        jets_cut[labels_cut[:, 0] == 1],
+        charge_cut[labels_cut[:, 0] == 1],
+    )
     beta_l, beta_r = torch.mean(beta_l), torch.mean(beta_r)
 
     return beta_l, beta_r, costheta_l, costheta_r
 
 
 def cut_efficiency(labels, efficiency=1):
-    cut_mask = torch.logical_or(labels[:, -1] >= 1 - (efficiency / 2), labels[:, -1] < (efficiency / 2))
+    cut_mask = torch.logical_or(
+        labels[:, -1] >= 1 - (efficiency / 2), labels[:, -1] < (efficiency / 2)
+    )
     return cut_mask
 
 
 def pol_opt(p, mom, sign):
-    hadtop, q_hard, q_soft, leptop, lep, = (
+    (
+        hadtop,
+        q_hard,
+        q_soft,
+        leptop,
+        _,
+    ) = (
         mom[:, :, 0],
         mom[:, :, 2],
         mom[:, :, 3],
@@ -93,15 +118,18 @@ def pol_opt(p, mom, sign):
         q_soft / torch.linalg.norm(q_soft, axis=1, keepdims=True),
     )
     pol_vec = p * qhat_hard + (1 - p) * qhat_soft
-    
-    costheta = sign * torch.einsum('ij,ij->i', spin_ax, pol_vec) / (torch.linalg.norm(spin_ax, axis=1) * torch.linalg.norm(pol_vec, axis=1))
+
+    costheta = (
+        sign
+        * torch.einsum("ij,ij->i", spin_ax, pol_vec)
+        / (torch.linalg.norm(spin_ax, axis=1) * torch.linalg.norm(pol_vec, axis=1))
+    )
 
     return torch.linalg.norm(pol_vec, axis=1), costheta
 
 
-def get_likelihood(l, r, bins=40, threshold=3):
-
-    'Not used right now. Need expected number of events to obtain valid likelihood'
+def get_likelihood(left, right, bins=40, threshold=3):
+    "Not used right now. Need expected number of events to obtain valid likelihood"
 
     if int(bins) % 2 == 1:
         bins += 1
@@ -110,7 +138,7 @@ def get_likelihood(l, r, bins=40, threshold=3):
         Nm, Np = torch.chunk(binned, 2)
         Nm = torch.flip(Nm, [0])
 
-        sm, sp = torch.sqrt(Nm), torch.sqrt(Np)
+        # sm, sp = torch.sqrt(Nm), torch.sqrt(Np)
 
         asym_val = (Np - Nm) / (Np + Nm)
         asym_err = 2 * torch.sqrt((Np * Nm) / (Np + Nm) ** 3)
@@ -118,13 +146,18 @@ def get_likelihood(l, r, bins=40, threshold=3):
         return asym_val, asym_err
 
     def stat_q(asym_pol, err_pol, asym_unpol, err_unpol):
-        q = torch.where(asym_pol >= 3, (asym_pol - asym_unpol)**2 / (err_pol)**2 + torch.log( (err_pol)**2 / (err_unpol)**2 ), 0)
+        q = torch.where(
+            asym_pol >= 3,
+            (asym_pol - asym_unpol) ** 2 / (err_pol) ** 2
+            + torch.log((err_pol) ** 2 / (err_unpol) ** 2),
+            0,
+        )
 
         return torch.sum(q)
 
     l_binned, r_binned = (
-        torch.histogram(l, bins=int(bins), range=(-1, 1))[0],
-        torch.histogram(r, bins=int(bins), range=(-1, 1))[0],
+        torch.histogram(left, bins=int(bins), range=(-1, 1))[0],
+        torch.histogram(right, bins=int(bins), range=(-1, 1))[0],
     )
     unpol_binned = (l_binned + r_binned) / 2
     asym_l, err_l = asym(l_binned)

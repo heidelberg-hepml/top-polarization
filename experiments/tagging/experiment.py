@@ -447,11 +447,11 @@ class DownTaggingExperiment(TaggingExperiment):
         return fourmomenta, scalars, ptr, label, lep_vec, lep_charge
 
     def init_data(self, mode="train"):
-        if self.cfg.train == False and self.cfg.data.dataset_eval == "polarized":
+        if not self.cfg.train and self.cfg.data.dataset_eval == "polarized":
             dataset = self.cfg.data.dataset_eval
             pol_experiment = PolarizationExperiment
             pol_experiment.init_data(self, mode=mode)
-        
+
         else:
             dataset = self.cfg.data.dataset
 
@@ -490,8 +490,8 @@ class DownTaggingExperiment(TaggingExperiment):
         for set_label in self.cfg.evaluation.eval_set:
             pol = get_polarization(self.results[set_label], exp="downtagging")
             LOGGER.info(
-                f'Degree of polarization: '
-                f'{pol["pol_l"][-1]:.3f} (L) and {pol["pol_r"][-1]:.3f} (R) at efficiency {pol["efficiency"][-1]}'
+                f"Degree of polarization: "
+                f"{pol['pol_l'][-1]:.3f} (L) and {pol['pol_r'][-1]:.3f} (R) at efficiency {pol['efficiency'][-1]}"
             )
             self.results[set_label]["efficiencies"] = pol["efficiency"]
             self.results[set_label]["pol_l"] = pol["pol_l"]
@@ -507,7 +507,15 @@ class DownTaggingExperiment(TaggingExperiment):
         momenta = {}
 
         # predictions
-        mom_hadtop, mom_b, mom_hard, mom_soft, mom_leptop, mom_lep, charge = [], [], [], [], [], [], []
+        mom_hadtop, mom_b, mom_hard, mom_soft, mom_leptop, mom_lep, charge = (
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+        )
         self.model.eval()
         for batch in loader:
             fourmomenta, scalars, _, _, lep_vec, lep_charge = self._extract_batch(batch)
@@ -545,7 +553,15 @@ class DownTaggingExperiment(TaggingExperiment):
         )
 
         if mode == "eval":
-            momenta["q_hadtop"], momenta["q_b"], momenta["q_hard"], momenta["q_soft"], momenta["q_leptop"], momenta["q_lep"], momenta["charge"] = (
+            (
+                momenta["q_hadtop"],
+                momenta["q_b"],
+                momenta["q_hard"],
+                momenta["q_soft"],
+                momenta["q_leptop"],
+                momenta["q_lep"],
+                momenta["charge"],
+            ) = (
                 mom_hadtop,
                 mom_b,
                 mom_hard,
@@ -616,8 +632,8 @@ class PolarizationExperiment(TaggingExperiment):
         for set_label in self.cfg.evaluation.eval_set:
             pol = get_polarization(self.results[set_label], exp="polarization")
             LOGGER.info(
-                f'Degree of polarization: '
-                f'{pol["pol_l"][-1]:.3f} (L) and {pol["pol_r"][-1]:.3f} (R) at efficiency {pol["efficiency"][-1]}'
+                f"Degree of polarization: "
+                f"{pol['pol_l'][-1]:.3f} (L) and {pol['pol_r'][-1]:.3f} (R) at efficiency {pol['efficiency'][-1]}"
             )
             self.results[set_label]["efficiencies"] = pol["efficiency"]
             self.results[set_label]["pol_l"] = pol["pol_l"]

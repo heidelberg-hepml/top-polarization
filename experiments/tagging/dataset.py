@@ -396,22 +396,21 @@ class HEPTaggingDataset(TaggingDataset):
         )
 
         return split_indices
-    
+
     def _cache_key_gen(selfh):
         raise NotImplementedError()
 
     def _get_parquet(self):
         raise NotImplementedError()
-    
+
     def _fill_data(self):
         raise NotImplementedError()
-    
+
     def _build_event_graph(self):
         raise NotImplementedError()
 
 
 class DownTaggingDataset(HEPTaggingDataset):
-
     """
     Dataset for tagging down quarks from the two non-b-tagged subjets in a binary classification task.
     Parameters:
@@ -433,7 +432,7 @@ class DownTaggingDataset(HEPTaggingDataset):
         super().__init__(length=length)
         self.tag = tag
         self.include_pid = pid
-        self.use_ditop = use_ditop 
+        self.use_ditop = use_ditop
         self.use_cache = use_cache
 
     def _cache_key_gen(self, target_length):
@@ -450,11 +449,11 @@ class DownTaggingDataset(HEPTaggingDataset):
 
     def _get_parquet(self):
         parquet = ak.concatenate(
-                [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in self.filename]
+            [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in self.filename]
         )
         num_events = len(parquet)
         return parquet, num_events
-    
+
     def _fill_data(self, parquet, network_dtype, momentum_dtype):
         data_list = []
         indices = []
@@ -472,9 +471,8 @@ class DownTaggingDataset(HEPTaggingDataset):
         )
 
         return data_list, indices
-    
-    def _build_event_graph(self, event, network_dtype, momentum_dtype):
 
+    def _build_event_graph(self, event, network_dtype, momentum_dtype):
         ncat_ditop = 2 if self.use_ditop else 0
 
         top_had = event["TopHad"]
@@ -512,15 +510,9 @@ class DownTaggingDataset(HEPTaggingDataset):
         toplep_four = PtPhiEtaM_to_EPPP(toplep_kin).unsqueeze(0)
 
         lep_kin = torch.stack(
-            [
-                torch.as_tensor(lepton[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta"]
-            ] 
-            +
-            [   
-                torch.as_tensor(0., dtype=momentum_dtype)
-            ],
-            dim=-1
+            [torch.as_tensor(lepton[k], dtype=momentum_dtype) for k in ["pt", "phi", "eta"]]
+            + [torch.as_tensor(0.0, dtype=momentum_dtype)],
+            dim=-1,
         )
         lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
         lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
@@ -590,7 +582,7 @@ class DownTaggingDataset(HEPTaggingDataset):
         if self.include_pid:
             pid_features = torch.zeros(4 + n_constituents + ncat_ditop, 6, dtype=network_dtype)
             pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
-            pid_features[4:4+n_constituents] = pid_encoded.to(network_dtype)
+            pid_features[4 : 4 + n_constituents] = pid_encoded.to(network_dtype)
             scalars = torch.cat([category, pid_features], dim=-1)
         else:
             scalars = category
@@ -600,11 +592,12 @@ class DownTaggingDataset(HEPTaggingDataset):
             return Data(x=sequence, scalars=scalars, label=label, lep_vec=None, lep_charge=None)
 
         lep_vec = torch.cat([toplep_four, lep_four], dim=0)
-        return Data(x=sequence, scalars=scalars, label=label, lep_vec=lep_vec, lep_charge=lep_charge)
-    
+        return Data(
+            x=sequence, scalars=scalars, label=label, lep_vec=lep_vec, lep_charge=lep_charge
+        )
+
 
 class PolarizationDataset(HEPTaggingDataset):
-
     """
     Dataset for directly identifying the top quark polarization in a binary classification task.
     Parameters:
@@ -623,7 +616,7 @@ class PolarizationDataset(HEPTaggingDataset):
     ):
         super().__init__(length=length)
         self.include_pid = pid
-        self.use_ditop = use_ditop 
+        self.use_ditop = use_ditop
         self.use_cache = use_cache
 
     def _cache_key_gen(self, target_length):
@@ -640,14 +633,12 @@ class PolarizationDataset(HEPTaggingDataset):
 
     def _get_parquet(self):
         parquet = [
-            ak.concatenate(
-                [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in files]
-            )
+            ak.concatenate([self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in files])
             for files in self.filename.values()
         ]
         num_events = len(parquet)
         return parquet, num_events
-    
+
     def _fill_data(self, parquet, network_dtype, momentum_dtype):
         data_list = []
         indices = []
@@ -659,9 +650,7 @@ class PolarizationDataset(HEPTaggingDataset):
             if offset > 0:
                 perm = [pm + offset for pm in perm]
             for event in p:
-                graph = self._build_event_graph(
-                    event, lbl, network_dtype, momentum_dtype
-                )
+                graph = self._build_event_graph(event, lbl, network_dtype, momentum_dtype)
                 label_counts += graph.label
                 data_list.append(graph)
             indices += perm
@@ -673,9 +662,8 @@ class PolarizationDataset(HEPTaggingDataset):
         )
 
         return data_list, indices
-    
-    def _build_event_graph(self, event, label, network_dtype, momentum_dtype):
 
+    def _build_event_graph(self, event, label, network_dtype, momentum_dtype):
         ncat_ditop = 2 if self.use_ditop else 0
 
         top_had = event["TopHad"]
@@ -713,15 +701,9 @@ class PolarizationDataset(HEPTaggingDataset):
         toplep_four = PtPhiEtaM_to_EPPP(toplep_kin).unsqueeze(0)
 
         lep_kin = torch.stack(
-            [
-                torch.as_tensor(lepton[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta"]
-            ] 
-            +
-            [   
-                torch.as_tensor(0., dtype=momentum_dtype)
-            ],
-            dim=-1
+            [torch.as_tensor(lepton[k], dtype=momentum_dtype) for k in ["pt", "phi", "eta"]]
+            + [torch.as_tensor(0.0, dtype=momentum_dtype)],
+            dim=-1,
         )
         lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
         lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
@@ -785,7 +767,7 @@ class PolarizationDataset(HEPTaggingDataset):
         if self.include_pid:
             pid_features = torch.zeros(4 + n_constituents + ncat_ditop, 6, dtype=network_dtype)
             pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
-            pid_features[4:4+n_constituents] = pid_encoded.to(network_dtype)
+            pid_features[4 : 4 + n_constituents] = pid_encoded.to(network_dtype)
             scalars = torch.cat([category, pid_features], dim=-1)
         else:
             scalars = category
@@ -795,4 +777,6 @@ class PolarizationDataset(HEPTaggingDataset):
             return Data(x=sequence, scalars=scalars, label=label, lep_vec=None, lep_charge=None)
 
         lep_vec = torch.cat([toplep_four, lep_four], dim=0)
-        return Data(x=sequence, scalars=scalars, label=label, lep_vec=lep_vec, lep_charge=lep_charge)
+        return Data(
+            x=sequence, scalars=scalars, label=label, lep_vec=lep_vec, lep_charge=lep_charge
+        )

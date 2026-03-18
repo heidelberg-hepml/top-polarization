@@ -251,9 +251,8 @@ def plot_score(
     fig.savefig(out, bbox_inches="tight", format="pdf")
     plt.close()
 
-def plot_pol(
-    out, score_l, score_r, title=None, xrange=[-1, 1], bins=20
-):
+
+def plot_pol(out, score_l, score_r, title=None, xrange=[-1, 1], bins=20):
     cols = [colors[1], colors[2]]
 
     fig, ax = plt.subplots(figsize=(5, 4))
@@ -264,8 +263,8 @@ def plot_pol(
         range=xrange,
         bins=bins,
         label="L",
-        histtype='step',
-        weights=np.ones_like(score_l)/len(score_l),
+        histtype="step",
+        weights=np.ones_like(score_l) / len(score_l),
         color=cols[0],
     )
     ax.hist(
@@ -273,8 +272,8 @@ def plot_pol(
         range=xrange,
         bins=bins,
         label="R",
-        histtype='step',
-        weights=np.ones_like(score_r)/len(score_r),
+        histtype="step",
+        weights=np.ones_like(score_r) / len(score_r),
         color=cols[1],
     )
     ax.set_xlim(xrange)
@@ -292,9 +291,8 @@ def plot_pol(
     fig.savefig(out, bbox_inches="tight", format="pdf")
     plt.close()
 
-def plot_eff(
-    out, efficiencies, pol_l, pol_r, title=None, xrange=[0.2, 1.], yrange=[0.6, 1.]
-):
+
+def plot_eff(out, efficiencies, pol_l, pol_r, title=None, xrange=[0.2, 1.0], yrange=[0.6, 1.0]):
     cols = [colors[1], colors[2]]
 
     fig, ax = plt.subplots(figsize=(5, 4))
@@ -303,14 +301,14 @@ def plot_eff(
     ax.plot(
         efficiencies,
         pol_l,
-        label = "L",
-        color = cols[0],
+        label="L",
+        color=cols[0],
     )
     ax.plot(
         efficiencies,
         pol_r,
-        label = "R",
-        color = cols[1],
+        label="R",
+        color=cols[1],
     )
     ax.set_xlim(xrange)
     ax.set_ylim(yrange)
