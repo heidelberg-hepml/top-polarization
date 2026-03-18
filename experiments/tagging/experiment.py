@@ -407,25 +407,6 @@ class TaggingExperiment(BaseExperiment):
         }
 
 
-class TestExperiment(TaggingExperiment):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.num_outputs = 1
-        self.extra_scalars = TestDataset.n_token_types
-
-    def init_data(self):
-        data_path = self.cfg.data.npy_path
-        if not os.path.isabs(data_path):
-            data_path = os.path.join(self.cfg.base_dir, data_path)
-        dataset_kwargs = dict(
-            seed=self.cfg.data.seed,
-            split_fracs=tuple(self.cfg.data.split_fracs),
-            shuffle=self.cfg.data.shuffle,
-            length=self.cfg.data.length,
-        )
-        self._init_data(TestDataset, data_path, dataset_kwargs)
-
-
 class DownTaggingExperiment(TaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

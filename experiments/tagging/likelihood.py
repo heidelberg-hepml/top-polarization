@@ -138,8 +138,6 @@ def get_likelihood(left, right, bins=40, threshold=3):
         Nm, Np = torch.chunk(binned, 2)
         Nm = torch.flip(Nm, [0])
 
-        # sm, sp = torch.sqrt(Nm), torch.sqrt(Np)
-
         asym_val = (Np - Nm) / (Np + Nm)
         asym_err = 2 * torch.sqrt((Np * Nm) / (Np + Nm) ** 3)
 
