@@ -10,7 +10,7 @@ from torch_geometric.data import Data
 from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr
 from torch_geometric.data.storage import GlobalStorage
 
-from experiments.hep import PtPhiEtaM2_to_EPPP
+from experiments.hep import PtPhiEtaM_to_EPPP
 from experiments.logger import LOGGER
 
 torch.serialization.add_safe_globals(
@@ -245,35 +245,28 @@ class TestDataset(TaggingDataset):
         return data
 
 
-class QuarkTaggingDataset(TaggingDataset):
+class HEPTaggingDataset(TaggingDataset):
     """
-    Optimized dataset for subjet tagging on the polarization parquet file.
-    Each event/graph contains the fat jet, its 3 subjets, and all subjet constituents.
+    Optimized dataset for HEP classification tasks.
     """
 
     CACHE_VERSION = 1
-    CACHE_PREFIX = "quark_tagging"
+    CACHE_PREFIX = "hep_tagging"
 
     _parquet_cache = {}
     _split_cache = {}
 
     def __init__(
         self,
-        tag=1,
+        length=-1,
         seed=12345,
         split_fracs=(0.8, 0.1, 0.1),
         shuffle=True,
-        length=-1,
-        pid=False,
-        use_cache=True,
     ):
         super().__init__(length=length)
-        self.tag = tag
         self.seed = seed
         self.split_fracs = split_fracs
         self.shuffle = shuffle
-        self.include_pid = pid
-        self.use_cache = use_cache
         self.filename = None
         self.cache_key = {}
 
@@ -320,31 +313,9 @@ class QuarkTaggingDataset(TaggingDataset):
         self.filename = filename
 
         # Load data with caching
-        if isinstance(self.filename, (list, tuple)):
-            parquet = ak.concatenate(
-                [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in self.filename]
-            )
-        elif isinstance(self.filename, (dict)):
-            parquet = [
-                ak.concatenate(
-                    [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in files]
-                )
-                for files in self.filename.values()
-            ]
-        else:
-            parquet = self._parquet_cache.setdefault(self.filename, ak.from_parquet(self.filename))
-
-        num_events = sum(len(p) for p in parquet) if isinstance(parquet, (list)) else len(parquet)
+        parquet, num_events = self._get_parquet()
         target_length = self._get_target_length(num_events)
-
-        self.cache_key = (
-            self.CACHE_VERSION,
-            self._normalize_filename_key(self.filename),
-            tuple(self.split_fracs),
-            self.seed,
-            bool(self.shuffle),
-            target_length,
-        )
+        self.cache_key = self._cache_key_gen(target_length)
 
         if self.use_cache:
             cache = self._load_from_cache(self.cache_key, data_dir)
@@ -352,48 +323,19 @@ class QuarkTaggingDataset(TaggingDataset):
             cache = None
 
         if cache is None:
-            data_list = []
-            indices = []
-            label_counts = 0
-
-            if isinstance(parquet, (list)):
-                offset = 0
-                for lbl, p in enumerate(parquet):
-                    p, perm = self._shuffle_data(p, evt_types=len(parquet))
-                    if offset > 0:
-                        perm = [pm + offset for pm in perm]
-                    for event in p:
-                        graph = self._build_event_graph(
-                            event, network_dtype, momentum_dtype, label_ext=lbl
-                        )
-                        label_counts += graph.label
-                        data_list.append(graph)
-                    indices += perm
-                    offset += len(data_list)
-                data_list, _ = self._shuffle_data(data_list)
-            else:
-                parquet, perm = self._shuffle_data(parquet)
-                for event in parquet:
-                    graph = self._build_event_graph(event, network_dtype, momentum_dtype)
-                    label_counts += graph.label.item()
-                    data_list.append(graph)
-                indices += perm
-
-            LOGGER.info(
-                f"[QuarkTaggingDataset] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
-            )
+            data_list, indices = self._fill_data(parquet, network_dtype, momentum_dtype)
 
             if not data_list:
                 raise RuntimeError(f"No usable events found for {self.filename}")
 
             self._save_to_cache(self.cache_key, data_list, indices, data_dir)
 
-            LOGGER.info("[QuarkTaggingDataset] saved to cache")
+            LOGGER.info("[{self.__class__.__name__}] saved to cache")
 
         else:
             data_list, indices = cache
 
-            LOGGER.info("[QuarkTaggingDataset] loaded from cache")
+            LOGGER.info("[{self.__class__.__name__}] loaded from cache")
 
         self.data_list = data_list
         self._split_data(indices)
@@ -449,24 +391,103 @@ class QuarkTaggingDataset(TaggingDataset):
         split_indices = self._split_cache[self.cache_key][mode]
 
         LOGGER.info(
-            f"[QuarkTaggingDataset] mode={mode}, requested_length={self.length}, "
+            f"[{self.__class__.__name__}] mode={mode}, requested_length={self.length}, "
             f"selected={len(split_indices)}/{len(self.data_list)}"
         )
 
         return split_indices
+    
+    def _cache_key_gen(selfh):
+        raise NotImplementedError()
 
-    def _build_event_graph(self, event, network_dtype, momentum_dtype, label_ext=-1):
-        fat_jet = event["FatJet"]
+    def _get_parquet(self):
+        raise NotImplementedError()
+    
+    def _fill_data(self):
+        raise NotImplementedError()
+    
+    def _build_event_graph(self):
+        raise NotImplementedError()
+
+
+class DownTaggingDataset(HEPTaggingDataset):
+
+    """
+    Dataset for tagging down quarks from the two non-b-tagged subjets in a binary classification task.
+    Parameters:
+        tag: PID of the quark to tag. Default 1 (= down quark)
+        use_ditop: If set to true, also include the lepton and the leptonic top quark in the event/graph
+    """
+
+    CACHE_VERSION = 1
+    CACHE_PREFIX = "down_quark_tagging"
+
+    def __init__(
+        self,
+        tag=1,
+        length=-1,
+        pid=False,
+        use_ditop=False,
+        use_cache=True,
+    ):
+        super().__init__(length=length)
+        self.tag = tag
+        self.include_pid = pid
+        self.use_ditop = use_ditop 
+        self.use_cache = use_cache
+
+    def _cache_key_gen(self, target_length):
+        cache_key = (
+            self.CACHE_VERSION,
+            self._normalize_filename_key(self.filename),
+            tuple(self.split_fracs),
+            self.seed,
+            bool(self.shuffle),
+            bool(self.use_ditop),
+            target_length,
+        )
+        return cache_key
+
+    def _get_parquet(self):
+        parquet = ak.concatenate(
+                [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in self.filename]
+        )
+        num_events = len(parquet)
+        return parquet, num_events
+    
+    def _fill_data(self, parquet, network_dtype, momentum_dtype):
+        data_list = []
+        indices = []
+        label_counts = 0
+
+        parquet, perm = self._shuffle_data(parquet)
+        for event in parquet:
+            graph = self._build_event_graph(event, network_dtype, momentum_dtype)
+            label_counts += graph.label.item()
+            data_list.append(graph)
+        indices += perm
+
+        LOGGER.info(
+            f"[{self.__class__.__name__}] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
+        )
+
+        return data_list, indices
+    
+    def _build_event_graph(self, event, network_dtype, momentum_dtype):
+
+        ncat_ditop = 2 if self.use_ditop else 0
+
+        top_had = event["TopHad"]
         subjets = event["Subjets"]
 
         jet_kin = torch.stack(
             [
-                torch.as_tensor(fat_jet[k], dtype=momentum_dtype)
+                torch.as_tensor(top_had[k], dtype=momentum_dtype)
                 for k in ["pt", "phi", "eta", "mass"]
             ],
             dim=-1,
         )
-        jet_four = PtPhiEtaM2_to_EPPP(jet_kin).unsqueeze(0)
+        jet_four = PtPhiEtaM_to_EPPP(jet_kin).unsqueeze(0)
 
         subjet_kin = torch.stack(
             [
@@ -476,7 +497,33 @@ class QuarkTaggingDataset(TaggingDataset):
             dim=-1,
         )
         subjet_tags = torch.as_tensor(subjets["tag"], dtype=torch.long)
-        subjet_four = PtPhiEtaM2_to_EPPP(subjet_kin)
+        subjet_four = PtPhiEtaM_to_EPPP(subjet_kin)
+
+        top_lep = event["TopLep"]
+        lepton = event["Lepton"]
+
+        toplep_kin = torch.stack(
+            [
+                torch.as_tensor(top_lep[k], dtype=momentum_dtype)
+                for k in ["pt", "phi", "eta", "mass"]
+            ],
+            dim=-1,
+        )
+        toplep_four = PtPhiEtaM_to_EPPP(toplep_kin).unsqueeze(0)
+
+        lep_kin = torch.stack(
+            [
+                torch.as_tensor(lepton[k], dtype=momentum_dtype)
+                for k in ["pt", "phi", "eta"]
+            ] 
+            +
+            [   
+                torch.as_tensor(0., dtype=momentum_dtype)
+            ],
+            dim=-1
+        )
+        lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
+        lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
 
         b_idx = torch.argmax((subjet_tags == 5).to(torch.int)).item()
         other_indices = [i for i in range(len(subjet_tags)) if i != b_idx]
@@ -485,15 +532,11 @@ class QuarkTaggingDataset(TaggingDataset):
 
         subjet_four_sorted = subjet_four[subjet_order]
 
-        if label_ext >= 0:
-            # Label by the polarization of the dataset
-            label = label_ext
+        if self.tag > 0:
+            # Label the jet as 1 if the leading non-b subjet matches the target tag
+            label = (subjet_tags[subjet_order[1]] == self.tag).to(network_dtype).unsqueeze(0)
         else:
-            if self.tag > 0:
-                # Label the jet as 1 if the leading non-b subjet matches the target tag
-                label = (subjet_tags[subjet_order[1]] == self.tag).to(network_dtype).unsqueeze(0)
-            else:
-                raise ValueError(f"Invalid subjet label of {self.tag}, must be positive")
+            raise ValueError(f"Invalid subjet label of {self.tag}, must be positive")
 
         constituents = subjets["Constituents"]
         const_four_list, const_pid_list, const_parent_list = [], [], []
@@ -509,7 +552,7 @@ class QuarkTaggingDataset(TaggingDataset):
             const_pid = torch.as_tensor(subj_const["pid"], dtype=momentum_dtype)
 
             const_order = torch.argsort(const_kin[:, 0], descending=True)
-            const_four_list.append(PtPhiEtaM2_to_EPPP(const_kin[const_order]))
+            const_four_list.append(PtPhiEtaM_to_EPPP(const_kin[const_order]))
             const_pid_list.append(const_pid[const_order])
             const_parent_list.append(
                 torch.full((const_order.numel(),), parent_idx, dtype=torch.long)
@@ -523,8 +566,8 @@ class QuarkTaggingDataset(TaggingDataset):
 
         n_constituents = const_four_sorted.shape[0]
 
-        category = torch.zeros(4 + n_constituents, 5, dtype=network_dtype)
-        # Jet: [1, 0, 0, 0, 0]
+        category = torch.zeros(4 + n_constituents + ncat_ditop, 5 + ncat_ditop, dtype=network_dtype)
+        # Hadronic top: [1, 0, 0, 0, 0]
         category[0, 0] = 1
 
         # 3 Subjets: [0, 1, X, X, X] where one X=1 for subjet index
@@ -537,12 +580,219 @@ class QuarkTaggingDataset(TaggingDataset):
         for j, parent_idx in enumerate(const_parents_sorted):
             category[4 + j, 2 + parent_idx] = 1
 
+        if self.use_ditop:
+            # Leptonic top: [0, 0, 0, 0, 0, 1, 0]
+            category[4 + len(const_parents_sorted), 5] = 1
+
+            # Lepton: [0, 0, 0, 0, 0, 0, charge]
+            category[4 + len(const_parents_sorted) + 1, 6] = lep_charge
+
         if self.include_pid:
-            pid_features = torch.zeros(4 + n_constituents, 6, dtype=network_dtype)
+            pid_features = torch.zeros(4 + n_constituents + ncat_ditop, 6, dtype=network_dtype)
             pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
-            pid_features[4:] = pid_encoded.to(network_dtype)
+            pid_features[4:4+n_constituents] = pid_encoded.to(network_dtype)
             scalars = torch.cat([category, pid_features], dim=-1)
         else:
             scalars = category
 
-        return Data(x=sequence, scalars=scalars, label=label)
+        if self.use_ditop:
+            sequence = torch.cat([sequence, toplep_four, lep_four], dim=0)
+            return Data(x=sequence, scalars=scalars, label=label, lep_vec=None, lep_charge=None)
+
+        lep_vec = torch.cat([toplep_four, lep_four], dim=0)
+        return Data(x=sequence, scalars=scalars, label=label, lep_vec=lep_vec, lep_charge=lep_charge)
+    
+
+class PolarizationDataset(HEPTaggingDataset):
+
+    """
+    Dataset for directly identifying the top quark polarization in a binary classification task.
+    Parameters:
+        use_ditop: If set to true, also include the lepton and the leptonic top quark in the event/graph
+    """
+
+    CACHE_VERSION = 1
+    CACHE_PREFIX = "polarization_tagging"
+
+    def __init__(
+        self,
+        length=-1,
+        pid=False,
+        use_ditop=False,
+        use_cache=True,
+    ):
+        super().__init__(length=length)
+        self.include_pid = pid
+        self.use_ditop = use_ditop 
+        self.use_cache = use_cache
+
+    def _cache_key_gen(self, target_length):
+        cache_key = (
+            self.CACHE_VERSION,
+            self._normalize_filename_key(self.filename),
+            tuple(self.split_fracs),
+            self.seed,
+            bool(self.shuffle),
+            bool(self.use_ditop),
+            target_length,
+        )
+        return cache_key
+
+    def _get_parquet(self):
+        parquet = [
+            ak.concatenate(
+                [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in files]
+            )
+            for files in self.filename.values()
+        ]
+        num_events = len(parquet)
+        return parquet, num_events
+    
+    def _fill_data(self, parquet, network_dtype, momentum_dtype):
+        data_list = []
+        indices = []
+        label_counts = 0
+
+        offset = 0
+        for lbl, p in enumerate(parquet):
+            p, perm = self._shuffle_data(p, evt_types=len(parquet))
+            if offset > 0:
+                perm = [pm + offset for pm in perm]
+            for event in p:
+                graph = self._build_event_graph(
+                    event, lbl, network_dtype, momentum_dtype
+                )
+                label_counts += graph.label
+                data_list.append(graph)
+            indices += perm
+            offset += len(data_list)
+        data_list, _ = self._shuffle_data(data_list)
+
+        LOGGER.info(
+            f"[{self.__class__.__name__}] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
+        )
+
+        return data_list, indices
+    
+    def _build_event_graph(self, event, label, network_dtype, momentum_dtype):
+
+        ncat_ditop = 2 if self.use_ditop else 0
+
+        top_had = event["TopHad"]
+        subjets = event["Subjets"]
+
+        jet_kin = torch.stack(
+            [
+                torch.as_tensor(top_had[k], dtype=momentum_dtype)
+                for k in ["pt", "phi", "eta", "mass"]
+            ],
+            dim=-1,
+        )
+        jet_four = PtPhiEtaM_to_EPPP(jet_kin).unsqueeze(0)
+
+        subjet_kin = torch.stack(
+            [
+                torch.as_tensor(subjets[k], dtype=momentum_dtype)
+                for k in ["pt", "phi", "eta", "mass"]
+            ],
+            dim=-1,
+        )
+        subjet_tags = torch.as_tensor(subjets["tag"], dtype=torch.long)
+        subjet_four = PtPhiEtaM_to_EPPP(subjet_kin)
+
+        top_lep = event["TopLep"]
+        lepton = event["Lepton"]
+
+        toplep_kin = torch.stack(
+            [
+                torch.as_tensor(top_lep[k], dtype=momentum_dtype)
+                for k in ["pt", "phi", "eta", "mass"]
+            ],
+            dim=-1,
+        )
+        toplep_four = PtPhiEtaM_to_EPPP(toplep_kin).unsqueeze(0)
+
+        lep_kin = torch.stack(
+            [
+                torch.as_tensor(lepton[k], dtype=momentum_dtype)
+                for k in ["pt", "phi", "eta"]
+            ] 
+            +
+            [   
+                torch.as_tensor(0., dtype=momentum_dtype)
+            ],
+            dim=-1
+        )
+        lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
+        lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
+
+        b_idx = torch.argmax((subjet_tags == 5).to(torch.int)).item()
+        other_indices = [i for i in range(len(subjet_tags)) if i != b_idx]
+        other_indices.sort(key=lambda idx: subjet_kin[idx, 0].item(), reverse=True)
+        subjet_order = torch.tensor([b_idx] + other_indices, dtype=torch.long)
+
+        subjet_four_sorted = subjet_four[subjet_order]
+
+        constituents = subjets["Constituents"]
+        const_four_list, const_pid_list, const_parent_list = [], [], []
+        for parent_idx, original_idx in enumerate(subjet_order.tolist()):
+            subj_const = constituents[original_idx]
+            const_kin = torch.stack(
+                [
+                    torch.as_tensor(subj_const[k], dtype=momentum_dtype)
+                    for k in ["pt", "phi", "eta", "mass"]
+                ],
+                dim=-1,
+            )
+            const_pid = torch.as_tensor(subj_const["pid"], dtype=momentum_dtype)
+
+            const_order = torch.argsort(const_kin[:, 0], descending=True)
+            const_four_list.append(PtPhiEtaM_to_EPPP(const_kin[const_order]))
+            const_pid_list.append(const_pid[const_order])
+            const_parent_list.append(
+                torch.full((const_order.numel(),), parent_idx, dtype=torch.long)
+            )
+
+        const_four_sorted = torch.cat(const_four_list, dim=0)
+        const_pid_sorted = torch.cat(const_pid_list, dim=0)
+        const_parents_sorted = torch.cat(const_parent_list, dim=0)
+
+        sequence = torch.cat([jet_four, subjet_four_sorted, const_four_sorted], dim=0)
+
+        n_constituents = const_four_sorted.shape[0]
+
+        category = torch.zeros(4 + n_constituents + ncat_ditop, 5 + ncat_ditop, dtype=network_dtype)
+        # Hadronic top: [1, 0, 0, 0, 0]
+        category[0, 0] = 1
+
+        # 3 Subjets: [0, 1, X, X, X] where one X=1 for subjet index
+        category[1:4, 1] = 1
+        category[1, 2] = 1
+        category[2, 3] = 1
+        category[3, 4] = 1
+
+        # Constituents: [0, 0, X, X, X] where one X=1 for parent subjet (0, 1, or 2)
+        for j, parent_idx in enumerate(const_parents_sorted):
+            category[4 + j, 2 + parent_idx] = 1
+
+        if self.use_ditop:
+            # Leptonic top: [0, 0, 0, 0, 0, 1, 0]
+            category[4 + len(const_parents_sorted), 5] = 1
+
+            # Lepton: [0, 0, 0, 0, 0, 0, charge]
+            category[4 + len(const_parents_sorted) + 1, 6] = lep_charge
+
+        if self.include_pid:
+            pid_features = torch.zeros(4 + n_constituents + ncat_ditop, 6, dtype=network_dtype)
+            pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
+            pid_features[4:4+n_constituents] = pid_encoded.to(network_dtype)
+            scalars = torch.cat([category, pid_features], dim=-1)
+        else:
+            scalars = category
+
+        if self.use_ditop:
+            sequence = torch.cat([sequence, toplep_four, lep_four], dim=0)
+            return Data(x=sequence, scalars=scalars, label=label, lep_vec=None, lep_charge=None)
+
+        lep_vec = torch.cat([toplep_four, lep_four], dim=0)
+        return Data(x=sequence, scalars=scalars, label=label, lep_vec=lep_vec, lep_charge=lep_charge)

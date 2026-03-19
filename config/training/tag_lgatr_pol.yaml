@@ -1,0 +1,13 @@
+# L-GATr top-tagging parameters, see https://arxiv.org/abs/2411.00446
+# Parameter values taken from best optuna run
+iterations: 200000
+batchsize: 256
+
+optimizer: Lion
+scheduler: OneCycleLR
+weight_decay: 5.
+
+lr: 1.7e-4
+
+defaults:
+  - tag_default
