@@ -11,7 +11,7 @@ from torch_geometric.loader import DataLoader
 from experiments.base_experiment import BaseExperiment
 from experiments.logger import LOGGER
 from experiments.mlflow import log_mlflow
-from experiments.tagging.dataset import DownTaggingDataset, PolarizationDataset, TestDataset
+from experiments.tagging.dataset import DownTaggingDataset, PolarizationDataset, PseudoscalarDataset
 from experiments.tagging.embedding import embed_tagging_data, get_num_tagging_features
 from experiments.tagging.likelihood import get_polarization
 from experiments.tagging.plots import plot_mixer
@@ -141,18 +141,6 @@ class TaggingExperiment(BaseExperiment):
                 self.cfg.data,
             )
             self.model.init_standardization(embedding["fourmomenta"], embedding["ptr"])
-
-    def _init_experiment(self, run_name_add=None):
-        run_name_add = [
-            f"dataset={self.cfg.data.dataset}",
-            f"mass={self.cfg.data.mass_window}",
-            f"ditop={self.cfg.data.use_ditop}",
-            f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
-            f"lr={self.cfg.training.lr}",
-            f"opt={self.cfg.training.optimizer}",
-            f"bs={self.cfg.training.batchsize}",
-        ]
-        super()._init_experiment(run_name_add=run_name_add)
 
     def _init_optimizer(self, param_groups=None):
         if self.cfg.model.net._target_.rsplit(".", 1)[-1] in [
@@ -417,6 +405,18 @@ class DownTaggingExperiment(TaggingExperiment):
         if self.cfg.data.use_ditop:
             self.extra_scalars += 2
 
+    def _init_experiment(self, run_name_add=None):
+        run_name_add = [
+            f"dataset={self.cfg.data.dataset if self.cfg.data.dataset else ''}",
+            f"mass={self.cfg.data.mass_window}",
+            f"ditop={self.cfg.data.use_ditop}",
+            f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
+            f"lr={self.cfg.training.lr}",
+            f"opt={self.cfg.training.optimizer}",
+            f"bs={self.cfg.training.batchsize}",
+        ]
+        super()._init_experiment(run_name_add=run_name_add)
+
     def _extract_batch(self, batch):
         batch = batch.to(self.device)
         fourmomenta = batch.x.to(self.momentum_dtype)
@@ -569,6 +569,18 @@ class PolarizationExperiment(TaggingExperiment):
         if self.cfg.data.use_ditop:
             self.extra_scalars += 2
 
+    def _init_experiment(self, run_name_add=None):
+        run_name_add = [
+            f"dataset={self.cfg.data.dataset if self.cfg.data.dataset else ''}",
+            f"mass={self.cfg.data.mass_window}",
+            f"ditop={self.cfg.data.use_ditop}",
+            f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
+            f"lr={self.cfg.training.lr}",
+            f"opt={self.cfg.training.optimizer}",
+            f"bs={self.cfg.training.batchsize}",
+        ]
+        super()._init_experiment(run_name_add=run_name_add)
+
     def init_data(self, mode="train"):
         dataset = self.cfg.data.dataset
 
@@ -623,3 +635,63 @@ class PolarizationExperiment(TaggingExperiment):
             self.results[set_label]["pol_r"] = pol["pol_r"]
             self.results[set_label]["score_l"] = pol["score_l"][-1]
             self.results[set_label]["score_r"] = pol["score_r"][-1]
+
+
+class PseudoscalarExperiment(TaggingExperiment):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_outputs = 1
+        self.extra_scalars = 10  # Differentiate between tops, higgs, photons, subjets, and constituents
+        if self.cfg.data.pid:
+            self.extra_scalars += 6
+
+    def _init_experiment(self, run_name_add=None):
+        run_name_add = [
+            f"exp={self.cfg.exp_name}",
+            f"mass={self.cfg.data.mass_window}",
+            f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
+            f"lr={self.cfg.training.lr}",
+            f"opt={self.cfg.training.optimizer}",
+            f"bs={self.cfg.training.batchsize}",
+        ]
+        super()._init_experiment(run_name_add=run_name_add)
+
+    def init_data(self, mode="train"):
+        if self.data:
+            return
+
+        if self.cfg.data.mass_window == "strict":
+            top_window = "165_190"
+        elif self.cfg.data.mass_window == "loose":
+            top_window = "120_220"
+        else:
+            raise ValueError(f"Unknown mass window definition '{self.cfg.data.mass_window}'")
+
+        filenames = {
+            "pos": sorted(
+                glob.glob(
+                    os.path.join(
+                        self.cfg.data.data_dir,
+                        f"ttH_alpha_45_*_{top_window}_train_*.parquet",
+                    )
+                )
+            ),
+            "neg": sorted(
+                glob.glob(
+                    os.path.join(
+                        self.cfg.data.data_dir,
+                        f"ttH_alpha_-45_*_{top_window}_train_*.parquet",
+                    )
+                )
+            ),
+        }
+
+        dataset_kwargs = {
+            "length": getattr(self.cfg.data, "length", None),
+            "pid": self.cfg.data.pid,
+            "use_cache": self.cfg.data.use_cache,
+        }
+        self._init_data(PseudoscalarDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
+
+    def evaluate(self):
+        super().evaluate()
