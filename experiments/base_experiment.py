@@ -7,8 +7,8 @@ import zipfile
 from pathlib import Path
 
 import mlflow
-import optuna
 import numpy as np
+import optuna
 import pytorch_optimizer
 import torch
 import torch.distributed as dist
@@ -612,7 +612,7 @@ class BaseExperiment:
                         raise optuna.TrialPruned(
                             f"Pruned in iteration {step} = epoch {step / len(self.train_loader):.1f} with val_loss={val_loss}"
                         )
-                    
+
                 if val_loss < smallest_val_loss:
                     smallest_val_loss = val_loss
                     self.metric = smallest_val_loss

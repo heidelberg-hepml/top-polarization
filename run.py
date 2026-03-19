@@ -1,18 +1,17 @@
 import datetime
 import os
 
-from omegaconf import OmegaConf
 import hydra
 import optuna
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from lgatr.primitives.config import gatr_config
+from omegaconf import OmegaConf
 
 from experiments.tagging.experiment import (
-    PolarizationExperiment,
     DownTaggingExperiment,
-    TestExperiment,
+    PolarizationExperiment,
 )
 
 gatr_config.use_fully_connected_subgroup = False
@@ -22,22 +21,21 @@ GLOBAL_METRIC = None
 
 @hydra.main(config_path="config", config_name="tagging", version_base=None)
 def main(cfg):
-
     if cfg.optuna:
-        study_name=f"{cfg.exp_name}"
+        study_name = f"{cfg.exp_name}"
         storage_name = "sqlite:///optuna.db"
         cfg.run_name = f"optuna_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
         pruner = optuna.pruners.MedianPruner(n_warmup_steps=3)
 
         study = optuna.create_study(
             study_name=study_name,
-            direction="minimize", 
+            direction="minimize",
             pruner=pruner,
             storage=storage_name,
             load_if_exists=True,
         )
         study.optimize(
-            lambda trial: objective(cfg, trial), 
+            lambda trial: objective(cfg, trial),
             n_trials=20,
             gc_after_trial=True,
         )
@@ -48,17 +46,20 @@ def main(cfg):
 
 
 def objective(base_cfg, trial=None):
-
     cfg = OmegaConf.merge(base_cfg)
     if trial:
         cfg.run_name = os.path.join(cfg.run_name, f"trial_{trial.number}")
         cfg.optuna_trial_id = trial.number
         cfg.training.lr = trial.suggest_float("learning_rate", 1e-6, 1e-3, log=True)
-        cfg.training.scheduler = trial.suggest_categorical("scheduler", ["CosineAnnealingLR", "OneCycleLR", "ReduceLROnPlateau"])
+        cfg.training.scheduler = trial.suggest_categorical(
+            "scheduler", ["CosineAnnealingLR", "OneCycleLR", "ReduceLROnPlateau"]
+        )
         cfg.training.batchsize = trial.suggest_categorical("batchsize", [32, 64, 128, 256])
         cfg.training.optimizer = trial.suggest_categorical("optimizer", ["Lion", "AdamW"])
-        cfg.training.weight_decay = trial.suggest_categorical("weight_decay", [0.2, 0.5, 1., 2., 5.])
-        if cfg.model.net._target_.rsplit('.', 1)[0] == "lgatr":
+        cfg.training.weight_decay = trial.suggest_categorical(
+            "weight_decay", [0.2, 0.5, 1.0, 2.0, 5.0]
+        )
+        if cfg.model.net._target_.rsplit(".", 1)[0] == "lgatr":
             cfg.model.net.num_blocks = trial.suggest_categorical("num_blocks", [6, 12])
             cfg.model.net.dropout_prob = trial.suggest_categorical("dropout_prob", [None, 0.1, 0.2])
 
@@ -73,13 +74,13 @@ def objective(base_cfg, trial=None):
             os.environ.setdefault("OMP_NUM_THREADS", "1")
 
             _set_common_env(world_size)
-            mp.spawn(ddp_worker, nprocs=world_size, args=(cfg,trial))
+            mp.spawn(ddp_worker, nprocs=world_size, args=(cfg, trial))
             metric = GLOBAL_METRIC
         else:
             # no GPU or only one GPU -> run on main process
             metric = ddp_worker(rank=0, cfg=cfg, trial=trial)
     except optuna.TrialPruned:
-        raise 
+        raise
 
     return metric
 
@@ -117,8 +118,6 @@ def ddp_worker(rank, cfg, trial=None):
             constructor = DownTaggingExperiment
         else:
             raise ValueError(f"dataset {cfg.data.dataset} not implemented")
-    elif cfg.exp_type == "test":
-        constructor = TestExperiment
     else:
         raise ValueError(f"exp_type {cfg.exp_type} not implemented")
 

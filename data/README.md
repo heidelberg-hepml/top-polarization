@@ -21,7 +21,7 @@ And the corresponding fix is here https://github.com/mg5amcnlo/mg5amcnlo/commit/
 
 The data is saved in the form of an awkward array and can be loaded with ak.from_parquet(data)
 
-The two top quarks are reconstructed from the detector level objects. 
+The two top quarks are reconstructed from the detector level objects.
 
 The training data hadronic subjets are matched to the respective parton-level objects via their PID (b-quark, u-quark, d-quark)
 
@@ -42,7 +42,7 @@ AWKWARD ARRAY
                 - eta
                 - phi
                 - mass
-        - Lepton 
+        - Lepton
                 - pt
                 - eta
                 - phi

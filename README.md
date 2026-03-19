@@ -59,7 +59,7 @@ Outputs are stored in `runs/<exp_name>/<run_name>/`, including:
 - `source.zip` (optional): zipped source code at the beginning of the run.
 
 ### Hyperparameter tuning
-Hyperparameters are scanned with Optuna by setting `optuna=true`. To keep runs within a reasonable time, it is advised that `training.iterations` and `training.validate_every_n_steps` are reduced for the scan. Optuna stores and reads trials to an `optuna.db` file. The Optuna dashboard extension for VSCode allows for a quick visualization of the trials. 
+Hyperparameters are scanned with Optuna by setting `optuna=true`. To keep runs within a reasonable time, it is advised that `training.iterations` and `training.validate_every_n_steps` are reduced for the scan. Optuna stores and reads trials to an `optuna.db` file. The Optuna dashboard extension for VSCode allows for a quick visualization of the trials.
 
 ## Test dataset
 

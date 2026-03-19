@@ -100,151 +100,6 @@ class TaggingDataset(torch.utils.data.Dataset):
         return filename
 
 
-class TestDataset(TaggingDataset):
-    """
-    Minimal dataset mirroring the notebook
-    Each event consists of three four-momenta and a binary label.
-    """
-
-    _npy_cache = {}
-    _split_cache = {}
-    n_token_types = 3
-
-    def __init__(
-        self,
-        seed=42,
-        split_fracs=(0.8, 0.1, 0.1),
-        shuffle=True,
-        length=-1,
-    ):
-        super().__init__(length=length)
-        self.seed = seed
-        self.split_fracs = split_fracs
-        self.shuffle = shuffle
-
-    def load_data(
-        self,
-        filename,
-        mode,
-        network_float64=False,
-        momentum_float64=True,
-    ):
-        if mode not in {"train", "val", "test"}:
-            raise ValueError(f"Unknown dataset split '{mode}'")
-
-        network_dtype = torch.float64 if network_float64 else torch.float32
-        momentum_dtype = torch.float64 if momentum_float64 else torch.float32
-
-        npy = self._load_npy(filename)
-
-        target_length = self._get_target_length(len(npy))
-
-        split_indices = self._get_split_indices(
-            filename,
-            len(npy),
-            self.split_fracs,
-            self.seed,
-            self.shuffle,
-            target_length,
-        )[mode]
-
-        subset = npy[split_indices]
-        data_list = []
-        for row in subset:
-            graph = self._build_event_graph(
-                row,
-                network_dtype=network_dtype,
-                momentum_dtype=momentum_dtype,
-            )
-            if graph is not None:
-                data_list.append(graph)
-
-        if not data_list:
-            raise RuntimeError(f"No usable events found in split '{mode}' for {filename}")
-
-        self.data_list = data_list
-
-    @classmethod
-    def _load_npy(cls, filename):
-        if isinstance(filename, (list, tuple)):
-            return np.concatenate([cls._load_npy(f) for f in filename])
-        if not isinstance(filename, str):
-            raise ValueError("filename must be a string or a list/tuple of strings")
-
-        if filename not in cls._npy_cache:
-            cls._npy_cache[filename] = np.load(filename)
-        return cls._npy_cache[filename]
-
-    @classmethod
-    def _get_split_indices(cls, filename, num_events, fracs, seed, shuffle, length):
-        effective_length = num_events if length is None else min(length, num_events)
-        key = (
-            cls._normalize_filename_key(filename),
-            tuple(fracs),
-            seed,
-            bool(shuffle),
-            effective_length,
-        )
-        if key in cls._split_cache:
-            return cls._split_cache[key]
-
-        if effective_length == 0:
-            raise RuntimeError(f"No events found in '{filename}'")
-
-        frac_tensor = torch.as_tensor(fracs, dtype=torch.double)
-        frac_tensor = frac_tensor / frac_tensor.sum()
-
-        gen = torch.Generator()
-        gen.manual_seed(seed)
-        if shuffle:
-            permutation = torch.randperm(num_events, generator=gen)
-        else:
-            permutation = torch.arange(num_events, dtype=torch.long)
-
-        if effective_length < num_events:
-            permutation = permutation[:effective_length]
-
-        n_selected = permutation.numel()
-        n_train = int(n_selected * frac_tensor[0].item())
-        n_val = int(n_selected * frac_tensor[1].item())
-        n_test = n_selected - n_train - n_val
-
-        if min(n_train, n_val, n_test) <= 0:
-            raise ValueError(
-                "Requested split fractions result in empty dataset parts. "
-                f"num_events={effective_length}, fractions={fracs}"
-            )
-
-        splits = {
-            "train": permutation[:n_train].tolist(),
-            "val": permutation[n_train : n_train + n_val].tolist(),
-            "test": permutation[n_train + n_val :].tolist(),
-        }
-        cls._split_cache[key] = splits
-        return splits
-
-    def _build_event_graph(
-        self,
-        row,
-        network_dtype,
-        momentum_dtype,
-    ):
-        features = torch.as_tensor(row[:-1], dtype=momentum_dtype)
-        if features.numel() != self.n_token_types * 4:
-            return None
-
-        fourmomenta = features.view(self.n_token_types, 4)
-        scalars = torch.eye(self.n_token_types, dtype=network_dtype)
-        label = torch.tensor([row[-1]], dtype=network_dtype)
-
-        data = Data(
-            x=fourmomenta,
-            scalars=scalars,
-            label=label,
-        )
-        return data
-
-
 class HEPTaggingDataset(TaggingDataset):
     """
     Optimized dataset for HEP classification tasks.
@@ -396,22 +251,21 @@ class HEPTaggingDataset(TaggingDataset):
         )
 
         return split_indices
-    
+
     def _cache_key_gen(selfh):
         raise NotImplementedError()
 
     def _get_parquet(self):
         raise NotImplementedError()
-    
+
     def _fill_data(self):
         raise NotImplementedError()
-    
+
     def _build_event_graph(self):
         raise NotImplementedError()
 
 
 class DownTaggingDataset(HEPTaggingDataset):
-
     """
     Dataset for tagging down quarks from the two non-b-tagged subjets in a binary classification task.
     Parameters:
@@ -433,7 +287,7 @@ class DownTaggingDataset(HEPTaggingDataset):
         super().__init__(length=length)
         self.tag = tag
         self.include_pid = pid
-        self.use_ditop = use_ditop 
+        self.use_ditop = use_ditop
         self.use_cache = use_cache
 
     def _cache_key_gen(self, target_length):
@@ -450,11 +304,11 @@ class DownTaggingDataset(HEPTaggingDataset):
 
     def _get_parquet(self):
         parquet = ak.concatenate(
-                [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in self.filename]
+            [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in self.filename]
         )
         num_events = len(parquet)
         return parquet, num_events
-    
+
     def _fill_data(self, parquet, network_dtype, momentum_dtype):
         data_list = []
         indices = []
@@ -472,9 +326,8 @@ class DownTaggingDataset(HEPTaggingDataset):
         )
 
         return data_list, indices
-    
-    def _build_event_graph(self, event, network_dtype, momentum_dtype):
 
+    def _build_event_graph(self, event, network_dtype, momentum_dtype):
         ncat_ditop = 2 if self.use_ditop else 0
 
         top_had = event["TopHad"]
@@ -512,15 +365,9 @@ class DownTaggingDataset(HEPTaggingDataset):
         toplep_four = PtPhiEtaM_to_EPPP(toplep_kin).unsqueeze(0)
 
         lep_kin = torch.stack(
-            [
-                torch.as_tensor(lepton[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta"]
-            ] 
-            +
-            [   
-                torch.as_tensor(0., dtype=momentum_dtype)
-            ],
-            dim=-1
+            [torch.as_tensor(lepton[k], dtype=momentum_dtype) for k in ["pt", "phi", "eta"]]
+            + [torch.as_tensor(0.0, dtype=momentum_dtype)],
+            dim=-1,
         )
         lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
         lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
@@ -590,7 +437,7 @@ class DownTaggingDataset(HEPTaggingDataset):
         if self.include_pid:
             pid_features = torch.zeros(4 + n_constituents + ncat_ditop, 6, dtype=network_dtype)
             pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
-            pid_features[4:4+n_constituents] = pid_encoded.to(network_dtype)
+            pid_features[4 : 4 + n_constituents] = pid_encoded.to(network_dtype)
             scalars = torch.cat([category, pid_features], dim=-1)
         else:
             scalars = category
@@ -600,11 +447,12 @@ class DownTaggingDataset(HEPTaggingDataset):
             return Data(x=sequence, scalars=scalars, label=label, lep_vec=None, lep_charge=None)
 
         lep_vec = torch.cat([toplep_four, lep_four], dim=0)
-        return Data(x=sequence, scalars=scalars, label=label, lep_vec=lep_vec, lep_charge=lep_charge)
-    
+        return Data(
+            x=sequence, scalars=scalars, label=label, lep_vec=lep_vec, lep_charge=lep_charge
+        )
+
 
 class PolarizationDataset(HEPTaggingDataset):
-
     """
     Dataset for directly identifying the top quark polarization in a binary classification task.
     Parameters:
@@ -623,7 +471,7 @@ class PolarizationDataset(HEPTaggingDataset):
     ):
         super().__init__(length=length)
         self.include_pid = pid
-        self.use_ditop = use_ditop 
+        self.use_ditop = use_ditop
         self.use_cache = use_cache
 
     def _cache_key_gen(self, target_length):
@@ -640,14 +488,12 @@ class PolarizationDataset(HEPTaggingDataset):
 
     def _get_parquet(self):
         parquet = [
-            ak.concatenate(
-                [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in files]
-            )
+            ak.concatenate([self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in files])
             for files in self.filename.values()
         ]
         num_events = len(parquet)
         return parquet, num_events
-    
+
     def _fill_data(self, parquet, network_dtype, momentum_dtype):
         data_list = []
         indices = []
@@ -659,9 +505,7 @@ class PolarizationDataset(HEPTaggingDataset):
             if offset > 0:
                 perm = [pm + offset for pm in perm]
             for event in p:
-                graph = self._build_event_graph(
-                    event, lbl, network_dtype, momentum_dtype
-                )
+                graph = self._build_event_graph(event, lbl, network_dtype, momentum_dtype)
                 label_counts += graph.label
                 data_list.append(graph)
             indices += perm
@@ -673,9 +517,8 @@ class PolarizationDataset(HEPTaggingDataset):
         )
 
         return data_list, indices
-    
-    def _build_event_graph(self, event, label, network_dtype, momentum_dtype):
 
+    def _build_event_graph(self, event, label, network_dtype, momentum_dtype):
         ncat_ditop = 2 if self.use_ditop else 0
 
         top_had = event["TopHad"]
@@ -713,15 +556,9 @@ class PolarizationDataset(HEPTaggingDataset):
         toplep_four = PtPhiEtaM_to_EPPP(toplep_kin).unsqueeze(0)
 
         lep_kin = torch.stack(
-            [
-                torch.as_tensor(lepton[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta"]
-            ] 
-            +
-            [   
-                torch.as_tensor(0., dtype=momentum_dtype)
-            ],
-            dim=-1
+            [torch.as_tensor(lepton[k], dtype=momentum_dtype) for k in ["pt", "phi", "eta"]]
+            + [torch.as_tensor(0.0, dtype=momentum_dtype)],
+            dim=-1,
         )
         lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
         lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
@@ -785,7 +622,7 @@ class PolarizationDataset(HEPTaggingDataset):
         if self.include_pid:
             pid_features = torch.zeros(4 + n_constituents + ncat_ditop, 6, dtype=network_dtype)
             pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
-            pid_features[4:4+n_constituents] = pid_encoded.to(network_dtype)
+            pid_features[4 : 4 + n_constituents] = pid_encoded.to(network_dtype)
             scalars = torch.cat([category, pid_features], dim=-1)
         else:
             scalars = category
@@ -795,4 +632,6 @@ class PolarizationDataset(HEPTaggingDataset):
             return Data(x=sequence, scalars=scalars, label=label, lep_vec=None, lep_charge=None)
 
         lep_vec = torch.cat([toplep_four, lep_four], dim=0)
-        return Data(x=sequence, scalars=scalars, label=label, lep_vec=lep_vec, lep_charge=lep_charge)
+        return Data(
+            x=sequence, scalars=scalars, label=label, lep_vec=lep_vec, lep_charge=lep_charge
+        )
