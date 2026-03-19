@@ -471,8 +471,10 @@ class DownTaggingExperiment(TaggingExperiment):
         for set_label in self.cfg.evaluation.eval_set:
             pol = get_polarization(self.results[set_label], exp="downtagging")
             LOGGER.info(
-                f"Degree of polarization: "
-                f"{pol['pol_l'][-1]:.3f} (L) and {pol['pol_r'][-1]:.3f} (R) at efficiency {pol['efficiency'][-1]}"
+                f'Degree of polarization: '
+                f'{pol["pol_l"][-1]:.3f} (L) and {pol["pol_r"][-1]:.3f} (R) at efficiency {pol["efficiency"][-1]}, '
+                f'{pol["pol_l"][375]:.3f} (L) and {pol["pol_r"][375]:.3f} (R) at efficiency {pol["efficiency"][375]}, '
+                f'{pol["pol_l"][0]:.3f} (L) and {pol["pol_r"][0]:.3f} (R) at efficiency {pol["efficiency"][0]}'
             )
             self.results[set_label]["efficiencies"] = pol["efficiency"]
             self.results[set_label]["pol_l"] = pol["pol_l"]

@@ -33,7 +33,7 @@ def get_polarization(results, exp):
         )
         charge = results["charge"]
 
-    efficiencies = np.linspace(0.2, 1.0, num=1000)
+    efficiencies = np.linspace(0.2, 1., num=1001)
     for eff in efficiencies:
         pol["efficiency"].append(eff)
         if exp == "polarization":
