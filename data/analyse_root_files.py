@@ -44,6 +44,6 @@ delphes_reader.inspect_fails()
 data = delphes_reader.jet_data.snapshot()
 
 if args.train_data:
-    ak.to_parquet(data, f"samples_awk/{tag}_{top_mass[0]}_{top_mass[1]}_train.parquet")
+    ak.to_parquet(data, f"samples_ttH_awk/{tag}_{top_mass[0]}_{top_mass[1]}_train.parquet")
 else:
-    ak.to_parquet(data, f"samples_awk/{tag}_{top_mass[0]}_{top_mass[1]}_test.parquet")
+    ak.to_parquet(data, f"samples_ttH_awk/{tag}_{top_mass[0]}_{top_mass[1]}_test.parquet")
