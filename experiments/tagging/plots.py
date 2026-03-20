@@ -70,26 +70,26 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                     key,
                 )
 
-    if cfg.plotting.score and cfg.evaluate and not cfg.data.dataset_eval:
+    if cfg.plotting.score and cfg.evaluate:
         file = f"{plot_path}/score.pdf"
         with PdfPages(file) as out:
             plot_score(
                 out,
-                cfg.data.dataset,
+                cfg.exp_type,
                 plot_dict["results_test"]["labels_true"],
                 plot_dict["results_test"]["labels_predict"],
                 title=title,
             )
             plot_score(
                 out,
-                cfg.data.dataset,
+                cfg.exp_type,
                 plot_dict["results_test"]["labels_true"],
                 plot_dict["results_test"]["labels_predict"],
                 title=title,
                 logy=True,
             )
 
-    if cfg.plotting.roc and cfg.evaluate and not cfg.data.dataset_eval:
+    if cfg.plotting.roc and cfg.evaluate:
         file = f"{plot_path}/roc.pdf"
         with PdfPages(file) as out:
             plot_roc(
@@ -206,7 +206,7 @@ def plot_roc(out, fpr, tpr, auc, title=None):
 
 
 def plot_score(
-    out, dataset, labels_true, labels_predicted, title=None, xrange=[0, 1], bins=100, logy=False
+    out, exp, labels_true, labels_predicted, title=None, xrange=[0, 1], bins=100, logy=False
 ):
     cols = [colors[1], colors[2]]
 
@@ -214,10 +214,12 @@ def plot_score(
     if logy:
         ax.set_yscale("log")
     ax.set_ylabel("Normalized", fontsize=FONTSIZE)
-    if dataset == "polarized":
+    if exp == "polarization":
         label_0, label_1 = "L", "R"
-    elif dataset == "unpolarized":
+    elif exp == "downtagging":
         label_0, label_1 = "Up", "Down"
+    elif exp == "pseudoscalar":
+        label_0, label_1 = "Pos", "Neg"
     ax.set_xlabel(f"Classifier score (0={label_0}, 1={label_1})", fontsize=FONTSIZE)
     _, bins, _ = ax.hist(
         labels_predicted[labels_true == 0],

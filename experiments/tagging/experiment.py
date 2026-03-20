@@ -407,7 +407,7 @@ class DownTaggingExperiment(TaggingExperiment):
 
     def _init_experiment(self, run_name_add=None):
         run_name_add = [
-            f"dataset={self.cfg.data.dataset if self.cfg.data.dataset else ''}",
+            f"dataset=unpolarized",
             f"mass={self.cfg.data.mass_window}",
             f"ditop={self.cfg.data.use_ditop}",
             f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
@@ -429,14 +429,11 @@ class DownTaggingExperiment(TaggingExperiment):
 
     def init_data(self, mode="train"):
         if not self.cfg.train and self.cfg.data.dataset_eval == "polarized":
-            dataset = self.cfg.data.dataset_eval
             pol_experiment = PolarizationExperiment
             pol_experiment.init_data(self, mode=mode)
 
         else:
-            dataset = self.cfg.data.dataset
-
-            if self.data and (dataset == self.cfg.data.dataset):
+            if self.data:
                 return
 
             if self.cfg.data.mass_window == "strict":
@@ -571,7 +568,7 @@ class PolarizationExperiment(TaggingExperiment):
 
     def _init_experiment(self, run_name_add=None):
         run_name_add = [
-            f"dataset={self.cfg.data.dataset if self.cfg.data.dataset else ''}",
+            f"dataset=polarized",
             f"mass={self.cfg.data.mass_window}",
             f"ditop={self.cfg.data.use_ditop}",
             f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
@@ -582,9 +579,7 @@ class PolarizationExperiment(TaggingExperiment):
         super()._init_experiment(run_name_add=run_name_add)
 
     def init_data(self, mode="train"):
-        dataset = self.cfg.data.dataset
-
-        if self.data and (dataset == self.cfg.data.dataset):
+        if self.data:
             return
 
         if self.cfg.data.mass_window == "strict":
@@ -647,7 +642,7 @@ class PseudoscalarExperiment(TaggingExperiment):
 
     def _init_experiment(self, run_name_add=None):
         run_name_add = [
-            f"exp={self.cfg.exp_name}",
+            f"exp={self.cfg.exp_type}",
             f"mass={self.cfg.data.mass_window}",
             f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
             f"lr={self.cfg.training.lr}",
