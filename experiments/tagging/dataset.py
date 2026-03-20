@@ -185,12 +185,12 @@ class HEPTaggingDataset(TaggingDataset):
 
             self._save_to_cache(self.cache_key, data_list, indices, data_dir)
 
-            LOGGER.info("[{self.__class__.__name__}] saved to cache")
+            LOGGER.info(f"[{self.__class__.__name__}] saved to cache")
 
         else:
             data_list, indices = cache
 
-            LOGGER.info("[{self.__class__.__name__}] loaded from cache")
+            LOGGER.info(f"[{self.__class__.__name__}] loaded from cache")
 
         self.data_list = data_list
         self._split_data(indices)
