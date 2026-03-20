@@ -11,7 +11,7 @@ from torch_geometric.loader import DataLoader
 from experiments.base_experiment import BaseExperiment
 from experiments.logger import LOGGER
 from experiments.mlflow import log_mlflow
-from experiments.tagging.dataset import DownTaggingDataset, PolarizationDataset, TestDataset
+from experiments.tagging.dataset import DownTaggingDataset, PolarizationDataset
 from experiments.tagging.embedding import embed_tagging_data, get_num_tagging_features
 from experiments.tagging.likelihood import get_polarization
 from experiments.tagging.plots import plot_mixer
