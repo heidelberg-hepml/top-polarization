@@ -699,7 +699,6 @@ class PseudoscalarDataset(HEPTaggingDataset):
         return data_list, indices
 
     def _build_event_graph(self, event, label, network_dtype, momentum_dtype):
-
         top_had = event["TopHad"]
         subjets = event["Subjets"]
 
@@ -778,10 +777,7 @@ class PseudoscalarDataset(HEPTaggingDataset):
         photon2 = event["photon_subleading"]
 
         higgs_kin = torch.stack(
-            [
-                torch.as_tensor(higgs[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta", "mass"]
-            ],
+            [torch.as_tensor(higgs[k], dtype=momentum_dtype) for k in ["pt", "phi", "eta", "mass"]],
             dim=-1,
         )
         higgs_four = PtPhiEtaM_to_EPPP(higgs_kin).unsqueeze(0)
@@ -806,7 +802,19 @@ class PseudoscalarDataset(HEPTaggingDataset):
 
         photon_pids = torch.as_tensor([22, 22], dtype=momentum_dtype)
 
-        sequence = torch.cat([jet_four, subjet_four_sorted, const_four_sorted, toplep_four, lep_four, higgs_four, photon1_four, photon2_four], dim=0)
+        sequence = torch.cat(
+            [
+                jet_four,
+                subjet_four_sorted,
+                const_four_sorted,
+                toplep_four,
+                lep_four,
+                higgs_four,
+                photon1_four,
+                photon2_four,
+            ],
+            dim=0,
+        )
 
         n_constituents = const_four_sorted.shape[0]
 

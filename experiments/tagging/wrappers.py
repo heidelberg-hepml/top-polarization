@@ -372,9 +372,12 @@ class LGATrWrapper(nn.Module):
 
         with torch.autocast("cuda", enabled=self.use_amp):
             mv_outputs, _ = self.net(mv, s, **mask_kwarg)
-        
+
         if self.output == "all":
-            out = extract_pseudoscalar(mv_outputs)[0, :, :, 0] + extract_scalar(mv_outputs)[0, :, :, 0]
+            out = (
+                extract_pseudoscalar(mv_outputs)[0, :, :, 0]
+                + extract_scalar(mv_outputs)[0, :, :, 0]
+            )
         elif self.output == "scalar":
             out = extract_scalar(mv_outputs)[0, :, :, 0]
         elif self.output == "pseudoscalar":

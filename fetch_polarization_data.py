@@ -5,15 +5,21 @@ import requests
 
 parser = argparse.ArgumentParser(description="Download data.")
 parser.add_argument("--out", type=str)
+parser.add_argument("--process", type=str, default="tt")
 parser.add_argument("--mass", type=str, default="loose")
 
 args = parser.parse_args()
 
 OUT = args.out
+PROC = args.process
 MASS = args.mass
 
-BASE_URL = "https://seafile.cloud.uni-hannover.de/d/053ac05f748d4f0583fa/files"
-POLARIZATIONS = ["0", ("L", "L"), ("L", "R"), ("R", "L"), ("R", "R")]
+if PROC == "tt":
+    BASE_URL = "https://seafile.cloud.uni-hannover.de/d/053ac05f748d4f0583fa/files"
+    LABELS = ["0", ("L", "L"), ("L", "R"), ("R", "L"), ("R", "R")]
+elif PROC == "tth":
+    BASE_URL = "https://seafile.cloud.uni-hannover.de/d/de5e4b2fda5546c1be46/files"
+    LABELS = ["0", "45", "-45"]
 MASS_WINDOWS = {"strict": (165, 190), "loose": (120, 220)}
 
 
@@ -34,17 +40,21 @@ def load(filename, out):
 
 def main():
     m = MASS_WINDOWS[MASS]
-    for pol in POLARIZATIONS:
+    for lbl in LABELS:
         for decay in [1, 2]:
-            if pol == "0":
-                for nr in range(1, 4):
-                    load(f"top_pol_{pol}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT)
-            else:
-                for nr in [1]:
-                    load(
-                        f"top_pol_had_{pol[0]}_lep_{pol[1]}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet",
-                        OUT,
-                    )
+            if PROC == "tt":
+                if lbl == "0":
+                    for nr in range(1, 4):
+                        load(f"top_pol_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT)
+                else:
+                    for nr in [1]:
+                        load(
+                            f"top_pol_had_{lbl[0]}_lep_{lbl[1]}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet",
+                            OUT,
+                        )
+            elif PROC == "tth":
+                for nr in range[1]:
+                    load(f"ttH_alpha_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT)
 
 
 if __name__ == "__main__":

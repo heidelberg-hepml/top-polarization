@@ -407,7 +407,7 @@ class DownTaggingExperiment(TaggingExperiment):
 
     def _init_experiment(self, run_name_add=None):
         run_name_add = [
-            f"dataset=unpolarized",
+            "dataset=unpolarized",
             f"mass={self.cfg.data.mass_window}",
             f"ditop={self.cfg.data.use_ditop}",
             f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
@@ -468,10 +468,10 @@ class DownTaggingExperiment(TaggingExperiment):
         for set_label in self.cfg.evaluation.eval_set:
             pol = get_polarization(self.results[set_label], exp="downtagging")
             LOGGER.info(
-                f'Degree of polarization: '
-                f'{pol["pol_l"][-1]:.3f} (L) and {pol["pol_r"][-1]:.3f} (R) at efficiency {pol["efficiency"][-1]}, '
-                f'{pol["pol_l"][375]:.3f} (L) and {pol["pol_r"][375]:.3f} (R) at efficiency {pol["efficiency"][375]}, '
-                f'{pol["pol_l"][0]:.3f} (L) and {pol["pol_r"][0]:.3f} (R) at efficiency {pol["efficiency"][0]}'
+                f"Degree of polarization: "
+                f"{pol['pol_l'][-1]:.3f} (L) and {pol['pol_r'][-1]:.3f} (R) at efficiency {pol['efficiency'][-1]}, "
+                f"{pol['pol_l'][375]:.3f} (L) and {pol['pol_r'][375]:.3f} (R) at efficiency {pol['efficiency'][375]}, "
+                f"{pol['pol_l'][0]:.3f} (L) and {pol['pol_r'][0]:.3f} (R) at efficiency {pol['efficiency'][0]}"
             )
             self.results[set_label]["efficiencies"] = pol["efficiency"]
             self.results[set_label]["pol_l"] = pol["pol_l"]
@@ -568,7 +568,7 @@ class PolarizationExperiment(TaggingExperiment):
 
     def _init_experiment(self, run_name_add=None):
         run_name_add = [
-            f"dataset=polarized",
+            "dataset=polarized",
             f"mass={self.cfg.data.mass_window}",
             f"ditop={self.cfg.data.use_ditop}",
             f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
@@ -636,7 +636,9 @@ class PseudoscalarExperiment(TaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_outputs = 1
-        self.extra_scalars = 10  # Differentiate between tops, higgs, photons, subjets, and constituents
+        self.extra_scalars = (
+            10  # Differentiate between tops, higgs, photons, subjets, and constituents
+        )
         if self.cfg.data.pid:
             self.extra_scalars += 6
 

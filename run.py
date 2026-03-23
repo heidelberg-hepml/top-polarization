@@ -113,7 +113,9 @@ def ddp_worker(rank, cfg, trial=None):
         )
 
     if cfg.exp_type == "tagging":
-        raise ValueError(f"exp_type tagging was deprecated. For polarization studies, choose 'downtagging' or 'polarization' instead.")
+        raise ValueError(
+            "exp_type tagging was deprecated. For polarization studies, choose 'downtagging' or 'polarization' instead."
+        )
     elif cfg.exp_type == "polarization":
         constructor = PolarizationExperiment
     elif cfg.exp_type == "downtagging":
