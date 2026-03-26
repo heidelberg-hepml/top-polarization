@@ -12,6 +12,7 @@ from omegaconf import OmegaConf
 from experiments.tagging.experiment import (
     DownTaggingExperiment,
     PolarizationExperiment,
+    PseudoscalarExperiment,
 )
 
 gatr_config.use_fully_connected_subgroup = False
@@ -112,12 +113,15 @@ def ddp_worker(rank, cfg, trial=None):
         )
 
     if cfg.exp_type == "tagging":
-        if cfg.data.dataset == "polarized":
-            constructor = PolarizationExperiment
-        elif cfg.data.dataset == "unpolarized":
-            constructor = DownTaggingExperiment
-        else:
-            raise ValueError(f"dataset {cfg.data.dataset} not implemented")
+        raise ValueError(
+            "exp_type tagging was deprecated. For polarization studies, choose 'downtagging' or 'polarization' instead."
+        )
+    elif cfg.exp_type == "polarization":
+        constructor = PolarizationExperiment
+    elif cfg.exp_type == "downtagging":
+        constructor = DownTaggingExperiment
+    elif cfg.exp_type == "pseudoscalar":
+        constructor = PseudoscalarExperiment
     else:
         raise ValueError(f"exp_type {cfg.exp_type} not implemented")
 

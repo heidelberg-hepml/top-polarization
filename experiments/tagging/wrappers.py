@@ -273,11 +273,13 @@ class LGATrWrapper(nn.Module):
         net,
         framesnet,
         out_channels,
+        output="all",
         mean_aggregation=False,
         use_amp=False,
         attention_backend="xformers",
     ):
         super().__init__()
+        self.output = output
         self.use_amp = use_amp
         self.attention_backend = attention_backend
         self.net = net(out_mv_channels=out_channels)
@@ -370,7 +372,18 @@ class LGATrWrapper(nn.Module):
 
         with torch.autocast("cuda", enabled=self.use_amp):
             mv_outputs, _ = self.net(mv, s, **mask_kwarg)
-        out = extract_pseudoscalar(mv_outputs)[0, :, :, 0] + extract_scalar(mv_outputs)[0, :, :, 0]
+
+        if self.output == "all":
+            out = (
+                extract_pseudoscalar(mv_outputs)[0, :, :, 0]
+                + extract_scalar(mv_outputs)[0, :, :, 0]
+            )
+        elif self.output == "scalar":
+            out = extract_scalar(mv_outputs)[0, :, :, 0]
+        elif self.output == "pseudoscalar":
+            out = extract_pseudoscalar(mv_outputs)[0, :, :, 0]
+        else:
+            raise ValueError(f"Output {self.output} not available.")
 
         if self.aggregator is not None:
             B = ptr.numel() - 1
