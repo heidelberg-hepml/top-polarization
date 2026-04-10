@@ -39,7 +39,7 @@ class TaggingExperiment(BaseExperiment):
         self.momentum_dtype = torch.float64 if self.cfg.data.momentum_float64 else torch.float32
 
         self.cfg.model.out_channels = self.num_outputs
-        if modelname in ["LGATr", "LGATrSlim"]:
+        if modelname in ["LGATr", "LGATrSlim", "LGATrSlimPseudo"]:
             # Lorentz-equivariance by internal representations
             in_s_channels = self.extra_scalars
             in_s_channels += get_num_tagging_features(
