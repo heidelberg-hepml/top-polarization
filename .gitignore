@@ -27,4 +27,6 @@ notebooks/
 *.npy
 *.npz
 *.parquet
+*.pkl
+*.pt
 *.ipynb_checkpoint*

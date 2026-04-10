@@ -215,6 +215,8 @@ class HEPTaggingDataset(TaggingDataset):
         return data[perm.tolist()], perm
 
     def _split_data(self, indices):
+        split_indices = torch.arange(len(self.data_list), dtype=torch.long)
+
         if self.cache_key not in self._split_cache:
             # Calculate split sizes
             fracs = torch.as_tensor(self.split_fracs, dtype=torch.double)
@@ -231,9 +233,9 @@ class HEPTaggingDataset(TaggingDataset):
                 )
 
             self._split_cache[self.cache_key] = {
-                "train": indices[:n_train],
-                "val": indices[n_train : n_train + n_val],
-                "test": indices[n_train + n_val :],
+                "train": split_indices[:n_train],
+                "val": split_indices[n_train : n_train + n_val],
+                "test": split_indices[n_train + n_val :],
             }
 
     def get_subset(self, mode):
@@ -252,7 +254,7 @@ class HEPTaggingDataset(TaggingDataset):
 
         return split_indices
 
-    def _cache_key_gen(selfh):
+    def _cache_key_gen(self):
         raise NotImplementedError()
 
     def _get_parquet(self):
@@ -858,3 +860,65 @@ class PseudoscalarDataset(HEPTaggingDataset):
             scalars = category
 
         return Data(x=sequence, scalars=scalars, label=label)
+
+
+class VBFDataset(HEPTaggingDataset):
+    """
+    Dataset for VBF parton-level events.
+    """
+
+    CACHE_VERSION = 1
+    CACHE_PREFIX = "vbf"
+
+    def __init__(
+        self,
+        length=-1,
+        use_cache=True,
+    ):
+        super().__init__(length=length)
+        self.use_cache = use_cache
+
+    def _cache_key_gen(self, target_length):
+        cache_key = (
+            self.CACHE_VERSION,
+            self._normalize_filename_key(self.filename),
+            tuple(self.split_fracs),
+            self.seed,
+            bool(self.shuffle),
+            target_length,
+        )
+        return cache_key
+
+    def _get_parquet(self):
+        files = {key: torch.from_numpy(np.load(value)) for key, value in self.filename.items()}
+        num_events = sum(len(v) for v in files.values())
+        return files, num_events
+
+    def _fill_data(self, parquet, network_dtype, momentum_dtype):
+        data_list = []
+        indices = []
+        label_counts = 0
+
+        offset = 0
+        for lbl, p in parquet.items():
+            p, perm = self._shuffle_data(p, evt_types=len(parquet))
+            if offset > 0:
+                perm = [pm + offset for pm in perm]
+            for event in p:
+                graph = self._build_event_graph(event, lbl, network_dtype, momentum_dtype)
+                label_counts += graph.label
+                data_list.append(graph)
+            indices += perm
+            offset += len(data_list)
+        data_list, _ = self._shuffle_data(data_list)
+
+        LOGGER.info(
+            f"[{self.__class__.__name__}] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
+        )
+
+        return data_list, indices
+
+    def _build_event_graph(self, event, label, network_dtype, momentum_dtype):
+        fourmomenta = event.to(dtype=momentum_dtype)
+        category = torch.eye(3, dtype=network_dtype)
+        return Data(x=fourmomenta, scalars=category, label=label)

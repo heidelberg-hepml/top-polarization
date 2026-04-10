@@ -11,7 +11,12 @@ from torch_geometric.loader import DataLoader
 from experiments.base_experiment import BaseExperiment
 from experiments.logger import LOGGER
 from experiments.mlflow import log_mlflow
-from experiments.tagging.dataset import DownTaggingDataset, PolarizationDataset, PseudoscalarDataset
+from experiments.tagging.dataset import (
+    DownTaggingDataset,
+    PolarizationDataset,
+    PseudoscalarDataset,
+    VBFDataset,
+)
 from experiments.tagging.embedding import embed_tagging_data, get_num_tagging_features
 from experiments.tagging.likelihood import get_polarization
 from experiments.tagging.plots import plot_mixer
@@ -690,5 +695,34 @@ class PseudoscalarExperiment(TaggingExperiment):
         }
         self._init_data(PseudoscalarDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
-    def evaluate(self):
-        super().evaluate()
+
+class VBFExperiment(TaggingExperiment):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_outputs = 1
+        self.extra_scalars = 3
+
+    def _init_experiment(self):
+        BaseExperiment._init_experiment(self)
+
+    def init_data(self, mode="train"):
+        if self.data:
+            return
+
+        filenames = {
+            0: os.path.join(
+                self.cfg.data.data_dir,
+                "cHWtil_pos.npy",
+            ),
+            1: os.path.join(
+                self.cfg.data.data_dir,
+                "cHWtil_neg.npy",
+            ),
+        }
+
+        LOGGER.info(f"Using VBF dataset from {self.cfg.data.data_dir}")
+        dataset_kwargs = {
+            "length": getattr(self.cfg.data, "length", None),
+            "use_cache": self.cfg.data.use_cache,
+        }
+        self._init_data(VBFDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)

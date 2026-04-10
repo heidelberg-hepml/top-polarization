@@ -218,7 +218,7 @@ def plot_score(
         label_0, label_1 = "L", "R"
     elif exp == "downtagging":
         label_0, label_1 = "Up", "Down"
-    elif exp == "pseudoscalar":
+    elif exp in ["pseudoscalar", "vbf"]:
         label_0, label_1 = "Pos", "Neg"
     ax.set_xlabel(f"Classifier score (0={label_0}, 1={label_1})", fontsize=FONTSIZE)
     _, bins, _ = ax.hist(
