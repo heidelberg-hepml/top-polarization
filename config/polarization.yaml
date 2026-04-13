@@ -1,5 +1,5 @@
-exp_type: downtagging
-exp_name: downtagging
+exp_type: polarization
+exp_name: polarization
 
 data:
   data_dir: data/

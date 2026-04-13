@@ -193,7 +193,7 @@ class HEPTaggingDataset(TaggingDataset):
             LOGGER.info(f"[{self.__class__.__name__}] loaded from cache")
 
         self.data_list = data_list
-        self._split_data(indices)
+        self._split_data()
 
     def _shuffle_data(self, data, evt_types=-1):
         # target_length = num_events if self.length is None else min(self.length, num_events)
@@ -214,7 +214,7 @@ class HEPTaggingDataset(TaggingDataset):
 
         return data[perm.tolist()], perm
 
-    def _split_data(self, indices):
+    def _split_data(self):
         split_indices = torch.arange(len(self.data_list), dtype=torch.long)
 
         if self.cache_key not in self._split_cache:
@@ -669,11 +669,13 @@ class PseudoscalarDataset(HEPTaggingDataset):
         return cache_key
 
     def _get_parquet(self):
-        parquet = [
-            ak.concatenate([self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in files])
-            for files in self.filename.values()
-        ]
-        num_events = len(parquet)
+        parquet = {
+            key: ak.concatenate(
+                [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in value]
+            )
+            for key, value in self.filename.items()
+        }
+        num_events = len(parquet[0]) + len(parquet[1])
         return parquet, num_events
 
     def _fill_data(self, parquet, network_dtype, momentum_dtype):
@@ -682,7 +684,7 @@ class PseudoscalarDataset(HEPTaggingDataset):
         label_counts = 0
 
         offset = 0
-        for lbl, p in enumerate(parquet):
+        for lbl, p in parquet.items():
             p, perm = self._shuffle_data(p, evt_types=len(parquet))
             if offset > 0:
                 perm = [pm + offset for pm in perm]

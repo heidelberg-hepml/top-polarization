@@ -670,7 +670,7 @@ class PseudoscalarExperiment(TaggingExperiment):
             raise ValueError(f"Unknown mass window definition '{self.cfg.data.mass_window}'")
 
         filenames = {
-            "pos": sorted(
+            0: sorted(
                 glob.glob(
                     os.path.join(
                         self.cfg.data.data_dir,
@@ -678,7 +678,7 @@ class PseudoscalarExperiment(TaggingExperiment):
                     )
                 )
             ),
-            "neg": sorted(
+            1: sorted(
                 glob.glob(
                     os.path.join(
                         self.cfg.data.data_dir,
