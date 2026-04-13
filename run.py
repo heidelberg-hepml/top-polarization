@@ -13,6 +13,7 @@ from experiments.tagging.experiment import (
     DownTaggingExperiment,
     PolarizationExperiment,
     PseudoscalarExperiment,
+    VBFExperiment,
 )
 
 gatr_config.use_fully_connected_subgroup = False
@@ -122,6 +123,8 @@ def ddp_worker(rank, cfg, trial=None):
         constructor = DownTaggingExperiment
     elif cfg.exp_type == "pseudoscalar":
         constructor = PseudoscalarExperiment
+    elif cfg.exp_type == "vbf":
+        constructor = VBFExperiment
     else:
         raise ValueError(f"exp_type {cfg.exp_type} not implemented")
 
