@@ -1,0 +1,12 @@
+exp_type: downtaggingft
+exp_name: finetuning
+
+finetune:
+ backbone_path: ???
+ backbone_cfg: config.yaml
+ lr_backbone: 3e-6
+ lr_head: 3e-4
+
+defaults:
+ - downtagging
+ - _self_

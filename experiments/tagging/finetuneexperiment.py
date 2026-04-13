@@ -8,7 +8,7 @@ from omegaconf import OmegaConf, open_dict
 from torch_ema import ExponentialMovingAverage
 
 from experiments.logger import LOGGER
-from experiments.tagging.experiment import TopTaggingExperiment
+from experiments.tagging.experiment import DownTaggingExperiment
 
 
 def _extract_cli_overrides(cfg, prefix):
@@ -26,7 +26,7 @@ def _extract_cli_overrides(cfg, prefix):
     return out
 
 
-class TopTaggingFineTuneExperiment(TopTaggingExperiment):
+class DownTaggingFineTuneExperiment(DownTaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
