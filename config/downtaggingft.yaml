@@ -1,4 +1,4 @@
-exp_type: downtaggingft
+exp_type: downtagging_finetune
 exp_name: finetuning
 
 finetune:

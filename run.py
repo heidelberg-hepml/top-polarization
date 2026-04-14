@@ -15,6 +15,7 @@ from experiments.tagging.experiment import (
     PseudoscalarExperiment,
     VBFExperiment,
 )
+from experiments.tagging.finetuneexperiment import DownTaggingFineTuneExperiment
 
 gatr_config.use_fully_connected_subgroup = False
 
@@ -125,6 +126,8 @@ def ddp_worker(rank, cfg, trial=None):
         constructor = PseudoscalarExperiment
     elif cfg.exp_type == "vbf":
         constructor = VBFExperiment
+    elif cfg.exp_type == "downtagging_finetune":
+        constructor = DownTaggingFineTuneExperiment
     else:
         raise ValueError(f"exp_type {cfg.exp_type} not implemented")
 
