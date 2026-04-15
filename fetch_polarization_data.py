@@ -20,6 +20,9 @@ if PROC == "tt":
 elif PROC == "tth":
     BASE_URL = "https://seafile.cloud.uni-hannover.de/d/de5e4b2fda5546c1be46/files"
     LABELS = ["0", "45", "-45"]
+elif PROC == "vbf":
+    BASE_URL = "https://seafile.cloud.uni-hannover.de/d/bc0c7097c00949ca822c/files"
+    LABELS = ["pos", "neg"]
 MASS_WINDOWS = {"strict": (165, 190), "loose": (120, 220)}
 
 
@@ -41,20 +44,23 @@ def load(filename, out):
 def main():
     m = MASS_WINDOWS[MASS]
     for lbl in LABELS:
-        for decay in [1, 2]:
-            if PROC == "tt":
-                if lbl == "0":
-                    for nr in range(1, 4):
-                        load(f"top_pol_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT)
-                else:
-                    for nr in [1]:
-                        load(
-                            f"top_pol_had_{lbl[0]}_lep_{lbl[1]}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet",
-                            OUT,
-                        )
-            elif PROC == "tth":
-                for nr in range[1]:
-                    load(f"ttH_alpha_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT)
+        if PROC == "vbf":
+            load(f"cHWtil_{lbl}.npy", OUT)
+        else:
+            for decay in [1, 2]:
+                if PROC == "tt":
+                    if lbl == "0":
+                        for nr in range(1, 4):
+                            load(f"top_pol_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT)
+                    else:
+                        for nr in [1]:
+                            load(
+                                f"top_pol_had_{lbl[0]}_lep_{lbl[1]}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet",
+                                OUT,
+                            )
+                elif PROC == "tth":
+                    for nr in range[1]:
+                        load(f"ttH_alpha_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT)
 
 
 if __name__ == "__main__":
