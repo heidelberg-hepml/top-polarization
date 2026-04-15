@@ -28,9 +28,9 @@ When committing, ruff will automatically fix any issues it can and report the re
 ### Getting the data
 To automatically download the datasets, run:
 ```bash
-python fetch_polarization_data.py --out [OUTPUT_DIR] --mass [STRICT|LOOSE]
+python fetch_polarization_data.py --process [tt|tth|vbf] --mass [strict|loose] --out [OUTPUT_DIR]
 ```
-By default, datasets are installed in the `data` directory with a strict cut on the top quark mass window.
+By default, datasets are installed in the `data` directory.
 
 ## Running Experiments
 
