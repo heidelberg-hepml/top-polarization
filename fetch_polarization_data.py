@@ -59,7 +59,7 @@ def main():
                                 OUT,
                             )
                 elif PROC == "tth":
-                    for nr in range[1]:
+                    for nr in range(1, 3):
                         load(f"ttH_alpha_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT)
 
 
