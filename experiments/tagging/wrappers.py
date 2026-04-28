@@ -652,3 +652,11 @@ def compile_flex_attention(package_name="lgatr"):
             flex.attention,
             dynamic=True,
         )
+
+
+class FTLGATrSlimWrapper(LGATrSlimWrapper):
+    def forward(self, embedding):
+        new_scalars = embedding["scalars"][..., :-1]
+        new_scalars[..., -4:] = 0
+        embedding["scalars"] = new_scalars
+        super().forward(embedding)

@@ -30,19 +30,21 @@ class DownTaggingFineTuneExperiment(DownTaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        self.extra_scalars = 10  # enforced by jetclass training
+
         # load warm_start cfg
         warmstart_path = os.path.join(
             self.cfg.finetune.backbone_path, self.cfg.finetune.backbone_cfg
         )
         self.warmstart_cfg = OmegaConf.load(warmstart_path)
         assert self.warmstart_cfg.exp_type in ["jctagging", "toptagxl"]
-        assert self.warmstart_cfg.data.features == "fourmomenta"
 
         if self.warmstart_cfg.model._target_ not in [
             "experiments.tagging.wrappers.TransformerWrapper",
             "experiments.tagging.wrappers.ParTWrapper",
             "experiments.tagging.wrappers.LGATrWrapper",
             "experiments.tagging.wrappers.LGATrSlimWrapper",
+            "experiments.tagging.wrappers.FTLGATrSlimWrapper",
         ]:
             raise NotImplementedError
 
