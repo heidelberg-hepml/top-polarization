@@ -678,10 +678,22 @@ class PseudoscalarDataset(HEPTaggingDataset):
         num_events = len(parquet[0]) + len(parquet[1])
         return parquet, num_events
 
-    def _fill_data(self, parquet, network_dtype, momentum_dtype):
+    def _fill_data(self, parquet, network_dtype, momentum_dtype, balance=True):
         data_list = []
         indices = []
         label_counts = 0
+
+        if balance:
+            label_events = {lbl: list(p) for lbl, p in parquet.items()}
+            min_count = min(len(events) for events in label_events.values())
+            balanced_parquet = {}
+            for lbl, events in label_events.items():
+                if len(events) > min_count:
+                    perm = np.random.permutation(len(events))[:min_count]
+                    balanced_parquet[lbl] = [events[i] for i in perm]
+                else:
+                    balanced_parquet[lbl] = events
+            parquet = balanced_parquet
 
         offset = 0
         for lbl, p in parquet.items():
