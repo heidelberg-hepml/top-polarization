@@ -373,7 +373,7 @@ class LGATrWrapper(nn.Module):
         with torch.autocast("cuda", enabled=self.use_amp):
             mv_outputs, _ = self.net(mv, s, **mask_kwarg)
 
-        if self.output == "all":
+        if self.output == "sum":
             out = (
                 extract_pseudoscalar(mv_outputs)[0, :, :, 0]
                 + extract_scalar(mv_outputs)[0, :, :, 0]
@@ -382,6 +382,14 @@ class LGATrWrapper(nn.Module):
             out = extract_scalar(mv_outputs)[0, :, :, 0]
         elif self.output == "pseudoscalar":
             out = extract_pseudoscalar(mv_outputs)[0, :, :, 0]
+        elif self.output == "split":
+            out = torch.cat(
+                (
+                    extract_scalar(mv_outputs)[0, :, :, 0],
+                    extract_pseudoscalar(mv_outputs)[0, :, :, 0],
+                ),
+                dim=-1,
+            )
         else:
             raise ValueError(f"Output {self.output} not available.")
 
@@ -510,6 +518,7 @@ class LGATrSlimPseudoWrapper(nn.Module):
         net,
         framesnet,
         out_channels,
+        output="all",
         mean_aggregation=False,
         attention_backend="xformers",
         use_amp=False,
@@ -517,7 +526,24 @@ class LGATrSlimPseudoWrapper(nn.Module):
         super().__init__()
         self.use_amp = use_amp
         self.attention_backend = attention_backend
-        self.net = net(out_p_channels=out_channels)
+        if output in ["sum", "split"]:
+            out_c = {
+                "out_p_channels": out_channels,
+                "out_s_channels": out_channels,
+            }
+        elif output == "scalar":
+            out_c = {
+                "out_s_channels": out_channels,
+                "out_p_channels": 0,
+            }
+        elif output == "pseudoscalar":
+            out_c = {
+                "out_s_channels": 0,
+                "out_p_channels": out_channels,
+            }
+        else:
+            raise ValueError(f"Output {output} not available.")
+        self.net = net(**out_c)
         self.aggregator = MeanAggregation() if mean_aggregation else None
         self.framesnet = framesnet  # not actually used
         assert isinstance(framesnet, IdentityFrames)
@@ -612,8 +638,18 @@ class LGATrSlimPseudoWrapper(nn.Module):
         p = pseudoscalars
 
         with torch.autocast("cuda", enabled=self.use_amp):
-            _, _, out_p = self.net(v, s, p, **mask_kwarg)
-        out = out_p[0, :, :]
+            _, out_s, out_p = self.net(v, s, p, **mask_kwarg)
+
+        if self.output == "sum":
+            out = out_p[0, :, :] + out_s[0, :, :]
+        elif self.output == "scalar":
+            out = out_s[0, :, :]
+        elif self.output == "pseudoscalar":
+            out = out_p[0, :, :]
+        elif self.output == "split":
+            out = torch.cat((out_s[0, :, :], out_p[0, :, :]), dim=-1)
+        else:
+            raise ValueError(f"Output {self.output} not available.")
 
         if self.aggregator is not None:
             logits = self.aggregator(out, index=batch)
