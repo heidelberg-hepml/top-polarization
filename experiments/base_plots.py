@@ -35,17 +35,29 @@ def plot_loss(file, losses, lr=None, labels=None, logy=True):
     plt.close()
 
 
-def plot_metric(file, metrics, metric_label, labels=None, logy=False):
+def plot_metric(file, metrics, metric_label, labels=None, logy=False, metrics_std=None):
     labels = [None for _ in range(len(metrics))] if labels is None else labels
     fig, ax = plt.subplots()
-    for metric, label in zip(metrics, labels, strict=False):
-        iterations = range(1, len(metric) + 1)
-        if len(metric) == len(iterations):
-            its = iterations
-        else:
-            frac = len(metrics[0]) / len(metric)
-            its = np.arange(1, len(metric) + 1) * frac
-        ax.plot(its, metric, label=label)
+
+    if metrics_std is not None:
+        for metric, metric_std, label in zip(metrics, metrics_std, labels, strict=False):
+            iterations = range(1, len(metric) + 1)
+            if len(metric) == len(iterations):
+                its = iterations
+            else:
+                frac = len(metrics[0]) / len(metric)
+                its = np.arange(1, len(metric) + 1) * frac
+            ax.plot(its, metric, label=label)
+            ax.fill_between(its, metric - metric_std, metric + metric_std, alpha=0.3)
+    else:
+        for metric, label in zip(metrics, labels, strict=False):
+            iterations = range(1, len(metric) + 1)
+            if len(metric) == len(iterations):
+                its = iterations
+            else:
+                frac = len(metrics[0]) / len(metric)
+                its = np.arange(1, len(metric) + 1) * frac
+            ax.plot(its, metric, label=label)
 
     if logy:
         ax.set_yscale("log")

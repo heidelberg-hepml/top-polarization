@@ -373,21 +373,25 @@ class LGATrWrapper(nn.Module):
         with torch.autocast("cuda", enabled=self.use_amp):
             mv_outputs, _ = self.net(mv, s, **mask_kwarg)
 
+        out_s = extract_scalar(mv_outputs)[0, :, :, 0]
+        out_p = extract_pseudoscalar(mv_outputs)[0, :, :, 0]
+
+        tracker = {
+            "scalar_output": out_s.mean(dim=0, keepdim=True),
+            "scalar_output_std": out_s.std(dim=0, keepdim=True),
+            "pseudoscalar_output": out_p.mean(dim=0, keepdim=True),
+            "pseudoscalar_output_std": out_p.std(dim=0, keepdim=True),
+        }
+
         if self.output == "sum":
-            out = (
-                extract_pseudoscalar(mv_outputs)[0, :, :, 0]
-                + extract_scalar(mv_outputs)[0, :, :, 0]
-            )
+            out = out_p + out_s
         elif self.output == "scalar":
-            out = extract_scalar(mv_outputs)[0, :, :, 0]
+            out = out_s
         elif self.output == "pseudoscalar":
-            out = extract_pseudoscalar(mv_outputs)[0, :, :, 0]
+            out = out_p
         elif self.output == "split":
             out = torch.cat(
-                (
-                    extract_scalar(mv_outputs)[0, :, :, 0],
-                    extract_pseudoscalar(mv_outputs)[0, :, :, 0],
-                ),
+                (out_s, out_p),
                 dim=-1,
             )
         else:
@@ -398,7 +402,7 @@ class LGATrWrapper(nn.Module):
             logits = self.aggregator(out, index=batch, dim_size=B)
         else:
             logits = out[is_global]
-        return logits, {}, None
+        return logits, tracker, None
 
 
 class LGATrSlimWrapper(nn.Module):
@@ -640,6 +644,13 @@ class LGATrSlimPseudoWrapper(nn.Module):
         with torch.autocast("cuda", enabled=self.use_amp):
             _, out_s, out_p = self.net(v, s, p, **mask_kwarg)
 
+        tracker = {
+            "scalar_output": out_s[0, :, :].mean(dim=0, keepdim=True),
+            "scalar_output_std": out_s[0, :, :].std(dim=0, keepdim=True),
+            "pseudoscalar_output": out_p[0, :, :].mean(dim=0, keepdim=True),
+            "pseudoscalar_output_std": out_p[0, :, :].std(dim=0, keepdim=True),
+        }
+
         if self.output == "sum":
             out = out_p[0, :, :] + out_s[0, :, :]
         elif self.output == "scalar":
@@ -655,7 +666,7 @@ class LGATrSlimPseudoWrapper(nn.Module):
             logits = self.aggregator(out, index=batch)
         else:
             logits = out[is_global]
-        return logits, {}, None
+        return logits, tracker, None
 
 
 def compile_flex_attention(package_name="lgatr"):

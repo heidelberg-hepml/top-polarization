@@ -348,7 +348,20 @@ class TaggingExperiment(BaseExperiment):
         plot_mixer(self.cfg, plot_path, title, plot_dict)
 
     def _init_loss(self):
-        self.loss = torch.nn.BCEWithLogitsLoss()
+        if self.cfg.model.output == "split":
+
+            def custom_loss(y_pred, label):
+                scalar_loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                    y_pred[:, :1], label
+                )
+                pseudoscalar_loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                    y_pred[:, 1:], label
+                )
+                return scalar_loss + pseudoscalar_loss
+
+            self.loss = custom_loss
+        else:
+            self.loss = torch.nn.BCEWithLogitsLoss()
 
     # overwrite _validate method to compute metrics over the full validation set
     def _validate(self, step):
