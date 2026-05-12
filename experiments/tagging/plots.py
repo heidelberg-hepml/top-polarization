@@ -89,22 +89,6 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                     metrics_std=plot_dict["pseudoscalar_output_std"],
                 )
 
-            if "var_scalar" in plot_dict:
-                plot_metric(
-                    out,
-                    [
-                        plot_dict["var_scalar"],
-                    ],
-                    "Variance of scalar channel",
-                )
-                plot_metric(
-                    out,
-                    [
-                        plot_dict["var_pseudoscalar"],
-                    ],
-                    "Variance of pseudoscalar channel",
-                )
-
     if cfg.plotting.score and cfg.evaluate:
         file = f"{plot_path}/score.pdf"
         with PdfPages(file) as out:
