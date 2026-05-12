@@ -28,5 +28,6 @@ notebooks/
 *.npz
 *.parquet
 *.pkl
+*.csv
 *.pt
 *.ipynb_checkpoint*

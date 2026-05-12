@@ -89,6 +89,22 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                     metrics_std=plot_dict["pseudoscalar_output_std"],
                 )
 
+            if "var_scalar" in plot_dict:
+                plot_metric(
+                    out,
+                    [
+                        plot_dict["var_scalar"],
+                    ],
+                    "Variance of scalar channel",
+                )
+                plot_metric(
+                    out,
+                    [
+                        plot_dict["var_pseudoscalar"],
+                    ],
+                    "Variance of pseudoscalar channel",
+                )
+
     if cfg.plotting.score and cfg.evaluate:
         file = f"{plot_path}/score.pdf"
         with PdfPages(file) as out:
@@ -237,8 +253,10 @@ def plot_score(
         label_0, label_1 = "L", "R"
     elif exp == "downtagging":
         label_0, label_1 = "Up", "Down"
-    elif exp in ["pseudoscalar", "vbf"]:
+    elif exp in ["pseudoscalar", "vbf_pseudoscalar"]:
         label_0, label_1 = "Pos", "Neg"
+    elif exp == "vbf_cp":
+        label_0, label_1 = "SM", "Pos"
     ax.set_xlabel(f"Classifier score (0={label_0}, 1={label_1})", fontsize=FONTSIZE)
     _, bins, _ = ax.hist(
         labels_predicted[labels_true == 0],

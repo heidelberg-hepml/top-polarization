@@ -1,5 +1,5 @@
-exp_type: vbf
-exp_name: vbf
+exp_type: vbf_pseudoscalar
+exp_name: vbf_pseudoscalar
 
 data:
   data_dir: 'data/vbf_parton_data/'

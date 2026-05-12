@@ -227,19 +227,21 @@ class TaggingExperiment(BaseExperiment):
         # predictions
         labels_true, labels_predict = [], []
         self.model.eval()
+        total_loss = 0
+        total_samples = 0
         for batch in loader:
-            y_pred, label, _, _ = self._get_ypred_and_label(batch)
+            loss, tracker, y_pred, label = self._batch_loss(batch, val=True)
             labels_true.append(label)
             labels_predict.append(y_pred)
+            total_loss += loss.item() * label.shape[0]
+            total_samples += label.shape[0]
         labels_true, labels_predict = (
             torch.cat(labels_true).cpu().float(),
             torch.cat(labels_predict).cpu().float(),
         )
 
         # bce loss
-        metrics["loss"] = torch.nn.functional.binary_cross_entropy_with_logits(
-            labels_predict, labels_true
-        ).item()
+        metrics["loss"] = total_loss / total_samples
         if not torch.isfinite(labels_predict).all():
             mask = torch.isfinite(labels_predict)
             LOGGER.warning(
@@ -373,11 +375,13 @@ class TaggingExperiment(BaseExperiment):
         self.val_loss.append(metrics["loss"])
         return metrics["loss"]
 
-    def _batch_loss(self, batch):
+    def _batch_loss(self, batch, val=False):
         y_pred, label, tracker, *_ = self._get_ypred_and_label(batch)
         loss = self.loss(y_pred, label)
 
         metrics = tracker
+        if val:
+            return loss, metrics, y_pred, label
         return loss, metrics
 
     def _extract_batch(self, batch):
@@ -399,7 +403,10 @@ class TaggingExperiment(BaseExperiment):
         embedding["num_graphs"] = label.shape[0]
         y_pred, tracker, frames = self.model(embedding)
         if isinstance(self.loss, torch.nn.BCEWithLogitsLoss):
-            y_pred = y_pred[:, 0]
+            if self.cfg.model.output == "split":
+                y_pred = y_pred[:, 0, :]
+            else:
+                y_pred = y_pred[:, 0]
         return y_pred, label, tracker, frames
 
     def _init_metrics(self):
@@ -411,6 +418,42 @@ class TaggingExperiment(BaseExperiment):
             "gamma_mean": [],
             "gamma_max": [],
         }
+
+
+class CPExperiment(TaggingExperiment):
+    """
+    Base class for independent evaluation of the scalar and pseudoscalar channel in CP classification tasks.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.gamma = 1. # Loss scale factor for the pseudoscalar channel. 
+
+    def _init_metrics(self):
+        return {
+            "reg_collinear": [],
+            "reg_coplanar": [],
+            "reg_lightlike": [],
+            "reg_gammamax": [],
+            "gamma_mean": [],
+            "gamma_max": [],
+            "var_scalar": [],
+            "var_pseudoscalar": [],
+        }
+
+    def _batch_loss(self, batch, val=False):
+        y_pred, label, tracker, frames = self._get_ypred_and_label(batch)
+        metrics = tracker
+
+        if self.cfg.model.net._target_.rsplit(".", 1)[-1] == "LGATr" and self.cfg.model.output == "split":
+            loss_scalar = self.loss(y_pred[:, 0], label); loss_pseudoscalar = self.loss(y_pred[:, 1], label)
+            var_scalar = y_pred[:, 0].var(); var_pseudoscalar = y_pred[:, 1].var()
+            loss = loss_scalar + self.gamma * loss_pseudoscalar
+            metrics["var_scalar"] = var_scalar
+            metrics["var_pseudoscalar"] = var_pseudoscalar
+
+        if val:
+            return loss, metrics, y_pred, label
+        return loss, metrics
 
 
 class DownTaggingExperiment(TaggingExperiment):
@@ -461,7 +504,7 @@ class DownTaggingExperiment(TaggingExperiment):
             else:
                 raise ValueError(f"Unknown mass window definition '{self.cfg.data.mass_window}'")
 
-            tag_id = 1
+            tag_ids = [1, 3]
             filenames = sorted(
                 glob.glob(
                     os.path.join(
@@ -473,7 +516,7 @@ class DownTaggingExperiment(TaggingExperiment):
 
             dataset_kwargs = {
                 "length": getattr(self.cfg.data, "length", None),
-                "tag": tag_id,
+                "tag": tag_ids,
                 "pid": self.cfg.data.pid,
                 "use_ditop": self.cfg.data.use_ditop,
                 "use_cache": self.cfg.data.use_cache,
@@ -650,7 +693,7 @@ class PolarizationExperiment(TaggingExperiment):
             self.results[set_label]["score_r"] = pol["score_r"][-1]
 
 
-class PseudoscalarExperiment(TaggingExperiment):
+class PseudoscalarExperiment(CPExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_outputs = 1
@@ -708,8 +751,60 @@ class PseudoscalarExperiment(TaggingExperiment):
         }
         self._init_data(PseudoscalarDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
+    def _step(self, data, step):
 
-class VBFExperiment(TaggingExperiment):
+        def boost(particle, frame):
+            E, p = particle[0], particle[1:]
+            Ef, pf = frame[0], frame[1:]
+
+            beta = pf / Ef
+            beta2 = np.dot(beta, beta)
+
+            if beta2 == 0.0:
+                return particle.copy()
+
+            gamma = 1.0 / np.sqrt(1.0 - beta2)
+
+            bp = np.dot(beta, p)
+
+            Eprime = gamma * (E - bp)
+            pprime = (p + ((gamma - 1.0) * bp / beta2 - gamma * E) * beta)
+
+            return np.concatenate(([Eprime], pprime))
+
+        def get_tp(tophad, toplep, down, lep, label):
+            tp_pos = []
+            tp_neg = []
+            for th, tl, d, l, lbl in zip(tophad, toplep, down, lep, label):
+                ttbar = th + tl
+                th = boost(th, ttbar); tl = boost(tl, ttbar); d = boost(d, ttbar); l = boost(l, ttbar)
+                th3 = th[1:4]; tl3 = tl[1:4]; d3 = d[1:4]; l3 = l[1:4]
+                sign = np.sign(np.dot(th3, np.cross(d3, l3)))
+                cross1 = np.cross(th3, d3) / np.linalg.norm(np.cross(th3, d3))
+                cross2 = np.cross(th3, l3) / np.linalg.norm(np.cross(th3, l3))
+                if lbl == 0:
+                    tp_pos.append(sign * np.arccos(np.dot(cross1, cross2)))
+                else:
+                    tp_neg.append(sign * np.arccos(np.dot(cross1, cross2)))
+            return np.array(tp_pos), np.array(tp_neg)
+
+        super()._step(data, step)
+        fourmomenta, scalars, ptr, label = self._extract_batch(data)
+        mask_hadtop, mask_leptop, mask_soft, mask_lep = (
+            (scalars[:, 0] == 1),
+            (scalars[:, 5] == 1),
+            (scalars[:, 1] + scalars[:, 4] == 2),
+            (scalars[:, 6] != 0),
+        )
+        mom_hadtop = fourmomenta[mask_hadtop].cpu()
+        mom_leptop = fourmomenta[mask_leptop].cpu()
+        mom_soft = fourmomenta[mask_soft].cpu()
+        mom_lep = fourmomenta[mask_lep].cpu()
+        dphi_0_per_batch, dphi_1_per_batch = get_tp(mom_hadtop, mom_leptop, mom_soft, mom_lep, label)
+        LOGGER.info(f"Mean dphi for label 0: {dphi_0_per_batch.mean():.3f}, mean dphi for label 1: {dphi_1_per_batch.mean():.3f}")
+
+
+class VBFPseudoscalarExperiment(CPExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_outputs = 1
@@ -730,6 +825,40 @@ class VBFExperiment(TaggingExperiment):
             1: os.path.join(
                 self.cfg.data.data_dir,
                 "cHWtil_neg.npy",
+            ),
+        }
+
+        LOGGER.info(f"Using VBF dataset from {self.cfg.data.data_dir}")
+        dataset_kwargs = {
+            "length": getattr(self.cfg.data, "length", None),
+            "use_cache": self.cfg.data.use_cache,
+        }
+        self._init_data(VBFDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
+
+
+class VBFCPExperiment(CPExperiment):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_outputs = 1
+        self.extra_scalars = 3
+        self.gamma = 1
+        self.scalar = []
+
+    def _init_experiment(self):
+        BaseExperiment._init_experiment(self)
+
+    def init_data(self, mode="train"):
+        if self.data:
+            return
+
+        filenames = {
+            0: os.path.join(
+                self.cfg.data.data_dir,
+                "cHWtil_zero.npy",
+            ),
+            1: os.path.join(
+                self.cfg.data.data_dir,
+                "cHWtil_pos.npy",
             ),
         }
 
