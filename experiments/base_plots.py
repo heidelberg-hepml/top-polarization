@@ -48,7 +48,9 @@ def plot_metric(file, metrics, metric_label, labels=None, logy=False, metrics_st
                 frac = len(metrics[0]) / len(metric)
                 its = np.arange(1, len(metric) + 1) * frac
             ax.plot(its, metric, label=label)
-            ax.fill_between(its, metric - metric_std, metric + metric_std, alpha=0.3)
+            metric_low = np.array(metric) - np.array(metric_std)
+            metric_high = np.array(metric) + np.array(metric_std)
+            ax.fill_between(its, metric_low, metric_high, alpha=0.3)
     else:
         for metric, label in zip(metrics, labels, strict=False):
             iterations = range(1, len(metric) + 1)

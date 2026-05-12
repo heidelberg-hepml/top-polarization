@@ -51,7 +51,10 @@ def main():
                 if PROC == "tt":
                     if lbl == "0":
                         for nr in range(1, 4):
-                            load(f"top_pol_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT)
+                            load(
+                                f"top_pol_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet",
+                                OUT,
+                            )
                     else:
                         for nr in [1]:
                             load(
@@ -60,7 +63,9 @@ def main():
                             )
                 elif PROC == "tth":
                     for nr in range(1, 3):
-                        load(f"ttH_alpha_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT)
+                        load(
+                            f"ttH_alpha_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT
+                        )
 
 
 if __name__ == "__main__":

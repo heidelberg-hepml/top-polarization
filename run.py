@@ -13,8 +13,8 @@ from experiments.tagging.experiment import (
     DownTaggingExperiment,
     PolarizationExperiment,
     PseudoscalarExperiment,
-    VBFPseudoscalarExperiment,
     VBFCPExperiment,
+    VBFPseudoscalarExperiment,
 )
 
 gatr_config.use_fully_connected_subgroup = False

@@ -237,9 +237,8 @@ class TaggingExperiment(BaseExperiment):
         )
 
         # bce loss
-        metrics["loss"] = torch.nn.functional.binary_cross_entropy_with_logits(
-            labels_predict, labels_true
-        ).item()
+        metrics["loss"] = self.loss(labels_predict, labels_true).item()
+
         if not torch.isfinite(labels_predict).all():
             mask = torch.isfinite(labels_predict)
             LOGGER.warning(
@@ -252,6 +251,10 @@ class TaggingExperiment(BaseExperiment):
                 # set non-finite predictions to zero and continue
                 labels_predict[~mask] = 0.0
         labels_predict = torch.nn.functional.sigmoid(labels_predict)
+
+        if self.model.output == "split":
+            # average scalar and pseudoscalar output for metrics for now
+            labels_predict = (labels_predict[:, 0] + labels_predict[:, 1]) / 2
 
         if mode == "eval":
             metrics["labels_true"], metrics["labels_predict"] = (
@@ -352,10 +355,10 @@ class TaggingExperiment(BaseExperiment):
 
             def custom_loss(y_pred, label):
                 scalar_loss = torch.nn.functional.binary_cross_entropy_with_logits(
-                    y_pred[:, :1], label
+                    y_pred[:, 0], label
                 )
                 pseudoscalar_loss = torch.nn.functional.binary_cross_entropy_with_logits(
-                    y_pred[:, 1:], label
+                    y_pred[:, 1], label
                 )
                 return scalar_loss + pseudoscalar_loss
 
@@ -397,13 +400,15 @@ class TaggingExperiment(BaseExperiment):
             self.cfg.data,
         )
         embedding["num_graphs"] = label.shape[0]
+        if self.cfg.model.output in ["sum", "split"]:
+            embedding["label"] = label
         y_pred, tracker, frames = self.model(embedding)
-        if isinstance(self.loss, torch.nn.BCEWithLogitsLoss):
+        if isinstance(self.loss, torch.nn.BCEWithLogitsLoss) and self.cfg.model.output != "split":
             y_pred = y_pred[:, 0]
         return y_pred, label, tracker, frames
 
     def _init_metrics(self):
-        return {
+        metrics = {
             "reg_collinear": [],
             "reg_coplanar": [],
             "reg_lightlike": [],
@@ -411,6 +416,13 @@ class TaggingExperiment(BaseExperiment):
             "gamma_mean": [],
             "gamma_max": [],
         }
+        if self.cfg.model.output in ["sum", "split"]:
+            metrics["scalar_output_0"] = []
+            metrics["scalar_output_1"] = []
+            metrics["pseudoscalar_output_0"] = []
+            metrics["pseudoscalar_output_1"] = []
+
+        return metrics
 
 
 class DownTaggingExperiment(TaggingExperiment):

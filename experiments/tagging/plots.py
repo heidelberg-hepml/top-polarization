@@ -70,23 +70,19 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
             #         key,
             #     )
 
-            if "scalar_output" in plot_dict:
+            if "scalar_output_0" in plot_dict:
                 plot_metric(
                     out,
-                    [
-                        plot_dict["scalar_output"],
-                    ],
+                    [plot_dict["scalar_output_0"], plot_dict["scalar_output_1"]],
                     "Scalar output",
-                    metrics_std=plot_dict["scalar_output_std"],
+                    labels=["label=0", "label=1"],
                 )
-            if "pseudoscalar_output" in plot_dict:
+            if "pseudoscalar_output_0" in plot_dict:
                 plot_metric(
                     out,
-                    [
-                        plot_dict["pseudoscalar_output"],
-                    ],
+                    [plot_dict["pseudoscalar_output_0"], plot_dict["pseudoscalar_output_1"]],
                     "Pseudoscalar output",
-                    metrics_std=plot_dict["pseudoscalar_output_std"],
+                    labels=["label=0", "label=1"],
                 )
 
     if cfg.plotting.score and cfg.evaluate:
