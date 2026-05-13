@@ -1,0 +1,15 @@
+exp_type: downtagging
+exp_name: downtagging
+
+data:
+  data_dir: data/
+  mass_window: loose
+  pid: true
+  use_ditop: false
+
+plotting:
+ polarization: true
+
+defaults:
+ - tagging
+ - _self_

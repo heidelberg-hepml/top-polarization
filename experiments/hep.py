@@ -33,11 +33,10 @@ def PtPhiEtaM_to_EPPP(x: torch.Tensor) -> torch.Tensor:
     return torch.stack((E, px, py, pz), dim=-1)
 
 
-
 def lorentz_boost(particle, frame, eps=EPS):
     # lorentz boost particle to rest frame
-    E  = particle[:, 0]
-    p  = particle[:, 1:]
+    E = particle[:, 0]
+    p = particle[:, 1:]
     Ef = frame[:, 0]
     pf = frame[:, 1:]
 
@@ -47,7 +46,7 @@ def lorentz_boost(particle, frame, eps=EPS):
     bp = (beta * p).sum(dim=1)
 
     Eprime = gamma * (E - bp)
-    factor = ((gamma - 1.0) * bp / (beta2 + eps) - gamma * E)
+    factor = (gamma - 1.0) * bp / (beta2 + eps) - gamma * E
     pprime = p + factor.unsqueeze(1) * beta
 
     mask = beta2 > eps

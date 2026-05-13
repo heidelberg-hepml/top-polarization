@@ -1,0 +1,15 @@
+exp_type: polarization
+exp_name: polarization
+
+data:
+  data_dir: data/
+  mass_window: loose
+  pid: true
+  use_ditop: false
+
+plotting:
+ polarization: false
+
+defaults:
+ - tagging
+ - _self_

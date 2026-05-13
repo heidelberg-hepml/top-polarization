@@ -1,0 +1,9 @@
+exp_type: vbf
+exp_name: vbf
+
+data:
+  data_dir: 'data/vbf_parton_data/'
+
+defaults:
+ - tagging
+ - _self_

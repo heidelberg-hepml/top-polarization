@@ -28,9 +28,9 @@ When committing, ruff will automatically fix any issues it can and report the re
 ### Getting the data
 To automatically download the datasets, run:
 ```bash
-python fetch_polarization_data.py --out [OUTPUT_DIR] --mass [STRICT|LOOSE]
+python fetch_polarization_data.py --process [tt|tth|vbf] --mass [strict|loose] --out [OUTPUT_DIR]
 ```
-By default, datasets are installed in the `data` directory with a strict cut on the top quark mass window.
+By default, datasets are installed in the `data` directory.
 
 ## Running Experiments
 
@@ -59,7 +59,7 @@ Outputs are stored in `runs/<exp_name>/<run_name>/`, including:
 - `source.zip` (optional): zipped source code at the beginning of the run.
 
 ### Hyperparameter tuning
-Hyperparameters are scanned with Optuna by setting `optuna=true`. To keep runs within a reasonable time, it is advised that `training.iterations` and `training.validate_every_n_steps` are reduced for the scan. Optuna stores and reads trials to an `optuna.db` file. The Optuna dashboard extension for VSCode allows for a quick visualization of the trials. 
+Hyperparameters are scanned with Optuna by setting `optuna=true`. To keep runs within a reasonable time, it is advised that `training.iterations` and `training.validate_every_n_steps` are reduced for the scan. Optuna stores and reads trials to an `optuna.db` file. The Optuna dashboard extension for VSCode allows for a quick visualization of the trials.
 
 ## Test dataset
 

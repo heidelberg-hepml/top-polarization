@@ -1,0 +1,11 @@
+exp_type: pseudoscalar
+exp_name: pseudoscalar
+
+data:
+  data_dir: data/
+  mass_window: loose
+  pid: true
+
+defaults:
+ - tagging
+ - _self_

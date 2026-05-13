@@ -11,7 +11,12 @@ from torch_geometric.loader import DataLoader
 from experiments.base_experiment import BaseExperiment
 from experiments.logger import LOGGER
 from experiments.mlflow import log_mlflow
-from experiments.tagging.dataset import DownTaggingDataset, PolarizationDataset, TestDataset
+from experiments.tagging.dataset import (
+    DownTaggingDataset,
+    PolarizationDataset,
+    PseudoscalarDataset,
+    VBFDataset,
+)
 from experiments.tagging.embedding import embed_tagging_data, get_num_tagging_features
 from experiments.tagging.likelihood import get_polarization
 from experiments.tagging.plots import plot_mixer
@@ -34,7 +39,7 @@ class TaggingExperiment(BaseExperiment):
         self.momentum_dtype = torch.float64 if self.cfg.data.momentum_float64 else torch.float32
 
         self.cfg.model.out_channels = self.num_outputs
-        if modelname in ["LGATr", "LGATrSlim"]:
+        if modelname in ["LGATr", "LGATrSlim", "LGATrSlimPseudo"]:
             # Lorentz-equivariance by internal representations
             in_s_channels = self.extra_scalars
             in_s_channels += get_num_tagging_features(
@@ -141,18 +146,6 @@ class TaggingExperiment(BaseExperiment):
                 self.cfg.data,
             )
             self.model.init_standardization(embedding["fourmomenta"], embedding["ptr"])
-
-    def _init_experiment(self, run_name_add=None):
-        run_name_add = [
-            f"dataset={self.cfg.data.dataset}",
-            f"mass={self.cfg.data.mass_window}",
-            f"ditop={self.cfg.data.use_ditop}",
-            f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
-            f"lr={self.cfg.training.lr}",
-            f"opt={self.cfg.training.optimizer}",
-            f"bs={self.cfg.training.batchsize}",
-        ]
-        super()._init_experiment(run_name_add=run_name_add)
 
     def _init_optimizer(self, param_groups=None):
         if self.cfg.model.net._target_.rsplit(".", 1)[-1] in [
@@ -328,7 +321,7 @@ class TaggingExperiment(BaseExperiment):
     def plot(self):
         plot_path = os.path.join(self.cfg.run_dir, f"plots_{self.cfg.run_idx}")
         os.makedirs(plot_path, exist_ok=True)
-        title = f"{type(self.model.net).__name__} - {self.cfg.data.dataset}"
+        title = f"{type(self.model.net).__name__} - {self.cfg.exp_name}"
         LOGGER.info(f"Creating plots in {plot_path}")
 
         if (
@@ -407,25 +400,6 @@ class TaggingExperiment(BaseExperiment):
         }
 
 
-class TestExperiment(TaggingExperiment):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.num_outputs = 1
-        self.extra_scalars = TestDataset.n_token_types
-
-    def init_data(self):
-        data_path = self.cfg.data.npy_path
-        if not os.path.isabs(data_path):
-            data_path = os.path.join(self.cfg.base_dir, data_path)
-        dataset_kwargs = dict(
-            seed=self.cfg.data.seed,
-            split_fracs=tuple(self.cfg.data.split_fracs),
-            shuffle=self.cfg.data.shuffle,
-            length=self.cfg.data.length,
-        )
-        self._init_data(TestDataset, data_path, dataset_kwargs)
-
-
 class DownTaggingExperiment(TaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -435,6 +409,18 @@ class DownTaggingExperiment(TaggingExperiment):
             self.extra_scalars += 6
         if self.cfg.data.use_ditop:
             self.extra_scalars += 2
+
+    def _init_experiment(self, run_name_add=None):
+        run_name_add = [
+            "dataset=unpolarized",
+            f"mass={self.cfg.data.mass_window}",
+            f"ditop={self.cfg.data.use_ditop}",
+            f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
+            f"lr={self.cfg.training.lr}",
+            f"opt={self.cfg.training.optimizer}",
+            f"bs={self.cfg.training.batchsize}",
+        ]
+        super()._init_experiment(run_name_add=run_name_add)
 
     def _extract_batch(self, batch):
         batch = batch.to(self.device)
@@ -447,15 +433,12 @@ class DownTaggingExperiment(TaggingExperiment):
         return fourmomenta, scalars, ptr, label, lep_vec, lep_charge
 
     def init_data(self, mode="train"):
-        if self.cfg.train == False and self.cfg.data.dataset_eval == "polarized":
-            dataset = self.cfg.data.dataset_eval
+        if not self.cfg.train and self.cfg.data.dataset_eval == "polarized":
             pol_experiment = PolarizationExperiment
             pol_experiment.init_data(self, mode=mode)
-        
-        else:
-            dataset = self.cfg.data.dataset
 
-            if self.data and (dataset == self.cfg.data.dataset):
+        else:
+            if self.data:
                 return
 
             if self.cfg.data.mass_window == "strict":
@@ -490,8 +473,10 @@ class DownTaggingExperiment(TaggingExperiment):
         for set_label in self.cfg.evaluation.eval_set:
             pol = get_polarization(self.results[set_label], exp="downtagging")
             LOGGER.info(
-                f'Degree of polarization: '
-                f'{pol["pol_l"][-1]:.3f} (L) and {pol["pol_r"][-1]:.3f} (R) at efficiency {pol["efficiency"][-1]}'
+                f"Degree of polarization: "
+                f"{pol['pol_l'][-1]:.3f} (L) and {pol['pol_r'][-1]:.3f} (R) at efficiency {pol['efficiency'][-1]}, "
+                f"{pol['pol_l'][375]:.3f} (L) and {pol['pol_r'][375]:.3f} (R) at efficiency {pol['efficiency'][375]}, "
+                f"{pol['pol_l'][0]:.3f} (L) and {pol['pol_r'][0]:.3f} (R) at efficiency {pol['efficiency'][0]}"
             )
             self.results[set_label]["efficiencies"] = pol["efficiency"]
             self.results[set_label]["pol_l"] = pol["pol_l"]
@@ -507,7 +492,15 @@ class DownTaggingExperiment(TaggingExperiment):
         momenta = {}
 
         # predictions
-        mom_hadtop, mom_b, mom_hard, mom_soft, mom_leptop, mom_lep, charge = [], [], [], [], [], [], []
+        mom_hadtop, mom_b, mom_hard, mom_soft, mom_leptop, mom_lep, charge = (
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+        )
         self.model.eval()
         for batch in loader:
             fourmomenta, scalars, _, _, lep_vec, lep_charge = self._extract_batch(batch)
@@ -545,7 +538,15 @@ class DownTaggingExperiment(TaggingExperiment):
         )
 
         if mode == "eval":
-            momenta["q_hadtop"], momenta["q_b"], momenta["q_hard"], momenta["q_soft"], momenta["q_leptop"], momenta["q_lep"], momenta["charge"] = (
+            (
+                momenta["q_hadtop"],
+                momenta["q_b"],
+                momenta["q_hard"],
+                momenta["q_soft"],
+                momenta["q_leptop"],
+                momenta["q_lep"],
+                momenta["charge"],
+            ) = (
                 mom_hadtop,
                 mom_b,
                 mom_hard,
@@ -570,10 +571,20 @@ class PolarizationExperiment(TaggingExperiment):
         if self.cfg.data.use_ditop:
             self.extra_scalars += 2
 
-    def init_data(self, mode="train"):
-        dataset = self.cfg.data.dataset
+    def _init_experiment(self, run_name_add=None):
+        run_name_add = [
+            "dataset=polarized",
+            f"mass={self.cfg.data.mass_window}",
+            f"ditop={self.cfg.data.use_ditop}",
+            f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
+            f"lr={self.cfg.training.lr}",
+            f"opt={self.cfg.training.optimizer}",
+            f"bs={self.cfg.training.batchsize}",
+        ]
+        super()._init_experiment(run_name_add=run_name_add)
 
-        if self.data and (dataset == self.cfg.data.dataset):
+    def init_data(self, mode="train"):
+        if self.data:
             return
 
         if self.cfg.data.mass_window == "strict":
@@ -616,11 +627,102 @@ class PolarizationExperiment(TaggingExperiment):
         for set_label in self.cfg.evaluation.eval_set:
             pol = get_polarization(self.results[set_label], exp="polarization")
             LOGGER.info(
-                f'Degree of polarization: '
-                f'{pol["pol_l"][-1]:.3f} (L) and {pol["pol_r"][-1]:.3f} (R) at efficiency {pol["efficiency"][-1]}'
+                f"Degree of polarization: "
+                f"{pol['pol_l'][-1]:.3f} (L) and {pol['pol_r'][-1]:.3f} (R) at efficiency {pol['efficiency'][-1]}"
             )
             self.results[set_label]["efficiencies"] = pol["efficiency"]
             self.results[set_label]["pol_l"] = pol["pol_l"]
             self.results[set_label]["pol_r"] = pol["pol_r"]
             self.results[set_label]["score_l"] = pol["score_l"][-1]
             self.results[set_label]["score_r"] = pol["score_r"][-1]
+
+
+class PseudoscalarExperiment(TaggingExperiment):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_outputs = 1
+        self.extra_scalars = (
+            10  # Differentiate between tops, higgs, photons, subjets, and constituents
+        )
+        if self.cfg.data.pid:
+            self.extra_scalars += 6
+
+    def _init_experiment(self, run_name_add=None):
+        run_name_add = [
+            f"exp={self.cfg.exp_type}",
+            f"mass={self.cfg.data.mass_window}",
+            f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
+            f"lr={self.cfg.training.lr}",
+            f"opt={self.cfg.training.optimizer}",
+            f"bs={self.cfg.training.batchsize}",
+        ]
+        super()._init_experiment(run_name_add=run_name_add)
+
+    def init_data(self, mode="train"):
+        if self.data:
+            return
+
+        if self.cfg.data.mass_window == "strict":
+            top_window = "165_190"
+        elif self.cfg.data.mass_window == "loose":
+            top_window = "120_220"
+        else:
+            raise ValueError(f"Unknown mass window definition '{self.cfg.data.mass_window}'")
+
+        filenames = {
+            0: sorted(
+                glob.glob(
+                    os.path.join(
+                        self.cfg.data.data_dir,
+                        f"ttH_alpha_45_*_{top_window}_train_*.parquet",
+                    )
+                )
+            ),
+            1: sorted(
+                glob.glob(
+                    os.path.join(
+                        self.cfg.data.data_dir,
+                        f"ttH_alpha_-45_*_{top_window}_train_*.parquet",
+                    )
+                )
+            ),
+        }
+
+        dataset_kwargs = {
+            "length": getattr(self.cfg.data, "length", None),
+            "pid": self.cfg.data.pid,
+            "use_cache": self.cfg.data.use_cache,
+        }
+        self._init_data(PseudoscalarDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
+
+
+class VBFExperiment(TaggingExperiment):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_outputs = 1
+        self.extra_scalars = 3
+
+    def _init_experiment(self):
+        BaseExperiment._init_experiment(self)
+
+    def init_data(self, mode="train"):
+        if self.data:
+            return
+
+        filenames = {
+            0: os.path.join(
+                self.cfg.data.data_dir,
+                "cHWtil_pos.npy",
+            ),
+            1: os.path.join(
+                self.cfg.data.data_dir,
+                "cHWtil_neg.npy",
+            ),
+        }
+
+        LOGGER.info(f"Using VBF dataset from {self.cfg.data.data_dir}")
+        dataset_kwargs = {
+            "length": getattr(self.cfg.data, "length", None),
+            "use_cache": self.cfg.data.use_cache,
+        }
+        self._init_data(VBFDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
