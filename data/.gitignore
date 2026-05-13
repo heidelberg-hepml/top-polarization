@@ -1,6 +1,8 @@
 MG
 samples
 samples_ttH
+samples_ttH_awk
+samples_ttH_awk_comb
 *.inc
 py.py
 logs

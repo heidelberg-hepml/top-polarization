@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import sys
 from glob import glob
 from delphes_reader import DelphesReader
 import argparse
@@ -41,9 +42,22 @@ delphes_reader = DelphesReader(pnet=True, top_mass=top_mass, ttH=is_ttH)
 delphes_reader._get_single_delphes(delphes_file, lhe_file, train_data=args.train_data)
 delphes_reader.inspect_fails()
 
-data = delphes_reader.jet_data.snapshot()
+print("analysis done. Creating snapshot...")
 
+data = delphes_reader.particle_data.snapshot()
+
+print("Saving data to parquet...")
+
+sample_dir = "samples_ttH_awk" if is_ttH else "samples_awk"
 if args.train_data:
-    ak.to_parquet(data, f"samples_ttH_awk/{tag}_{top_mass[0]}_{top_mass[1]}_train.parquet")
+    ak.to_parquet(data, f"{sample_dir}/{tag}_{top_mass[0]}_{top_mass[1]}_train.parquet")
 else:
-    ak.to_parquet(data, f"samples_ttH_awk/{tag}_{top_mass[0]}_{top_mass[1]}_test.parquet")
+    ak.to_parquet(data, f"{sample_dir}/{tag}_{top_mass[0]}_{top_mass[1]}_test.parquet")
+
+print("Done!")
+
+# ROOT teardown can hang at interpreter shutdown on some clusters.
+# Flush logs, then force-exit so the batch script can continue cleanup.
+sys.stdout.flush()
+sys.stderr.flush()
+os._exit(0)
