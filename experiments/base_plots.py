@@ -35,7 +35,7 @@ def plot_loss(file, losses, lr=None, labels=None, logy=True):
     plt.close()
 
 
-def plot_metric(file, metrics, metric_label, labels=None, logy=False, metrics_std=None):
+def plot_metric(file, metrics, metric_label, labels=None, logy=False, metrics_std=None, ema=False):
     labels = [None for _ in range(len(metrics))] if labels is None else labels
     fig, ax = plt.subplots()
 
@@ -59,6 +59,14 @@ def plot_metric(file, metrics, metric_label, labels=None, logy=False, metrics_st
             else:
                 frac = len(metrics[0]) / len(metric)
                 its = np.arange(1, len(metric) + 1) * frac
+            if ema:
+                metric = np.array(metric)
+                mean = np.mean(metric)
+                std = np.std(metric)
+                metric = np.clip(metric, mean - 5 * std, mean + 5 * std)
+                alpha = 0.01
+                for i in range(1, len(metric)):
+                    metric[i] = alpha * metric[i] + (1 - alpha) * metric[i - 1]
             ax.plot(its, metric, label=label)
 
     if logy:
