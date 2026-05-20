@@ -29,7 +29,10 @@ MASS_WINDOWS = {"strict": (165, 190), "loose": (120, 220)}
 def load(filename, out):
     params = {"p": filename, "dl": "1"}
     print(f"Downloading {filename}")
-    target_path = os.path.join(out, filename) if out else os.path.join("data", filename)
+    if out is None:
+        out = os.path.join("data", PROC)
+    os.makedirs(out, exist_ok=True)
+    target_path = os.path.join(out, filename)
 
     with requests.get(BASE_URL, params=params, stream=True) as r:
         r.raise_for_status()

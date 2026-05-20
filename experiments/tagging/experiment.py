@@ -720,7 +720,7 @@ class PseudoscalarExperiment(TaggingExperiment):
         self._init_data(PseudoscalarDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
 
-class VBFPseudoscalarExperiment(TaggingExperiment):
+class VBFExperiment(TaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_outputs = 1
@@ -733,52 +733,37 @@ class VBFPseudoscalarExperiment(TaggingExperiment):
         if self.data:
             return
 
-        filenames = {
-            0: os.path.join(
-                self.cfg.data.data_dir,
-                "cHWtil_pos.npy",
-            ),
-            1: os.path.join(
-                self.cfg.data.data_dir,
-                "cHWtil_neg.npy",
-            ),
-        }
+        if self.cfg.data.exp_type == "pseudoscalar":
+            filenames = {
+                0: os.path.join(
+                    self.cfg.data.data_dir,
+                    "cHWtil_pos.npy",
+                ),
+                1: os.path.join(
+                    self.cfg.data.data_dir,
+                    "cHWtil_neg.npy",
+                ),
+            }
+        elif self.cfg.data.exp_type == "cp":
+            filenames = {
+                0: os.path.join(
+                    self.cfg.data.data_dir,
+                    "cHWtil_zero.npy",
+                ),
+                1: os.path.join(
+                    self.cfg.data.data_dir,
+                    "cHWtil_pos.npy",
+                ),
+            }
+        else:
+            raise ValueError(
+                f"Unknown experiment type '{self.cfg.data.exp_type}'"
+                " (expected 'pseudoscalar' or 'cp')"
+            )
 
-        LOGGER.info(f"Using VBF dataset from {self.cfg.data.data_dir}")
-        dataset_kwargs = {
-            "length": getattr(self.cfg.data, "length", None),
-            "use_cache": self.cfg.data.use_cache,
-        }
-        self._init_data(VBFDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
-
-
-class VBFCPExperiment(TaggingExperiment):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.num_outputs = 1
-        self.extra_scalars = 3
-        self.gamma = 1
-        self.scalar = []
-
-    def _init_experiment(self):
-        BaseExperiment._init_experiment(self)
-
-    def init_data(self, mode="train"):
-        if self.data:
-            return
-
-        filenames = {
-            0: os.path.join(
-                self.cfg.data.data_dir,
-                "cHWtil_zero.npy",
-            ),
-            1: os.path.join(
-                self.cfg.data.data_dir,
-                "cHWtil_pos.npy",
-            ),
-        }
-
-        LOGGER.info(f"Using VBF dataset from {self.cfg.data.data_dir}")
+        LOGGER.info(
+            f"Using VBF dataset from {self.cfg.data.data_dir} for '{self.cfg.data.exp_type}' tagging"
+        )
         dataset_kwargs = {
             "length": getattr(self.cfg.data, "length", None),
             "use_cache": self.cfg.data.use_cache,

@@ -18,5 +18,3 @@ semilep="$3"
 
 ./analyse_root_files.py --pol=${pol} --nrun=${nrun} --semilep=${semilep} --train_data --top_mass_lower=165 --top_mass_upper=190
 # ./analyse_root_files.py --pol=${pol} --nrun=${nrun} --semilep=${semilep} --train_data --top_mass_lower=120 --top_mass_upper=220
-
-hi im stupid
