@@ -2,7 +2,7 @@ exp_type: polarization
 exp_name: polarization
 
 data:
-  data_dir: data/
+  data_dir: data/tt/
   mass_window: loose
   pid: true
   use_ditop: false
