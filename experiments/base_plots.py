@@ -35,7 +35,9 @@ def plot_loss(file, losses, lr=None, labels=None, logy=True):
     plt.close()
 
 
-def plot_metric(file, metrics, metric_label, labels=None, logy=False, metrics_std=None, ema=False):
+def plot_metric(
+    file, metrics, metric_label, labels=None, logy=False, metrics_std=None, ema=False, yrange=None
+):
     labels = [None for _ in range(len(metrics))] if labels is None else labels
     fig, ax = plt.subplots()
 
@@ -68,6 +70,8 @@ def plot_metric(file, metrics, metric_label, labels=None, logy=False, metrics_st
                 for i in range(1, len(metric)):
                     metric[i] = alpha * metric[i] + (1 - alpha) * metric[i - 1]
             ax.plot(its, metric, label=label)
+            if yrange is not None:
+                ax.set_ylim(yrange)
 
     if logy:
         ax.set_yscale("log")

@@ -400,8 +400,7 @@ class TaggingExperiment(BaseExperiment):
             self.cfg.data,
         )
         embedding["num_graphs"] = label.shape[0]
-        if self.cfg.model.output in ["sum", "split"]:
-            embedding["label"] = label
+        embedding["label"] = label
         y_pred, tracker, frames = self.model(embedding)
         if isinstance(self.loss, torch.nn.BCEWithLogitsLoss) and self.cfg.model.output != "split":
             y_pred = y_pred[:, 0]
@@ -416,7 +415,7 @@ class TaggingExperiment(BaseExperiment):
             "gamma_mean": [],
             "gamma_max": [],
         }
-        if self.cfg.model.output in ["sum", "split"]:
+        if "LGATr" in self.cfg.model.net._target_:
             metrics["scalar_output_0"] = []
             metrics["scalar_output_1"] = []
             metrics["pseudoscalar_output_0"] = []

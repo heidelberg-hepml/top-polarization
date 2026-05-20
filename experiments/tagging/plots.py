@@ -77,6 +77,7 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                     "Scalar output",
                     labels=["label=0", "label=1"],
                     ema=True,
+                    # yrange=[-0.5, 0.5],
                 )
             if "pseudoscalar_output_0" in plot_dict:
                 plot_metric(
@@ -85,6 +86,7 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                     "Pseudoscalar output",
                     labels=["label=0", "label=1"],
                     ema=True,
+                    # yrange=[-0.5, 0.5],
                 )
 
     if cfg.plotting.score and cfg.evaluate:
