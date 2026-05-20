@@ -382,7 +382,11 @@ class DownTaggingDataset(HEPTaggingDataset):
         subjet_four_sorted = subjet_four[subjet_order]
 
         # Label the jet as 1 if the leading non-b subjet matches the target tag
-        label = (subjet_tags[subjet_order[1]] in self.tag).to(network_dtype).unsqueeze(0)
+        label = (
+            torch.isin(subjet_tags[subjet_order[1]], torch.tensor(self.tag))
+            .to(network_dtype)
+            .unsqueeze(0)
+        )
 
         constituents = subjets["Constituents"]
         const_four_list, const_pid_list, const_parent_list = [], [], []
