@@ -472,19 +472,18 @@ class DownTaggingExperiment(TaggingExperiment):
             else:
                 raise ValueError(f"Unknown mass window definition '{self.cfg.data.mass_window}'")
 
-            tag_ids = [1, 3]
             filenames = sorted(
                 glob.glob(
                     os.path.join(
                         self.cfg.data.data_dir,
-                        f"top_pol_0_*_{top_window}_train_*.parquet",
+                        f"top_pol_0_*_allruns_{top_window}_train.parquet",
                     )
                 )
             )
 
             dataset_kwargs = {
                 "length": getattr(self.cfg.data, "length", None),
-                "tag": tag_ids,
+                "tag": self.cfg.data.tag,
                 "pid": self.cfg.data.pid,
                 "use_ditop": self.cfg.data.use_ditop,
                 "use_cache": self.cfg.data.use_cache,
@@ -623,7 +622,8 @@ class PolarizationExperiment(TaggingExperiment):
                 glob.glob(
                     os.path.join(
                         self.cfg.data.data_dir,
-                        f"top_pol_had_L_*_{top_window}_train_*.parquet",
+                        f"top_pol_L*_allruns_{top_window}_train.parquet",
+                        # TO BE UPDATED
                     )
                 )
             ),
@@ -631,7 +631,7 @@ class PolarizationExperiment(TaggingExperiment):
                 glob.glob(
                     os.path.join(
                         self.cfg.data.data_dir,
-                        f"top_pol_had_R_*_{top_window}_train_*.parquet",
+                        f"top_pol_R*_allruns_{top_window}_train.parquet",
                     )
                 )
             ),
