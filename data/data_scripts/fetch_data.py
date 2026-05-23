@@ -5,7 +5,7 @@ import requests
 
 parser = argparse.ArgumentParser(description="Download data.")
 parser.add_argument("--out", type=str)
-parser.add_argument("--process", type=str, default="tt")
+parser.add_argument("--process", type=str, default="tt_pol")
 parser.add_argument("--mass", type=str, default="loose")
 
 args = parser.parse_args()
@@ -14,9 +14,12 @@ OUT = args.out
 PROC = args.process
 MASS = args.mass
 
-if PROC == "tt":
+if PROC == "tt_pol":
     BASE_URL = "https://seafile.cloud.uni-hannover.de/d/053ac05f748d4f0583fa/files"
     LABELS = ["0", ("L", "L"), ("L", "R"), ("R", "L"), ("R", "R")]
+elif PROC == "tt_smeft":
+    BASE_URL = "https://seafile.cloud.uni-hannover.de/d/3f6addd27e8645ae9f70/files"
+    LABELS  = []
 elif PROC == "tth":
     BASE_URL = "https://seafile.cloud.uni-hannover.de/d/de5e4b2fda5546c1be46/files"
     LABELS = ["0", "45", "-45"]
@@ -51,9 +54,9 @@ def main():
             load(f"cHWtil_{lbl}.npy", OUT)
         else:
             for decay in [1, 2]:
-                if PROC == "tt":
+                if PROC == "tt_pol":
                     if lbl == "0":
-                        for nr in range(1, 4):
+                        for nr in [1]:
                             load(
                                 f"top_pol_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet",
                                 OUT,
@@ -64,6 +67,8 @@ def main():
                                 f"top_pol_had_{lbl[0]}_lep_{lbl[1]}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet",
                                 OUT,
                             )
+                elif PROC == "tt_smeft":
+                    pass
                 elif PROC == "tth":
                     for nr in range(1, 3):
                         load(

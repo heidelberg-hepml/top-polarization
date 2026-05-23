@@ -476,7 +476,7 @@ class DownTaggingExperiment(TaggingExperiment):
                 glob.glob(
                     os.path.join(
                         self.cfg.data.data_dir,
-                        f"top_pol_0_*_allruns_{top_window}_train.parquet",
+                        f"top_pol_0_*_{top_window}_train*.parquet",
                     )
                 )
             )
@@ -622,8 +622,7 @@ class PolarizationExperiment(TaggingExperiment):
                 glob.glob(
                     os.path.join(
                         self.cfg.data.data_dir,
-                        f"top_pol_L*_allruns_{top_window}_train.parquet",
-                        # TO BE UPDATED
+                        f"top_pol_had_L*_{top_window}_train*.parquet",
                     )
                 )
             ),
@@ -631,7 +630,7 @@ class PolarizationExperiment(TaggingExperiment):
                 glob.glob(
                     os.path.join(
                         self.cfg.data.data_dir,
-                        f"top_pol_R*_allruns_{top_window}_train.parquet",
+                        f"top_pol_had_R*_{top_window}_train*.parquet",
                     )
                 )
             ),
