@@ -28,47 +28,6 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                 "Gradient norm",
                 logy=True,
             )
-            # plot_metric(
-            #     out,
-            #     [plot_dict["grad_norm_frames"]],
-            #     "Gradient norm framesnet",
-            #     logy=True,
-            # )
-            # plot_metric(
-            #     out,
-            #     [plot_dict["grad_norm_net"]],
-            #     "Gradient norm main network",
-            #     logy=True,
-            # )
-            # plot_metric(
-            #     out,
-            #     [
-            #         plot_dict["reg_collinear"],
-            #         plot_dict["reg_coplanar"],
-            #         plot_dict["reg_lightlike"],
-            #     ],
-            #     "Number of regularized particles",
-            #     labels=["collinear", "coplanar", "lightlike"],
-            # )
-            # plot_metric(
-            #     out,
-            #     [
-            #         np.cumsum(plot_dict["reg_collinear"]),
-            #         np.cumsum(plot_dict["reg_coplanar"]),
-            #         np.cumsum(plot_dict["reg_lightlike"]),
-            #     ],
-            #     "Cumsum of regularized particles",
-            #     labels=["collinear", "coplanar", "lightlike"],
-            # )
-
-            # for key in ["reg_gammamax", "gamma_mean", "gamma_max"]:
-            #     plot_metric(
-            #         out,
-            #         [
-            #             plot_dict[key],
-            #         ],
-            #         key,
-            #     )
 
             if "scalar_output_0" in plot_dict:
                 plot_metric(
@@ -107,6 +66,12 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                 title=title,
                 logy=True,
             )
+            for suffix, label in [("scalar", "scalar"), ("pseudo", "pseudoscalar")]:
+                if f"labels_predict_{suffix}" in plot_dict["results_test"]:
+                    lp = plot_dict["results_test"][f"labels_predict_{suffix}"]
+                    lt = plot_dict["results_test"]["labels_true"]
+                    plot_score(out, cfg.exp_type, lt, lp, title=f"{title} ({label})")
+                    plot_score(out, cfg.exp_type, lt, lp, title=f"{title} ({label})", logy=True)
 
     if cfg.plotting.roc and cfg.evaluate:
         file = f"{plot_path}/roc.pdf"
@@ -118,6 +83,15 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                 plot_dict["results_test"]["auc"],
                 title=title,
             )
+            for suffix, label in [("scalar", "scalar"), ("pseudo", "pseudoscalar")]:
+                if f"fpr_{suffix}" in plot_dict["results_test"]:
+                    plot_roc(
+                        out,
+                        plot_dict["results_test"][f"fpr_{suffix}"],
+                        plot_dict["results_test"][f"tpr_{suffix}"],
+                        plot_dict["results_test"][f"auc_{suffix}"],
+                        title=f"{title} ({label})",
+                    )
 
     if cfg.plotting.polarization and cfg.evaluate:
         file = f"{plot_path}/polarization.pdf"
@@ -236,11 +210,13 @@ def plot_score(
     if exp == "polarization":
         label_0, label_1 = "L", "R"
     elif exp == "downtagging":
-        label_0, label_1 = "Up", "Down"
+        label_0, label_1 = "Up-type", "Down-type"
     elif exp in ["pseudoscalar", "vbf_pseudoscalar"]:
         label_0, label_1 = "Pos", "Neg"
     elif exp == "vbf_cp":
         label_0, label_1 = "SM", "Pos"
+    else:
+        label_0, label_1 = "label=0", "label=1"
     ax.set_xlabel(f"Classifier score (0={label_0}, 1={label_1})", fontsize=FONTSIZE)
     _, bins, _ = ax.hist(
         labels_predicted[labels_true == 0],

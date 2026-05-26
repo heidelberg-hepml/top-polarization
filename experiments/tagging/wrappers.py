@@ -4,11 +4,8 @@ from lloca.framesnet.frames import Frames
 from lloca.framesnet.nonequi_frames import IdentityFrames
 from lloca.reps.tensorreps import TensorReps
 from lloca.reps.tensorreps_transform import TensorRepsTransform
-from lloca.utils.lorentz import lorentz_eye
 from lloca.utils.utils import (
     get_batch_from_ptr,
-    get_edge_attr,
-    get_edge_index_from_ptr,
     get_ptr_from_batch,
 )
 from torch import nn
@@ -33,6 +30,7 @@ class TaggerWrapper(nn.Module):
         self.add_fourmomenta_backbone = add_fourmomenta_backbone
         self.framesnet = framesnet
         self.trafo_fourmomenta = TensorRepsTransform(TensorReps("1x1n"))
+        self.output = None
 
     def init_standardization(self, fourmomenta, ptr, reduce_size=None):
         # framesnet equivectors edge_attr standardization (if applicable)

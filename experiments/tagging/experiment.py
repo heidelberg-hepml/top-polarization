@@ -253,16 +253,20 @@ class TaggingExperiment(BaseExperiment):
         labels_predict = torch.nn.functional.sigmoid(labels_predict)
 
         if self.model.output == "split":
-            # average scalar and pseudoscalar output for metrics for now
-            labels_predict = (labels_predict[:, 0] + labels_predict[:, 1]) / 2
+            labels_predict_scalar = labels_predict[:, 0]
+            labels_predict_pseudo = labels_predict[:, 1]
+            labels_predict = (labels_predict_scalar + labels_predict_pseudo) / 2
 
         if mode == "eval":
-            metrics["labels_true"], metrics["labels_predict"] = (
-                labels_true,
-                labels_predict,
-            )
+            metrics["labels_true"], metrics["labels_predict"] = labels_true, labels_predict
+            if self.model.output == "split":
+                metrics["labels_predict_scalar"] = labels_predict_scalar
+                metrics["labels_predict_pseudo"] = labels_predict_pseudo
 
         labels_true, labels_predict = labels_true.numpy(), labels_predict.numpy()
+        if self.model.output == "split":
+            labels_predict_scalar = labels_predict_scalar.numpy()
+            labels_predict_pseudo = labels_predict_pseudo.numpy()
 
         # accuracy
         metrics["accuracy"] = accuracy_score(labels_true, np.round(labels_predict))
@@ -291,9 +295,32 @@ class TaggingExperiment(BaseExperiment):
                 f"{metrics['rej05']:.0f} (epsS=0.5), {metrics['rej08']:.0f} (epsS=0.8)"
             )
 
+        if mode == "eval" and self.model.output == "split":
+            for suffix, lp in [
+                ("scalar", labels_predict_scalar),
+                ("pseudo", labels_predict_pseudo),
+            ]:
+                fpr_s, tpr_s, _ = roc_curve(labels_true, lp)
+                metrics[f"fpr_{suffix}"] = fpr_s
+                metrics[f"tpr_{suffix}"] = tpr_s
+                metrics[f"auc_{suffix}"] = roc_auc_score(labels_true, lp)
+                LOGGER.info(f"AUC ({suffix}) on {title} dataset: {metrics[f'auc_{suffix}']:.4f}")
+
+        _skip_keys = {
+            "labels_true",
+            "labels_predict",
+            "fpr",
+            "tpr",
+            "labels_predict_scalar",
+            "labels_predict_pseudo",
+            "fpr_scalar",
+            "tpr_scalar",
+            "fpr_pseudo",
+            "tpr_pseudo",
+        }
         if self.cfg.use_mlflow:
             for key, value in metrics.items():
-                if key in ["labels_true", "labels_predict", "fpr", "tpr"]:
+                if key in _skip_keys:
                     # do not log matrices
                     continue
                 name = f"{mode}.{title}" if mode == "eval" else "val"
@@ -351,7 +378,7 @@ class TaggingExperiment(BaseExperiment):
         plot_mixer(self.cfg, plot_path, title, plot_dict)
 
     def _init_loss(self):
-        if self.cfg.model.output == "split":
+        if self.model.output == "split":
 
             def custom_loss(y_pred, label):
                 scalar_loss = torch.nn.functional.binary_cross_entropy_with_logits(
@@ -402,7 +429,7 @@ class TaggingExperiment(BaseExperiment):
         embedding["num_graphs"] = label.shape[0]
         embedding["label"] = label
         y_pred, tracker, frames = self.model(embedding)
-        if isinstance(self.loss, torch.nn.BCEWithLogitsLoss) and self.cfg.model.output != "split":
+        if isinstance(self.loss, torch.nn.BCEWithLogitsLoss) and self.model.output != "split":
             y_pred = y_pred[:, 0]
         return y_pred, label, tracker, frames
 
@@ -727,6 +754,10 @@ class VBFExperiment(TaggingExperiment):
 
     def _init_experiment(self):
         BaseExperiment._init_experiment(self)
+
+    def init_physics(self):
+        super().init_physics()
+        self.cfg.exp_type += f"_{self.cfg.data.exp_type}"
 
     def init_data(self, mode="train"):
         if self.data:
