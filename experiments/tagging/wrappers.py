@@ -146,7 +146,6 @@ class TransformerWrapper(AggregatedTaggerWrapper):
         net,
         *args,
         use_amp=False,
-        output="sum",
         attention_backend="xformers",
         mean_aggregation=True,
         **kwargs,

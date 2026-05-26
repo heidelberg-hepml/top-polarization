@@ -1,5 +1,4 @@
 _target_: experiments.tagging.wrappers.TransformerWrapper
-output: sum # For compatibility
 in_channels: null
 out_channels: null
 use_amp: false
