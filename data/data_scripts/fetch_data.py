@@ -26,6 +26,8 @@ elif PROC == "tth":
 elif PROC == "vbf":
     BASE_URL = "https://seafile.cloud.uni-hannover.de/d/bc0c7097c00949ca822c/files"
     LABELS = ["pos", "neg", "zero"]
+else:
+    raise ValueError(f"Unknown process: {PROC}. Available: tt_pol, tt_smeft, tth, vbf")
 MASS_WINDOWS = {"strict": (165, 190), "loose": (120, 220)}
 
 

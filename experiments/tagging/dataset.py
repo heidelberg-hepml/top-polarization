@@ -280,7 +280,7 @@ class DownTaggingDataset(HEPTaggingDataset):
 
     def __init__(
         self,
-        tag=[1, 3],
+        tag=[-3, -1, 1, 3],
         length=-1,
         pid=False,
         use_ditop=False,

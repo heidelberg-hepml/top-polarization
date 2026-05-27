@@ -542,23 +542,6 @@ class LGATrSlimPseudoWrapper(nn.Module):
         self.use_amp = use_amp
         self.attention_backend = attention_backend
         self.output = output
-        # if output in ["sum", "split"]:
-        #     out_c = {
-        #         "out_p_channels": out_channels,
-        #         "out_s_channels": out_channels,
-        #     }
-        # elif output == "scalar":
-        #     out_c = {
-        #         "out_s_channels": out_channels,
-        #         "out_p_channels": 0,
-        #     }
-        # elif output == "pseudoscalar":
-        #     out_c = {
-        #         "out_s_channels": 0,
-        #         "out_p_channels": out_channels,
-        #     }
-        # else:
-        #     raise ValueError(f"Output {output} not available.")
         out_c = {
             "out_p_channels": out_channels,
             "out_s_channels": out_channels,

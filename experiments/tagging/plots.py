@@ -66,12 +66,12 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                 title=title,
                 logy=True,
             )
-            for suffix, label in [("scalar", "scalar"), ("pseudo", "pseudoscalar")]:
-                if f"labels_predict_{suffix}" in plot_dict["results_test"]:
-                    lp = plot_dict["results_test"][f"labels_predict_{suffix}"]
+            for output in ["scalar", "pseudo"]:
+                if f"labels_predict_{output}" in plot_dict["results_test"]:
+                    lp = plot_dict["results_test"][f"labels_predict_{output}"]
                     lt = plot_dict["results_test"]["labels_true"]
-                    plot_score(out, cfg.exp_type, lt, lp, title=f"{title} ({label})")
-                    plot_score(out, cfg.exp_type, lt, lp, title=f"{title} ({label})", logy=True)
+                    plot_score(out, cfg.exp_type, lt, lp, title=f"{title} ({output})")
+                    plot_score(out, cfg.exp_type, lt, lp, title=f"{title} ({output})", logy=True)
 
     if cfg.plotting.roc and cfg.evaluate:
         file = f"{plot_path}/roc.pdf"
@@ -83,14 +83,14 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                 plot_dict["results_test"]["auc"],
                 title=title,
             )
-            for suffix, label in [("scalar", "scalar"), ("pseudo", "pseudoscalar")]:
-                if f"fpr_{suffix}" in plot_dict["results_test"]:
+            for output in ["scalar", "pseudo"]:
+                if f"fpr_{output}" in plot_dict["results_test"]:
                     plot_roc(
                         out,
-                        plot_dict["results_test"][f"fpr_{suffix}"],
-                        plot_dict["results_test"][f"tpr_{suffix}"],
-                        plot_dict["results_test"][f"auc_{suffix}"],
-                        title=f"{title} ({label})",
+                        plot_dict["results_test"][f"fpr_{output}"],
+                        plot_dict["results_test"][f"tpr_{output}"],
+                        plot_dict["results_test"][f"auc_{output}"],
+                        title=f"{title} ({output})",
                     )
 
     if cfg.plotting.polarization and cfg.evaluate:
