@@ -56,7 +56,7 @@ def main():
             for decay in [1, 2]:
                 if PROC == "tt_pol":
                     if lbl == "0":
-                        for nr in [1]:
+                        for nr in [1,2]:
                             load(
                                 f"top_pol_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet",
                                 OUT,
