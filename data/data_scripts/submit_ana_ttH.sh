@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # loop over nrun values
-for nrun in {1..25}; do
+for nrun in {1..100}; do
     # loop over alpha and semilep values
     for alpha in 0 45 -45; do
         for semilep in 1 2; do

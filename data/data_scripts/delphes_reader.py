@@ -20,9 +20,7 @@ class DelphesReader:
 
     def __init__(self, pnet=True, top_mass=[165, 190], ttH=False):
 
-        self.jet_data = ak.ArrayBuilder()
-        self.photon_data = ak.ArrayBuilder()
-        self.higgs_data = ak.ArrayBuilder()
+        self.particle_data = ak.ArrayBuilder()
         self.pnet_clustering = pnet
         self.top_mass = top_mass
         self.ttH = ttH
@@ -448,122 +446,117 @@ class DelphesReader:
         Adds a record for a single event to the output awkward array.
         """
 
-        self.jet_data.begin_record()
+        self.particle_data.begin_record()
         ## Begin event record ##
 
-        self.jet_data.field("TopLep")
-        self.jet_data.begin_record()
+        self.particle_data.field("TopLep")
+        self.particle_data.begin_record()
         ## Begin leptonic top record ##
 
-        self.jet_data.field("pt").real(toplep.pt())
-        self.jet_data.field("phi").real(toplep.phi())
-        self.jet_data.field("eta").real(toplep.eta())
-        self.jet_data.field("mass").real(toplep.m())
+        self.particle_data.field("pt").real(toplep.pt())
+        self.particle_data.field("phi").real(toplep.phi())
+        self.particle_data.field("eta").real(toplep.eta())
+        self.particle_data.field("mass").real(toplep.m())
 
         ## End leptonic top record ##
-        self.jet_data.end_record()
+        self.particle_data.end_record()
 
-        self.jet_data.field("Lepton")
-        self.jet_data.begin_record()
+        self.particle_data.field("Lepton")
+        self.particle_data.begin_record()
         ## Begin lepton record ##
 
         # Add lepton charge to flip sign in polarization angle
-        self.jet_data.field("pt").real(lepton.pt())
-        self.jet_data.field("phi").real(lepton.phi())
-        self.jet_data.field("eta").real(lepton.eta())
-        self.jet_data.field("charge").real(lep_charge)
+        self.particle_data.field("pt").real(lepton.pt())
+        self.particle_data.field("phi").real(lepton.phi())
+        self.particle_data.field("eta").real(lepton.eta())
+        self.particle_data.field("charge").real(lep_charge)
 
         ## End lepton record ##
-        self.jet_data.end_record()
+        self.particle_data.end_record()
 
-        self.jet_data.field("TopHad")
-        self.jet_data.begin_record()
+        self.particle_data.field("TopHad")
+        self.particle_data.begin_record()
         ## Begin hadronic top record ##
 
-        self.jet_data.field("pt").real(tophad.pt())
-        self.jet_data.field("phi").real(tophad.phi())
-        self.jet_data.field("eta").real(tophad.eta())
-        self.jet_data.field("mass").real(tophad.m())
+        self.particle_data.field("pt").real(tophad.pt())
+        self.particle_data.field("phi").real(tophad.phi())
+        self.particle_data.field("eta").real(tophad.eta())
+        self.particle_data.field("mass").real(tophad.m())
 
         ## End hadronic top record ##
-        self.jet_data.end_record()
+        self.particle_data.end_record()
 
-        self.jet_data.field("Subjets")
-        self.jet_data.begin_list()
+        self.particle_data.field("Subjets")
+        self.particle_data.begin_list()
         for c, subjet in enumerate(subjets):
-            self.jet_data.begin_record()
+            self.particle_data.begin_record()
             ## Begin subjet records ##
 
-            self.jet_data.field("pt").real(subjet.pt())
-            self.jet_data.field("phi").real(subjet.phi())
-            self.jet_data.field("eta").real(subjet.eta())
-            self.jet_data.field("mass").real(subjet.m())
+            self.particle_data.field("pt").real(subjet.pt())
+            self.particle_data.field("phi").real(subjet.phi())
+            self.particle_data.field("eta").real(subjet.eta())
+            self.particle_data.field("mass").real(subjet.m())
 
             if train_data:
-                self.jet_data.field("tag").real(subjet.user_index())
+                self.particle_data.field("tag").real(subjet.user_index())
             else:
                 if c == 0:
-                    self.jet_data.field("tag").real(5)
+                    self.particle_data.field("tag").real(5)
                 else:
-                    self.jet_data.field("tag").real(0)
+                    self.particle_data.field("tag").real(0)
 
-            self.jet_data.field("Constituents")
-            self.jet_data.begin_list()
+            self.particle_data.field("Constituents")
+            self.particle_data.begin_list()
             for constit in subjet.constituents():
-                self.jet_data.begin_record()
+                self.particle_data.begin_record()
                 ## Begin subjet constits records ##
 
-                self.jet_data.field("pt").real(constit.pt())
-                self.jet_data.field("phi").real(constit.phi())
-                self.jet_data.field("eta").real(constit.eta())
-                self.jet_data.field("mass").real(constit.m())
-                self.jet_data.field("charge").real((constit.user_index() % 3) - 1)
-                self.jet_data.field("pid").real(constit.user_index() // 3)
+                self.particle_data.field("pt").real(constit.pt())
+                self.particle_data.field("phi").real(constit.phi())
+                self.particle_data.field("eta").real(constit.eta())
+                self.particle_data.field("mass").real(constit.m())
+                self.particle_data.field("charge").real((constit.user_index() % 3) - 1)
+                self.particle_data.field("pid").real(constit.user_index() // 3)
 
                 ## End subjet constits records ##
-                self.jet_data.end_record()
-            self.jet_data.end_list()
+                self.particle_data.end_record()
+            self.particle_data.end_list()
 
             ## End subjet records ##
-            self.jet_data.end_record()
-        self.jet_data.end_list()
-
-        ## End jet data event record ##
-        self.jet_data.end_record()
+            self.particle_data.end_record()
+        self.particle_data.end_list()
 
         if self.ttH:
             ## photon data for ttH ##
-            self.photon_data.begin_record()
-            ## Begin photon record ##
+            self.particle_data.field("photon_leading")
+            self.particle_data.begin_record()
+            self.particle_data.field("pt").real(photons[0].PT)
+            self.particle_data.field("phi").real(photons[0].Phi)
+            self.particle_data.field("eta").real(photons[0].Eta)
+            self.particle_data.field("mass").real(photons[0].P4().M())
+            self.particle_data.end_record()
 
-            self.photon_data.field("photon_leading")
-            self.photon_data.begin_record()
-            self.photon_data.field("pt").real(photons[0].PT)
-            self.photon_data.field("phi").real(photons[0].Phi)
-            self.photon_data.field("eta").real(photons[0].Eta)
-            self.photon_data.field("mass").real(photons[0].P4().M())
-            self.photon_data.end_record()
-
-            self.photon_data.field("photon_subleading")
-            self.photon_data.begin_record()
-            self.photon_data.field("pt").real(photons[1].PT)
-            self.photon_data.field("phi").real(photons[1].Phi)
-            self.photon_data.field("eta").real(photons[1].Eta)
-            self.photon_data.field("mass").real(photons[1].P4().M())
-            self.photon_data.end_record()
-
-            ## End photon record ##
-            self.photon_data.end_record()
+            self.particle_data.field("photon_subleading")
+            self.particle_data.begin_record()
+            self.particle_data.field("pt").real(photons[1].PT)
+            self.particle_data.field("phi").real(photons[1].Phi)
+            self.particle_data.field("eta").real(photons[1].Eta)
+            self.particle_data.field("mass").real(photons[1].P4().M())
+            self.particle_data.end_record()
 
             ## reconstructed Higgs data for ttH ##
-            self.higgs_data.begin_record()
+            self.particle_data.field("higgs")
+            self.particle_data.begin_record()
             ## Begin Higgs record ##
             higgs = photons[0].P4() + photons[1].P4()
-            self.higgs_data.field("pt").real(higgs.Pt())
-            self.higgs_data.field("phi").real(higgs.Phi())
-            self.higgs_data.field("eta").real(higgs.Eta())
-            self.higgs_data.field("mass").real(higgs.M())
-            self.higgs_data.end_record()
+            self.particle_data.field("pt").real(higgs.Pt())
+            self.particle_data.field("phi").real(higgs.Phi())
+            self.particle_data.field("eta").real(higgs.Eta())
+            self.particle_data.field("mass").real(higgs.M())
+            self.particle_data.end_record()
+
+        ## End jet data event record ##
+        self.particle_data.end_record()
 
     def _get_single_delphes(self, file, file_parton, train_data):
 
@@ -658,6 +651,8 @@ class DelphesReader:
                     continue
 
                 photons_for_output = [leading_photon, subleading_photon]
+            else:
+                photons_for_output = None
 
             # Get all needed particles
             partons = event_parton.particles[2:]
@@ -805,4 +800,4 @@ class DelphesReader:
         ):
             self._get_single_delphes(f_d, f_p, train_data)
 
-        return self.jet_data.snapshot()
+        return self.particle_data.snapshot()
