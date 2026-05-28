@@ -17,9 +17,6 @@ mlruns/
 outputs/
 scripts/
 data/cache/
-data/jetclass/
-data/old/
-data/new/
 notebooks/
 *~
 *.db
@@ -28,5 +25,6 @@ notebooks/
 *.npz
 *.parquet
 *.pkl
+*.csv
 *.pt
 *.ipynb_checkpoint*

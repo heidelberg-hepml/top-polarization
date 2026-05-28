@@ -35,17 +35,43 @@ def plot_loss(file, losses, lr=None, labels=None, logy=True):
     plt.close()
 
 
-def plot_metric(file, metrics, metric_label, labels=None, logy=False):
+def plot_metric(
+    file, metrics, metric_label, labels=None, logy=False, metrics_std=None, ema=False, yrange=None
+):
     labels = [None for _ in range(len(metrics))] if labels is None else labels
     fig, ax = plt.subplots()
-    for metric, label in zip(metrics, labels, strict=False):
-        iterations = range(1, len(metric) + 1)
-        if len(metric) == len(iterations):
-            its = iterations
-        else:
-            frac = len(metrics[0]) / len(metric)
-            its = np.arange(1, len(metric) + 1) * frac
-        ax.plot(its, metric, label=label)
+
+    if metrics_std is not None:
+        for metric, metric_std, label in zip(metrics, metrics_std, labels, strict=False):
+            iterations = range(1, len(metric) + 1)
+            if len(metric) == len(iterations):
+                its = iterations
+            else:
+                frac = len(metrics[0]) / len(metric)
+                its = np.arange(1, len(metric) + 1) * frac
+            ax.plot(its, metric, label=label)
+            metric_low = np.array(metric) - np.array(metric_std)
+            metric_high = np.array(metric) + np.array(metric_std)
+            ax.fill_between(its, metric_low, metric_high, alpha=0.3)
+    else:
+        for metric, label in zip(metrics, labels, strict=False):
+            iterations = range(1, len(metric) + 1)
+            if len(metric) == len(iterations):
+                its = iterations
+            else:
+                frac = len(metrics[0]) / len(metric)
+                its = np.arange(1, len(metric) + 1) * frac
+            if ema:
+                metric = np.array(metric)
+                mean = np.mean(metric)
+                std = np.std(metric)
+                metric = np.clip(metric, mean - 5 * std, mean + 5 * std)
+                alpha = 0.01
+                for i in range(1, len(metric)):
+                    metric[i] = alpha * metric[i] + (1 - alpha) * metric[i - 1]
+            ax.plot(its, metric, label=label)
+            if yrange is not None:
+                ax.set_ylim(yrange)
 
     if logy:
         ax.set_yscale("log")

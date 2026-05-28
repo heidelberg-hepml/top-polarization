@@ -291,8 +291,8 @@ class DelphesReader:
         else:
             b_hadronic = partons[6]
         u_index, d_index = next(
-            (i for i, p in enumerate(partons) if abs(p.id) == 2), None
-        ), next((i for i, p in enumerate(partons) if abs(p.id) == 1), None)
+            (i for i, p in enumerate(partons) if abs(p.id) in [2, 4]), None
+        ), next((i for i, p in enumerate(partons) if abs(p.id) in [1, 3]), None)
         if u_index is None or d_index is None:
             raise ValueError(
                 "Could not find both up-type and down-type quarks in parton-level objects."
@@ -300,7 +300,7 @@ class DelphesReader:
         u_hadronic, d_hadronic = partons[u_index], partons[d_index]
 
         for tag, ps, uidx in zip(
-            ["b", "u", "d"], [b_hadronic, u_hadronic, d_hadronic], [5, 2, 1]
+            ["b", "u", "d"], [b_hadronic, u_hadronic, d_hadronic], [5, u_hadronic.id, d_hadronic.id]
         ):
             drs = []
             for sj in subjets:

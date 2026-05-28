@@ -2,9 +2,10 @@ exp_type: downtagging
 exp_name: downtagging
 
 data:
-  data_dir: data/
+  data_dir: data/tt/
   mass_window: loose
   pid: true
+  tag: [-3,-1,1,3]
   use_ditop: false
 
 plotting:

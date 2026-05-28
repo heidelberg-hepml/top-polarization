@@ -4,16 +4,13 @@ from lloca.framesnet.frames import Frames
 from lloca.framesnet.nonequi_frames import IdentityFrames
 from lloca.reps.tensorreps import TensorReps
 from lloca.reps.tensorreps_transform import TensorRepsTransform
-from lloca.utils.lorentz import lorentz_eye
 from lloca.utils.utils import (
     get_batch_from_ptr,
-    get_edge_attr,
-    get_edge_index_from_ptr,
     get_ptr_from_batch,
 )
 from torch import nn
 from torch_geometric.nn.aggr import MeanAggregation
-from torch_geometric.utils import scatter, to_dense_batch
+from torch_geometric.utils import scatter
 
 from experiments.misc import get_attention_mask
 from experiments.tagging.embedding import get_tagging_features
@@ -33,6 +30,7 @@ class TaggerWrapper(nn.Module):
         self.add_fourmomenta_backbone = add_fourmomenta_backbone
         self.framesnet = framesnet
         self.trafo_fourmomenta = TensorRepsTransform(TensorReps("1x1n"))
+        self.output = None
 
     def init_standardization(self, fourmomenta, ptr, reduce_size=None):
         # framesnet equivectors edge_attr standardization (if applicable)
@@ -273,7 +271,7 @@ class LGATrWrapper(nn.Module):
         net,
         framesnet,
         out_channels,
-        output="all",
+        output="sum",
         mean_aggregation=False,
         use_amp=False,
         attention_backend="xformers",
@@ -373,15 +371,40 @@ class LGATrWrapper(nn.Module):
         with torch.autocast("cuda", enabled=self.use_amp):
             mv_outputs, _ = self.net(mv, s, **mask_kwarg)
 
-        if self.output == "all":
-            out = (
-                extract_pseudoscalar(mv_outputs)[0, :, :, 0]
-                + extract_scalar(mv_outputs)[0, :, :, 0]
-            )
+        out_s = extract_scalar(mv_outputs)[0, :, :, 0]
+        out_p = extract_pseudoscalar(mv_outputs)[0, :, :, 0]
+
+        label = embedding.get("label")
+        if self.aggregator is not None:
+            B = ptr.numel() - 1
+            scalar_per_graph = self.aggregator(out_s, index=batch, dim_size=B)
+            pseudo_per_graph = self.aggregator(out_p, index=batch, dim_size=B)
+        else:
+            scalar_per_graph = out_s[is_global]
+            pseudo_per_graph = out_p[is_global]
+        tracker = {}
+        if label is not None:
+            for lbl in [0, 1]:
+                mask = label == lbl
+                if mask.any():
+                    tracker[f"scalar_output_{lbl}"] = scalar_per_graph[mask].mean(
+                        dim=0, keepdim=True
+                    )
+                    tracker[f"pseudoscalar_output_{lbl}"] = pseudo_per_graph[mask].mean(
+                        dim=0, keepdim=True
+                    )
+
+        if self.output == "sum":
+            out = out_p + out_s
         elif self.output == "scalar":
-            out = extract_scalar(mv_outputs)[0, :, :, 0]
+            out = out_s
         elif self.output == "pseudoscalar":
-            out = extract_pseudoscalar(mv_outputs)[0, :, :, 0]
+            out = out_p
+        elif self.output == "split":
+            out = torch.cat(
+                (out_s, out_p),
+                dim=-1,
+            )
         else:
             raise ValueError(f"Output {self.output} not available.")
 
@@ -390,7 +413,7 @@ class LGATrWrapper(nn.Module):
             logits = self.aggregator(out, index=batch, dim_size=B)
         else:
             logits = out[is_global]
-        return logits, {}, None
+        return logits, tracker, None
 
 
 class LGATrSlimWrapper(nn.Module):
@@ -510,6 +533,7 @@ class LGATrSlimPseudoWrapper(nn.Module):
         net,
         framesnet,
         out_channels,
+        output="sum",
         mean_aggregation=False,
         attention_backend="xformers",
         use_amp=False,
@@ -517,7 +541,12 @@ class LGATrSlimPseudoWrapper(nn.Module):
         super().__init__()
         self.use_amp = use_amp
         self.attention_backend = attention_backend
-        self.net = net(out_p_channels=out_channels)
+        self.output = output
+        out_c = {
+            "out_p_channels": out_channels,
+            "out_s_channels": out_channels,
+        }
+        self.net = net(**out_c)
         self.aggregator = MeanAggregation() if mean_aggregation else None
         self.framesnet = framesnet  # not actually used
         assert isinstance(framesnet, IdentityFrames)
@@ -612,14 +641,44 @@ class LGATrSlimPseudoWrapper(nn.Module):
         p = pseudoscalars
 
         with torch.autocast("cuda", enabled=self.use_amp):
-            _, _, out_p = self.net(v, s, p, **mask_kwarg)
-        out = out_p[0, :, :]
+            _, out_s, out_p = self.net(v, s, p, **mask_kwarg)
+
+        label = embedding.get("label")
+        if self.aggregator is not None:
+            B = ptr.numel() - 1
+            scalar_per_graph = self.aggregator(out_s[0, :, :], index=batch, dim_size=B)
+            pseudo_per_graph = self.aggregator(out_p[0, :, :], index=batch, dim_size=B)
+        else:
+            scalar_per_graph = out_s[0, :, :][is_global]
+            pseudo_per_graph = out_p[0, :, :][is_global]
+        tracker = {}
+        if label is not None:
+            for lbl in [0, 1]:
+                mask = label == lbl
+                if mask.any():
+                    tracker[f"scalar_output_{lbl}"] = scalar_per_graph[mask].mean(
+                        dim=0, keepdim=True
+                    )
+                    tracker[f"pseudoscalar_output_{lbl}"] = pseudo_per_graph[mask].mean(
+                        dim=0, keepdim=True
+                    )
+
+        if self.output == "sum":
+            out = out_p[0, :, :] + out_s[0, :, :]
+        elif self.output == "scalar":
+            out = out_s[0, :, :]
+        elif self.output == "pseudoscalar":
+            out = out_p[0, :, :]
+        elif self.output == "split":
+            out = torch.cat((out_s[0, :, :], out_p[0, :, :]), dim=-1)
+        else:
+            raise ValueError(f"Output {self.output} not available.")
 
         if self.aggregator is not None:
             logits = self.aggregator(out, index=batch)
         else:
             logits = out[is_global]
-        return logits, {}, None
+        return logits, tracker, None
 
 
 def compile_flex_attention(package_name="lgatr"):

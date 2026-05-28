@@ -237,9 +237,8 @@ class TaggingExperiment(BaseExperiment):
         )
 
         # bce loss
-        metrics["loss"] = torch.nn.functional.binary_cross_entropy_with_logits(
-            labels_predict, labels_true
-        ).item()
+        metrics["loss"] = self.loss(labels_predict, labels_true).item()
+
         if not torch.isfinite(labels_predict).all():
             mask = torch.isfinite(labels_predict)
             LOGGER.warning(
@@ -253,13 +252,21 @@ class TaggingExperiment(BaseExperiment):
                 labels_predict[~mask] = 0.0
         labels_predict = torch.nn.functional.sigmoid(labels_predict)
 
+        if self.model.output == "split":
+            labels_predict_scalar = labels_predict[:, 0]
+            labels_predict_pseudo = labels_predict[:, 1]
+            labels_predict = (labels_predict_scalar + labels_predict_pseudo) / 2
+
         if mode == "eval":
-            metrics["labels_true"], metrics["labels_predict"] = (
-                labels_true,
-                labels_predict,
-            )
+            metrics["labels_true"], metrics["labels_predict"] = labels_true, labels_predict
+            if self.model.output == "split":
+                metrics["labels_predict_scalar"] = labels_predict_scalar
+                metrics["labels_predict_pseudo"] = labels_predict_pseudo
 
         labels_true, labels_predict = labels_true.numpy(), labels_predict.numpy()
+        if self.model.output == "split":
+            labels_predict_scalar = labels_predict_scalar.numpy()
+            labels_predict_pseudo = labels_predict_pseudo.numpy()
 
         # accuracy
         metrics["accuracy"] = accuracy_score(labels_true, np.round(labels_predict))
@@ -288,9 +295,32 @@ class TaggingExperiment(BaseExperiment):
                 f"{metrics['rej05']:.0f} (epsS=0.5), {metrics['rej08']:.0f} (epsS=0.8)"
             )
 
+        if mode == "eval" and self.model.output == "split":
+            for suffix, lp in [
+                ("scalar", labels_predict_scalar),
+                ("pseudo", labels_predict_pseudo),
+            ]:
+                fpr_s, tpr_s, _ = roc_curve(labels_true, lp)
+                metrics[f"fpr_{suffix}"] = fpr_s
+                metrics[f"tpr_{suffix}"] = tpr_s
+                metrics[f"auc_{suffix}"] = roc_auc_score(labels_true, lp)
+                LOGGER.info(f"AUC ({suffix}) on {title} dataset: {metrics[f'auc_{suffix}']:.4f}")
+
+        _skip_keys = {
+            "labels_true",
+            "labels_predict",
+            "fpr",
+            "tpr",
+            "labels_predict_scalar",
+            "labels_predict_pseudo",
+            "fpr_scalar",
+            "tpr_scalar",
+            "fpr_pseudo",
+            "tpr_pseudo",
+        }
         if self.cfg.use_mlflow:
             for key, value in metrics.items():
-                if key in ["labels_true", "labels_predict", "fpr", "tpr"]:
+                if key in _skip_keys:
                     # do not log matrices
                     continue
                 name = f"{mode}.{title}" if mode == "eval" else "val"
@@ -348,7 +378,20 @@ class TaggingExperiment(BaseExperiment):
         plot_mixer(self.cfg, plot_path, title, plot_dict)
 
     def _init_loss(self):
-        self.loss = torch.nn.BCEWithLogitsLoss()
+        if self.model.output == "split":
+
+            def custom_loss(y_pred, label):
+                scalar_loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                    y_pred[:, 0], label
+                )
+                pseudoscalar_loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                    y_pred[:, 1], label
+                )
+                return scalar_loss + pseudoscalar_loss
+
+            self.loss = custom_loss
+        else:
+            self.loss = torch.nn.BCEWithLogitsLoss()
 
     # overwrite _validate method to compute metrics over the full validation set
     def _validate(self, step):
@@ -384,13 +427,14 @@ class TaggingExperiment(BaseExperiment):
             self.cfg.data,
         )
         embedding["num_graphs"] = label.shape[0]
+        embedding["label"] = label
         y_pred, tracker, frames = self.model(embedding)
-        if isinstance(self.loss, torch.nn.BCEWithLogitsLoss):
+        if isinstance(self.loss, torch.nn.BCEWithLogitsLoss) and self.model.output != "split":
             y_pred = y_pred[:, 0]
         return y_pred, label, tracker, frames
 
     def _init_metrics(self):
-        return {
+        metrics = {
             "reg_collinear": [],
             "reg_coplanar": [],
             "reg_lightlike": [],
@@ -398,6 +442,13 @@ class TaggingExperiment(BaseExperiment):
             "gamma_mean": [],
             "gamma_max": [],
         }
+        if "LGATr" in self.cfg.model.net._target_:
+            metrics["scalar_output_0"] = []
+            metrics["scalar_output_1"] = []
+            metrics["pseudoscalar_output_0"] = []
+            metrics["pseudoscalar_output_1"] = []
+
+        return metrics
 
 
 class DownTaggingExperiment(TaggingExperiment):
@@ -448,19 +499,18 @@ class DownTaggingExperiment(TaggingExperiment):
             else:
                 raise ValueError(f"Unknown mass window definition '{self.cfg.data.mass_window}'")
 
-            tag_id = 1
             filenames = sorted(
                 glob.glob(
                     os.path.join(
                         self.cfg.data.data_dir,
-                        f"top_pol_0_*_{top_window}_train_*.parquet",
+                        f"top_pol_0_*_{top_window}_train*.parquet",
                     )
                 )
             )
 
             dataset_kwargs = {
                 "length": getattr(self.cfg.data, "length", None),
-                "tag": tag_id,
+                "tag": self.cfg.data.tag,
                 "pid": self.cfg.data.pid,
                 "use_ditop": self.cfg.data.use_ditop,
                 "use_cache": self.cfg.data.use_cache,
@@ -599,7 +649,7 @@ class PolarizationExperiment(TaggingExperiment):
                 glob.glob(
                     os.path.join(
                         self.cfg.data.data_dir,
-                        f"top_pol_had_L_*_{top_window}_train_*.parquet",
+                        f"top_pol_had_L*_{top_window}_train*.parquet",
                     )
                 )
             ),
@@ -607,7 +657,7 @@ class PolarizationExperiment(TaggingExperiment):
                 glob.glob(
                     os.path.join(
                         self.cfg.data.data_dir,
-                        f"top_pol_had_R_*_{top_window}_train_*.parquet",
+                        f"top_pol_had_R*_{top_window}_train*.parquet",
                     )
                 )
             ),
@@ -705,22 +755,45 @@ class VBFExperiment(TaggingExperiment):
     def _init_experiment(self):
         BaseExperiment._init_experiment(self)
 
+    def init_physics(self):
+        super().init_physics()
+        self.cfg.exp_type += f"_{self.cfg.data.exp_type}"
+
     def init_data(self, mode="train"):
         if self.data:
             return
 
-        filenames = {
-            0: os.path.join(
-                self.cfg.data.data_dir,
-                "cHWtil_pos.npy",
-            ),
-            1: os.path.join(
-                self.cfg.data.data_dir,
-                "cHWtil_neg.npy",
-            ),
-        }
+        if self.cfg.data.exp_type == "pseudoscalar":
+            filenames = {
+                0: os.path.join(
+                    self.cfg.data.data_dir,
+                    "cHWtil_pos.npy",
+                ),
+                1: os.path.join(
+                    self.cfg.data.data_dir,
+                    "cHWtil_neg.npy",
+                ),
+            }
+        elif self.cfg.data.exp_type == "cp":
+            filenames = {
+                0: os.path.join(
+                    self.cfg.data.data_dir,
+                    "cHWtil_zero.npy",
+                ),
+                1: os.path.join(
+                    self.cfg.data.data_dir,
+                    "cHWtil_pos.npy",
+                ),
+            }
+        else:
+            raise ValueError(
+                f"Unknown experiment type '{self.cfg.data.exp_type}'"
+                " (expected 'pseudoscalar' or 'cp')"
+            )
 
-        LOGGER.info(f"Using VBF dataset from {self.cfg.data.data_dir}")
+        LOGGER.info(
+            f"Using VBF dataset from {self.cfg.data.data_dir} for '{self.cfg.data.exp_type}' tagging"
+        )
         dataset_kwargs = {
             "length": getattr(self.cfg.data, "length", None),
             "use_cache": self.cfg.data.use_cache,

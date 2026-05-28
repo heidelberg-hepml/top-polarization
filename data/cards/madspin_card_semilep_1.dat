@@ -20,7 +20,7 @@
  set max_weight_ps_point 400  # number of PS to estimate the maximum for each event
 
 # specify the decay for the final state particles
-decay t > w+ b, w+ > u d~
+decay t > w+ b, w+ > j j
 decay t~ > w- b~, w- > l- vl~
 # running the actual code
 launch

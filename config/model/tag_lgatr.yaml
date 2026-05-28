@@ -1,5 +1,5 @@
 _target_: experiments.tagging.wrappers.LGATrWrapper
-output: all
+output: sum
 mean_aggregation: false
 out_channels: null
 use_amp: false

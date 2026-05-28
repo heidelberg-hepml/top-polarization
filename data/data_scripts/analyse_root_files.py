@@ -3,7 +3,7 @@
 import os
 import sys
 from glob import glob
-from delphes_reader import DelphesReader
+from data.scripts.delphes_reader import DelphesReader
 import argparse
 import awkward as ak
 

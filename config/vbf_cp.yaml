@@ -1,0 +1,10 @@
+exp_type: vbf
+exp_name: vbf_cp
+
+data:
+  data_dir: 'data/vbf/'
+  exp_type: cp
+
+defaults:
+ - tagging
+ - _self_
