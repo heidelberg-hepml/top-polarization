@@ -215,6 +215,8 @@ def plot_score(
         label_0, label_1 = "Pos", "Neg"
     elif exp == "vbf_cp":
         label_0, label_1 = "SM", "Pos"
+    elif exp == "tt_smeft":
+        label_0, label_1 = "SM", "BSM"
     else:
         label_0, label_1 = "label=0", "label=1"
     ax.set_xlabel(f"Classifier score (0={label_0}, 1={label_1})", fontsize=FONTSIZE)

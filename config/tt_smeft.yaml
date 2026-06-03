@@ -1,0 +1,12 @@
+exp_type: tt_smeft
+exp_name: tt_smeft
+
+data:
+  data_dir: data/tt_smeft/
+  bsm: im # [re|im|mix]
+  mass_window: loose
+  pid: true
+
+defaults:
+ - tagging
+ - _self_

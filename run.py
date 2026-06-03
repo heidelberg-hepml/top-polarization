@@ -12,6 +12,7 @@ from omegaconf import OmegaConf
 from experiments.tagging.experiment import (
     DownTaggingExperiment,
     PolarizationExperiment,
+    TTSmeftExperiment,
     PseudoscalarExperiment,
     VBFExperiment,
 )
@@ -121,6 +122,8 @@ def ddp_worker(rank, cfg, trial=None):
         constructor = PolarizationExperiment
     elif cfg.exp_type == "downtagging":
         constructor = DownTaggingExperiment
+    elif cfg.exp_type == "tt_smeft":
+        constructor = TTSmeftExperiment
     elif cfg.exp_type == "pseudoscalar":
         constructor = PseudoscalarExperiment
     elif cfg.exp_type == "vbf":

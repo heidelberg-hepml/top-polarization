@@ -14,11 +14,12 @@ from experiments.mlflow import log_mlflow
 from experiments.tagging.dataset import (
     DownTaggingDataset,
     PolarizationDataset,
+    TTSmeftDataset,
     PseudoscalarDataset,
     VBFDataset,
 )
 from experiments.tagging.embedding import embed_tagging_data, get_num_tagging_features
-from experiments.tagging.likelihood import get_polarization
+from experiments.tagging.likelihood import get_polarization, get_asymmetry
 from experiments.tagging.plots import plot_mixer
 
 
@@ -687,6 +688,96 @@ class PolarizationExperiment(TaggingExperiment):
             self.results[set_label]["score_r"] = pol["score_r"][-1]
 
 
+class TTSmeftExperiment(TaggingExperiment):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_outputs = 1
+        self.extra_scalars = 7  # Differentiate between hadronic top, leptonic top, lepton, subjets, and constituents
+        if self.cfg.data.pid:
+            self.extra_scalars += 6
+
+    def _init_experiment(self, run_name_add=None):
+        run_name_add = [
+            f"dataset=ttsmeft",
+            f"mass={self.cfg.data.mass_window}",
+            f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
+            f"lr={self.cfg.training.lr}",
+            f"opt={self.cfg.training.optimizer}",
+            f"bs={self.cfg.training.batchsize}",
+        ]
+        super()._init_experiment(run_name_add=run_name_add)
+
+    def init_data(self, mode="train"):
+        if self.data:
+            return
+
+        if self.cfg.data.mass_window == "strict":
+            top_window = "165_190"
+        elif self.cfg.data.mass_window == "loose":
+            top_window = "120_220"
+        else:
+            raise ValueError(f"Unknown mass window definition '{self.cfg.data.mass_window}'")
+
+        all_files = sorted(
+            glob.glob(
+                os.path.join(
+                    self.cfg.data.data_dir,
+                    f"tt_ctg_*_{top_window}_train*.parquet",
+                )
+            )
+        )
+        sm_files = [f for f in all_files if "re_0_im_0_" in f]
+        if self.cfg.data.bsm == "re":
+            bsm_files = [f for f in all_files if "re_0_" not in f and "im_0_" in f]
+        elif self.cfg.data.bsm == "im":
+            bsm_files = [f for f in all_files if "im_0_" not in f and "re_0_" in f]
+        elif self.cfg.data.bsm == "mix":
+            bsm_files = [f for f in all_files if "re_0_" not in f and "im_0_" not in f]
+        else:
+            raise ValueError(f"Unknown type for tt SMEFT data '{self.cfg.data.bsm}' (expected 're', 'im', or 'mix')")
+
+        filenames = {
+            0: sm_files,
+            1: bsm_files,
+        }
+
+        LOGGER.info(
+            f"Using tt SMEFT dataset from {self.cfg.data.data_dir} for '{self.cfg.data.bsm}' tagging with {len(sm_files)} SM files and {len(bsm_files)} BSM files"
+        )
+
+        dataset_kwargs = {
+            "length": getattr(self.cfg.data, "length", None),
+            "pid": self.cfg.data.pid,
+            "use_cache": self.cfg.data.use_cache,
+        }
+        self._init_data(TTSmeftDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
+
+    def evaluate(self):
+        super().evaluate()
+
+        for set_label in self.cfg.evaluation.eval_set:
+            asym_label_0, asym_label_1 = get_asymmetry(self.results[set_label]["labels_predict"], self.results[set_label]["labels_true"])
+            LOGGER.info(
+                f"Score asymmetry for {set_label} dataset: "
+                f"{asym_label_0[0]:.3f} ± {asym_label_0[1]:.3f} (SM) and "
+                f"{asym_label_1[0]:.3f} ± {asym_label_1[1]:.3f} (SMEFT) "
+                f"where the c_tG operator has a {'real only' if self.cfg.data.bsm == 're' else 'imaginary only' if self.cfg.data.bsm == 'im' else 'mixed real and imaginary'} coupling."
+            )
+            if self.model.output == "split":
+                asym_label_0_scalar, asym_label_1_scalar = get_asymmetry(self.results[set_label]["labels_predict_scalar"], self.results[set_label]["labels_true"])
+                asym_label_0_pseudo, asym_label_1_pseudo = get_asymmetry(self.results[set_label]["labels_predict_pseudo"], self.results[set_label]["labels_true"])
+                LOGGER.info(
+                    f"Score asymmetry for {set_label} dataset (scalar output only): "
+                    f"{asym_label_0_scalar[0]:.3f} ± {asym_label_0_scalar[1]:.3f} (SM) and "
+                    f"{asym_label_1_scalar[0]:.3f} ± {asym_label_1_scalar[1]:.3f} (SMEFT)"
+                )
+                LOGGER.info(
+                    f"Score asymmetry for {set_label} dataset (pseudoscalar output only): "
+                    f"{asym_label_0_pseudo[0]:.3f} ± {asym_label_0_pseudo[1]:.3f} (SM) and "
+                    f"{asym_label_1_pseudo[0]:.3f} ± {asym_label_1_pseudo[1]:.3f} (SMEFT)"
+                )
+
+
 class PseudoscalarExperiment(TaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -791,9 +882,6 @@ class VBFExperiment(TaggingExperiment):
                 " (expected 'pseudoscalar' or 'cp')"
             )
 
-        LOGGER.info(
-            f"Using VBF dataset from {self.cfg.data.data_dir} for '{self.cfg.data.exp_type}' tagging"
-        )
         dataset_kwargs = {
             "length": getattr(self.cfg.data, "length", None),
             "use_cache": self.cfg.data.use_cache,
