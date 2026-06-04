@@ -3,7 +3,8 @@ exp_name: tt_smeft
 
 data:
   data_dir: data/tt_smeft/
-  bsm: im # [re|im|mix]
+  lbl_0: sm # [sm|neg]
+  bsm: im # [re|im|mix] 
   mass_window: loose
   pid: true
 

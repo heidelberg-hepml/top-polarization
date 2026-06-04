@@ -1,5 +1,6 @@
 import glob
 import os
+import re
 import time
 
 import numpy as np
@@ -726,23 +727,39 @@ class TTSmeftExperiment(TaggingExperiment):
                 )
             )
         )
-        sm_files = [f for f in all_files if "re_0_im_0_" in f]
+
+        def _coeffs(filename):
+            m = re.search(r'_re_(-?[\d]+(?:p[\d]+)?)_im_(-?[\d]+(?:p[\d]+)?)_', os.path.basename(filename))
+            if m is None:
+                return None, None
+            return float(m.group(1).replace('p', '.')), float(m.group(2).replace('p', '.'))
+
+        if self.cfg.data.lbl_0 == "sm":
+            null_files = [f for f in all_files if "re_0_im_0_" in f]
+        elif self.cfg.data.lbl_0 == "neg":
+            if self.cfg.data.bsm == "re":
+                null_files = [f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] < 0 and c[1] == 0]
+            elif self.cfg.data.bsm == "im":
+                null_files = [f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] == 0 and c[1] < 0]
+            elif self.cfg.data.bsm == "mix":
+                null_files = [f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] < 0 and c[1] < 0]
         if self.cfg.data.bsm == "re":
-            bsm_files = [f for f in all_files if "re_0_" not in f and "im_0_" in f]
+            pos_files = [f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] > 0 and c[1] == 0]
         elif self.cfg.data.bsm == "im":
-            bsm_files = [f for f in all_files if "im_0_" not in f and "re_0_" in f]
+            pos_files = [f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] == 0 and c[1] > 0]
         elif self.cfg.data.bsm == "mix":
-            bsm_files = [f for f in all_files if "re_0_" not in f and "im_0_" not in f]
+            pos_files = [f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] > 0 and c[1] > 0]
         else:
             raise ValueError(f"Unknown type for tt SMEFT data '{self.cfg.data.bsm}' (expected 're', 'im', or 'mix')")
 
         filenames = {
-            0: sm_files,
-            1: bsm_files,
+            0: null_files,
+            1: pos_files,
         }
 
         LOGGER.info(
-            f"Using tt SMEFT dataset from {self.cfg.data.data_dir} for '{self.cfg.data.bsm}' tagging with {len(sm_files)} SM files and {len(bsm_files)} BSM files"
+            f"Using tt SMEFT dataset from {self.cfg.data.data_dir} for '{self.cfg.data.bsm}' tagging "
+            f"with {len(null_files)} files labeled 0 and {len(pos_files)} files labeled 1."
         )
 
         dataset_kwargs = {
@@ -761,7 +778,8 @@ class TTSmeftExperiment(TaggingExperiment):
                 f"Score asymmetry for {set_label} dataset: "
                 f"{asym_label_0[0]:.3f} ± {asym_label_0[1]:.3f} (SM) and "
                 f"{asym_label_1[0]:.3f} ± {asym_label_1[1]:.3f} (SMEFT) "
-                f"where the c_tG operator has a {'real only' if self.cfg.data.bsm == 're' else 'imaginary only' if self.cfg.data.bsm == 'im' else 'mixed real and imaginary'} coupling."
+                f"where the c_tG operator has a "
+                f"{'real only' if self.cfg.data.bsm == 're' else 'imaginary only' if self.cfg.data.bsm == 'im' else 'mixed real and imaginary'} coupling."
             )
             if self.model.output == "split":
                 asym_label_0_scalar, asym_label_1_scalar = get_asymmetry(self.results[set_label]["labels_predict_scalar"], self.results[set_label]["labels_true"])

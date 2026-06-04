@@ -52,15 +52,15 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
         file = f"{plot_path}/score.pdf"
         with PdfPages(file) as out:
             plot_score(
+                cfg,
                 out,
-                cfg.exp_type,
                 plot_dict["results_test"]["labels_true"],
                 plot_dict["results_test"]["labels_predict"],
                 title=title,
             )
             plot_score(
+                cfg,
                 out,
-                cfg.exp_type,
                 plot_dict["results_test"]["labels_true"],
                 plot_dict["results_test"]["labels_predict"],
                 title=title,
@@ -70,8 +70,8 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                 if f"labels_predict_{output}" in plot_dict["results_test"]:
                     lp = plot_dict["results_test"][f"labels_predict_{output}"]
                     lt = plot_dict["results_test"]["labels_true"]
-                    plot_score(out, cfg.exp_type, lt, lp, title=f"{title} ({output})")
-                    plot_score(out, cfg.exp_type, lt, lp, title=f"{title} ({output})", logy=True)
+                    plot_score(cfg, out, lt, lp, title=f"{title} ({output})")
+                    plot_score(cfg, out, lt, lp, title=f"{title} ({output})", logy=True)
 
     if cfg.plotting.roc and cfg.evaluate:
         file = f"{plot_path}/roc.pdf"
@@ -199,7 +199,7 @@ def plot_roc(out, fpr, tpr, auc, title=None):
 
 
 def plot_score(
-    out, exp, labels_true, labels_predicted, title=None, xrange=[0, 1], bins=100, logy=False
+    cfg, out, labels_true, labels_predicted, title=None, xrange=[0, 1], bins=100, logy=False
 ):
     cols = [colors[1], colors[2]]
 
@@ -207,16 +207,20 @@ def plot_score(
     if logy:
         ax.set_yscale("log")
     ax.set_ylabel("Normalized", fontsize=FONTSIZE)
-    if exp == "polarization":
+    if cfg.exp_type == "polarization":
         label_0, label_1 = "L", "R"
-    elif exp == "downtagging":
+    elif cfg.exp_type == "downtagging":
         label_0, label_1 = "Up-type", "Down-type"
-    elif exp in ["pseudoscalar", "vbf_pseudoscalar"]:
+    elif cfg.exp_type in ["pseudoscalar", "vbf_pseudoscalar"]:
         label_0, label_1 = "Pos", "Neg"
-    elif exp == "vbf_cp":
+    elif cfg.exp_type == "vbf_cp":
         label_0, label_1 = "SM", "Pos"
-    elif exp == "tt_smeft":
-        label_0, label_1 = "SM", "BSM"
+    elif cfg.exp_type == "tt_smeft":
+        if cfg.data.lbl_0 == "sm":
+            label_0 = r"$c_{tG} = 0$"
+        elif cfg.data.lbl_0 == "neg":
+            label_0 = r"$c_{tG} < 0$"
+        label_1 = r"$c_{tG} > 0$"
     else:
         label_0, label_1 = "label=0", "label=1"
     ax.set_xlabel(f"Classifier score (0={label_0}, 1={label_1})", fontsize=FONTSIZE)
