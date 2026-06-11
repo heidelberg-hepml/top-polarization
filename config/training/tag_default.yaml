@@ -1,6 +1,7 @@
 # agnostic default training hyperparameters for tagging
 iterations: ???
 batchsize: 512
+grad_acc_steps: 1
 
 # optimizer: default AdamW
 optimizer: AdamW
