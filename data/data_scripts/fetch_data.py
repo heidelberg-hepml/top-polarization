@@ -19,7 +19,7 @@ if PROC == "tt_pol":
     LABELS = ["0", ("L", "L"), ("L", "R"), ("R", "L"), ("R", "R")]
 elif PROC == "tt_smeft":
     BASE_URL = "https://seafile.cloud.uni-hannover.de/d/3f6addd27e8645ae9f70/files"
-    LABELS  = []
+    LABELS  = ["im_0", "im_10", "im_-10"]
 elif PROC == "tth":
     BASE_URL = "https://seafile.cloud.uni-hannover.de/d/de5e4b2fda5546c1be46/files"
     LABELS = ["0", "45", "-45"]
@@ -70,11 +70,15 @@ def main():
                                 OUT,
                             )
                 elif PROC == "tt_smeft":
-                    pass
+                    load(
+                        f"tt_ctg_re_0_{lbl}_semilep_1_{m[0]}_{m[1]}_train.parquet",
+                        OUT,
+                    )
                 elif PROC == "tth":
                     for nr in range(1, 3):
                         load(
-                            f"ttH_alpha_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet", OUT
+                            f"ttH_alpha_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet",
+                            OUT,
                         )
 
 

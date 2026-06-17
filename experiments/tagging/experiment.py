@@ -769,31 +769,105 @@ class TTSmeftExperiment(TaggingExperiment):
         }
         self._init_data(TTSmeftDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
-    def evaluate(self):
-        super().evaluate()
+    def _get_ypred_and_label(self, batch):
+        fourmomenta, scalars, ptr, label, *_ = self._extract_batch(batch)
 
-        for set_label in self.cfg.evaluation.eval_set:
-            asym_label_0, asym_label_1 = get_asymmetry(self.results[set_label]["labels_predict"], self.results[set_label]["labels_true"])
-            LOGGER.info(
-                f"Score asymmetry for {set_label} dataset: "
-                f"{asym_label_0[0]:.3f} ± {asym_label_0[1]:.3f} (SM) and "
-                f"{asym_label_1[0]:.3f} ± {asym_label_1[1]:.3f} (SMEFT) "
-                f"where the c_tG operator has a "
-                f"{'real only' if self.cfg.data.bsm == 're' else 'imaginary only' if self.cfg.data.bsm == 'im' else 'mixed real and imaginary'} coupling."
+        if self.cfg.data.cpflip_batch:
+            fourmomenta = torch.cat([fourmomenta, fourmomenta * fourmomenta.new_tensor([1, -1, -1, -1])], dim=0) # Flip momentum
+            scalar_signs = scalars.new_ones(scalars.shape[1])
+            scalar_signs[-6] = -1 # Charge from PID
+            scalars = torch.cat([scalars, scalars * scalar_signs], dim=0)
+            label = torch.cat([label, 1 - label], dim=0)
+            ptr = torch.cat([ptr, ptr[1:] + ptr[-1]])
+
+        embedding = embed_tagging_data(
+            fourmomenta,
+            scalars,
+            ptr,
+            self.cfg.data,
+        )
+        embedding["num_graphs"] = label.shape[0]
+        embedding["label"] = label
+        y_pred, tracker, frames = self.model(embedding)
+        if isinstance(self.loss, torch.nn.BCEWithLogitsLoss) and self.model.output != "split":
+            y_pred = y_pred[:, 0]
+        return y_pred, label, tracker, frames
+
+    @torch.no_grad()
+    def _evaluate_single(self, loader, title, mode, step=None):
+        assert mode in ["val", "eval"]
+
+        metrics = super()._evaluate_single(loader, title, mode, step)
+        momenta = {}
+
+        # predictions
+        mom_hadtop, mom_b, mom_hard, mom_soft, mom_leptop, mom_lep, charge, labels = (
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+        )
+        self.model.eval()
+        for batch in loader:
+            fourmomenta, scalars, _, _ = self._extract_batch(batch)
+            if self.cfg.data.cpflip_batch:
+                fourmomenta = torch.cat([fourmomenta, fourmomenta * fourmomenta.new_tensor([1, -1, -1, -1])], dim=0) # Flip momentum
+                scalar_signs = scalars.new_ones(scalars.shape[1])
+                scalar_signs[-6] = -1 # Charge from PID
+                scalars = torch.cat([scalars, scalars * scalar_signs], dim=0)
+            _, label, _, _ = self._get_ypred_and_label(batch)
+            mask_hadtop, mask_b, mask_hard, mask_soft, mask_leptop, mask_lep = (
+                (scalars[:, 0] == 1),
+                (scalars[:, 1] + scalars[:, 2] == 2),
+                (scalars[:, 1] + scalars[:, 3] == 2),
+                (scalars[:, 1] + scalars[:, 4] == 2),
+                (scalars[:, 5] == 1),
+                (scalars[:, 6] != 0),
             )
-            if self.model.output == "split":
-                asym_label_0_scalar, asym_label_1_scalar = get_asymmetry(self.results[set_label]["labels_predict_scalar"], self.results[set_label]["labels_true"])
-                asym_label_0_pseudo, asym_label_1_pseudo = get_asymmetry(self.results[set_label]["labels_predict_pseudo"], self.results[set_label]["labels_true"])
-                LOGGER.info(
-                    f"Score asymmetry for {set_label} dataset (scalar output only): "
-                    f"{asym_label_0_scalar[0]:.3f} ± {asym_label_0_scalar[1]:.3f} (SM) and "
-                    f"{asym_label_1_scalar[0]:.3f} ± {asym_label_1_scalar[1]:.3f} (SMEFT)"
-                )
-                LOGGER.info(
-                    f"Score asymmetry for {set_label} dataset (pseudoscalar output only): "
-                    f"{asym_label_0_pseudo[0]:.3f} ± {asym_label_0_pseudo[1]:.3f} (SM) and "
-                    f"{asym_label_1_pseudo[0]:.3f} ± {asym_label_1_pseudo[1]:.3f} (SMEFT)"
-                )
+
+            mom_hadtop.append(fourmomenta[mask_hadtop])
+            mom_b.append(fourmomenta[mask_b])
+            mom_hard.append(fourmomenta[mask_hard])
+            mom_soft.append(fourmomenta[mask_soft])
+            mom_leptop.append(fourmomenta[mask_leptop])
+            mom_lep.append(fourmomenta[mask_lep])
+            charge.append(scalars[scalars[:, 6] != 0][:, 6])
+            labels.append(label)
+
+        mom_hadtop, mom_b, mom_hard, mom_soft, mom_leptop, mom_lep, charge, labels = (
+            torch.cat(mom_hadtop).cpu(),
+            torch.cat(mom_b).cpu(),
+            torch.cat(mom_hard).cpu(),
+            torch.cat(mom_soft).cpu(),
+            torch.cat(mom_leptop).cpu(),
+            torch.cat(mom_lep).cpu(),
+            torch.cat(charge).cpu(),
+            torch.cat(labels).cpu(),
+        )
+
+        eps = torch.linalg.det(torch.stack([mom_hadtop, mom_leptop, mom_soft, mom_lep], dim=1)) / 173.**4
+        eps_null = eps[labels == 0]; eps_pos = eps[labels == 1]
+        LOGGER.info(
+            f"Epsilon information for entire {title} dataset:\n "
+            f"Epsilon tensor mean: {eps.mean().cpu().item():.3e}\n " 
+            f"Label 0 epsilon tensor mean: {eps_null.mean().cpu().item():.3e}\n " 
+            f"Label 1 epsilon tensor mean: {eps_pos.mean().cpu().item():.3e}" 
+        )
+        asym_null = (torch.sum(eps_null > 1e-6) - torch.sum(eps_null < -1e-6)) / (torch.sum(eps_null > 1e-6) + torch.sum(eps_null < -1e-6))
+        asym_pos = (torch.sum(eps_pos > 1e-6) - torch.sum(eps_pos < -1e-6)) / (torch.sum(eps_pos > 1e-6) + torch.sum(eps_pos < -1e-6))
+        LOGGER.info(
+            f"Epsilon asymmetry in batch for {title} dataset: "
+            f"{asym_null:.3f} (label 0) and {asym_pos:.3f} (label 1) where the c_tG operator has a "
+            f"{'real only' if self.cfg.data.bsm == 're' else 'imaginary only' if self.cfg.data.bsm == 'im' else 'mixed real and imaginary'} coupling."
+        )
+
+        results = metrics
+
+        return results
 
 
 class PseudoscalarExperiment(TaggingExperiment):
