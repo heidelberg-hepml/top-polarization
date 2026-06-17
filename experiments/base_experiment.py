@@ -569,12 +569,14 @@ class BaseExperiment:
         patience = 0
 
         # main train loop
+        K = self.cfg.training.get("grad_acc_steps", 1)
         LOGGER.info(
             f"Starting to train for {self.cfg.training.iterations} iterations "
             f"= {self.cfg.training.iterations / len(self.train_loader):.1f} epochs "
             f"on a dataset with {len(self.train_loader)} batches "
             f"using early stopping with patience {self.cfg.training.es_patience} "
             f"while validating every {self.cfg.training.validate_every_n_steps} iterations"
+            + (f" with gradient accumulation over {K} steps" if K > 1 else "")
         )
         self.training_start_time = time.time()
         self.training_start_time_corrected = time.time()  # reset at first iteration
@@ -594,12 +596,16 @@ class BaseExperiment:
                 epoch += 1
 
         iterator = iter(cycle(self.train_loader))
+        self._acc_loss_sum = 0.0
         for step in range(self.cfg.training.iterations):
             # training
             self.model.train()
             data = next(iterator)
             t0 = time.time()
-            self._step(data, step)
+            if step % K == 0:
+                self.optimizer.zero_grad()
+            accumulate = (step + 1) % K != 0
+            self._step(data, step, accumulate=accumulate, K=K)
             train_time += time.time() - t0
             # validation (and early stopping)
             if (step + 1) % self.cfg.training.validate_every_n_steps == 0:
@@ -694,11 +700,16 @@ class BaseExperiment:
                     f"Cannot load best model (epoch {smallest_val_loss_step}) from {model_path}"
                 )
 
-    def _step(self, data, step):
+    def _step(self, data, step, accumulate=False, K=1):
         # actual update step
         loss, metrics = self._batch_loss(data)
-        self.optimizer.zero_grad()
-        self.scaler.scale(loss).backward()
+
+        self._acc_loss_sum += loss.detach().item()
+        self.scaler.scale(loss / K).backward()
+
+        if accumulate:
+            return
+
         self.scaler.unscale_(self.optimizer)  # unscale before clipping
 
         if self.cfg.training.log_grad_norm:
@@ -767,14 +778,18 @@ class BaseExperiment:
         ]:
             self.scheduler.step()
 
-        if not torch.isfinite(loss):
-            LOGGER.warning(f"Loss is nonfinite (loss={loss}) at iteration {step}")
+        # mean loss over the K accumulated steps
+        acc_loss = torch.tensor(self._acc_loss_sum / K, device=self.device)
+        self._acc_loss_sum = 0.0
+
+        if not torch.isfinite(acc_loss):
+            LOGGER.warning(f"Loss is nonfinite (loss={acc_loss}) at iteration {step}")
 
         # collect metrics
         if self.world_size > 1:
-            dist.all_reduce(loss, op=dist.ReduceOp.SUM)
-            loss /= self.world_size
-        self.train_loss.append(loss.detach().item())
+            dist.all_reduce(acc_loss, op=dist.ReduceOp.SUM)
+            acc_loss /= self.world_size
+        self.train_loss.append(acc_loss.item())
         self.train_lr.append(self.optimizer.param_groups[0]["lr"])
         self.grad_norm_train.append(grad_norm)
         self.grad_norm_frames.append(grad_norm_frames)
@@ -791,7 +806,7 @@ class BaseExperiment:
             and step % self.cfg.training.log_every_n_steps == 0
         ):
             log_dict = {
-                "loss": loss.item(),
+                "loss": acc_loss.item(),
                 "lr": self.train_lr[-1],
                 "time_per_step": (time.time() - self.training_start_time_corrected) / (step + 1),
                 "grad_norm": grad_norm,
