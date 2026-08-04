@@ -6,7 +6,7 @@ use_amp: false
 attention_backend: xformers
 
 net:
- _target_: lgatr.nets.lgatr_slim_pseudo.LGATrSlimPseudo
+ _target_: lgatr.LGATrSlimPseudo
  _partial_: true
 
  in_v_channels: 1

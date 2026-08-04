@@ -6,7 +6,6 @@ import optuna
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from lgatr.primitives.config import gatr_config
 from omegaconf import OmegaConf
 
 from experiments.tagging.experiment import (
@@ -16,8 +15,6 @@ from experiments.tagging.experiment import (
     PseudoscalarExperiment,
     VBFExperiment,
 )
-
-gatr_config.use_fully_connected_subgroup = False
 
 GLOBAL_METRIC = None
 
@@ -62,7 +59,7 @@ def objective(base_cfg, trial=None):
         cfg.training.weight_decay = trial.suggest_categorical(
             "weight_decay", [0.2, 0.5, 1.0, 2.0, 5.0]
         )
-        if cfg.model.net._target_.rsplit(".", 1)[0] == "lgatr":
+        if cfg.model.net._target_.startswith("lgatr."):
             cfg.model.net.num_blocks = trial.suggest_categorical("num_blocks", [6, 12])
             cfg.model.net.dropout_prob = trial.suggest_categorical("dropout_prob", [None, 0.1, 0.2])
 
