@@ -1,5 +1,6 @@
 import argparse
 import os
+from urllib.parse import quote
 
 import requests
 
@@ -15,36 +16,40 @@ PROC = args.process
 MASS = args.mass
 
 if PROC == "tt_pol":
-    BASE_URL = "https://seafile.cloud.uni-hannover.de/d/053ac05f748d4f0583fa/files"
+    BASE_URL = "https://tu-dortmund.sciebo.de/public.php/dav/files/nKYKyDm23TabWQy"
     LABELS = ["0", ("L", "L"), ("L", "R"), ("R", "L"), ("R", "R")]
 elif PROC == "tt_smeft":
-    BASE_URL = "https://seafile.cloud.uni-hannover.de/d/3f6addd27e8645ae9f70/files"
-    LABELS  = []
+    BASE_URL = "https://tu-dortmund.sciebo.de/public.php/dav/files/SwSxDJeNkTDxKyr"
+    LABELS  = ["0", "0p1", "-0p1", "2p6", "-2p6", "10", "-10", "100", "-100"]
 elif PROC == "tth":
-    BASE_URL = "https://seafile.cloud.uni-hannover.de/d/de5e4b2fda5546c1be46/files"
+    BASE_URL = "https://tu-dortmund.sciebo.de/public.php/dav/files/3SprM35zsfWgqHs"
     LABELS = ["0", "45", "-45"]
 elif PROC == "vbf":
-    BASE_URL = "https://seafile.cloud.uni-hannover.de/d/bc0c7097c00949ca822c/files"
+    BASE_URL = "https://tu-dortmund.sciebo.de/public.php/dav/files/FKzPdYLLF3ePdy8"
     LABELS = ["pos", "neg", "zero"]
 else:
     raise ValueError(f"Unknown process: {PROC}. Available: tt_pol, tt_smeft, tth, vbf")
 MASS_WINDOWS = {"strict": (165, 190), "loose": (120, 220)}
 
 
-def load(filename, out):
-    params = {"p": filename, "dl": "1"}
+def load(filename, out=None):
     print(f"Downloading {filename}")
+
     if out is None:
         out = os.path.join("data", PROC)
+
     os.makedirs(out, exist_ok=True)
     target_path = os.path.join(out, filename)
+    url = f"{BASE_URL}/{quote(filename)}"
 
-    with requests.get(BASE_URL, params=params, stream=True) as r:
+    with requests.get(url, stream=True) as r:
         r.raise_for_status()
+
         with open(target_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     f.write(chunk)
+
     print(f"Successfully downloaded {filename}")
     print("")
 
@@ -54,6 +59,10 @@ def main():
     for lbl in LABELS:
         if PROC == "vbf":
             load(f"cHWtil_{lbl}.npy", OUT)
+        elif PROC == "tt_smeft":
+            load(f"tt_ctg_re_0_im_{lbl}_semilep_1_{m[0]}_{m[1]}_train.parquet",
+                 OUT,
+            )
         else:
             for decay in [1, 2]:
                 if PROC == "tt_pol":
@@ -69,8 +78,6 @@ def main():
                                 f"top_pol_had_{lbl[0]}_lep_{lbl[1]}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet",
                                 OUT,
                             )
-                elif PROC == "tt_smeft":
-                    pass
                 elif PROC == "tth":
                     for nr in range(1, 3):
                         load(
