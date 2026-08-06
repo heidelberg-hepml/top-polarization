@@ -597,6 +597,8 @@ class BaseExperiment:
 
         iterator = iter(cycle(self.train_loader))
         self._acc_loss_sum = 0.0
+        self._nan_streak = 0
+        self._terminate_training = False
         for step in range(self.cfg.training.iterations):
             # training
             self.model.train()
@@ -607,6 +609,13 @@ class BaseExperiment:
             accumulate = (step + 1) % K != 0
             self._step(data, step, accumulate=accumulate, K=K)
             train_time += time.time() - t0
+            if self._terminate_training:
+                LOGGER.error(
+                    f"Terminating training at iteration {step}: loss has been nonfinite for "
+                    f"{self._nan_streak} consecutive optimizer steps (diverged). "
+                    "Falling back to the best checkpoint."
+                )
+                break
             # validation (and early stopping)
             if (step + 1) % self.cfg.training.validate_every_n_steps == 0:
                 t0 = time.time()
@@ -762,6 +771,24 @@ class BaseExperiment:
                 self.cfg.training.clip_grad_norm_framesnet,
             ).detach().to(self.device)
 
+        # mean loss over the K accumulated steps
+        acc_loss = torch.tensor(self._acc_loss_sum / K, device=self.device)
+        self._acc_loss_sum = 0.0
+
+        if (not torch.isfinite(acc_loss)) or (not torch.isfinite(grad_norm)):
+            self._nan_streak += 1
+            nan_max = self.cfg.training.get("nan_max_consecutive", 20)
+            LOGGER.warning(
+                f"Nonfinite update at iteration {step} (loss={acc_loss.item()}, "
+                f"grad_norm={grad_norm}); skipping optimizer step "
+                f"[{self._nan_streak}/{nan_max}]"
+            )
+            self.optimizer.zero_grad(set_to_none=True)
+            if nan_max is not None and self._nan_streak >= nan_max:
+                self._terminate_training = True
+            return
+        self._nan_streak = 0
+
         if step > MIN_STEP_SKIP and self.cfg.training.max_grad_norm is not None:
             if grad_norm > self.cfg.training.max_grad_norm:
                 LOGGER.warning(
@@ -779,13 +806,6 @@ class BaseExperiment:
             "CosineAnnealingWarmRestarts",
         ]:
             self.scheduler.step()
-
-        # mean loss over the K accumulated steps
-        acc_loss = torch.tensor(self._acc_loss_sum / K, device=self.device)
-        self._acc_loss_sum = 0.0
-
-        if not torch.isfinite(acc_loss):
-            LOGGER.warning(f"Loss is nonfinite (loss={acc_loss}) at iteration {step}")
 
         # collect metrics
         if self.world_size > 1:
