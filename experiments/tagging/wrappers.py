@@ -433,6 +433,7 @@ class LGATrSlimWrapper(nn.Module):
         self.aggregator = MeanAggregation() if mean_aggregation else None
         self.framesnet = framesnet  # not actually used
         assert isinstance(framesnet, IdentityFrames)
+        self.output = None
 
         if attention_backend == "flex":
             compile_flex_attention(package_name="lgatr")
