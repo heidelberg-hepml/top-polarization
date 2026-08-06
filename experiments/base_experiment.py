@@ -651,9 +651,11 @@ class BaseExperiment:
             ):
                 dt_corrected = time.time() - self.training_start_time_corrected
                 dt_estimate = dt_corrected * self.cfg.training.iterations / (step + 1)
+
+                current_loss = self.train_loss[-1] if self.train_loss else float("nan")
                 LOGGER.info(
                     f"Finished iteration {step + 1} after {dt:.2f}s, "
-                    f"current training loss: {self.train_loss[-1]:.3f}, "
+                    f"current training loss: {current_loss:.3f}, "
                     f"training time estimate: {dt_estimate / 60:.2f}min "
                     f"= {dt_estimate / 60**2:.2f}h"
                 )
