@@ -1,5 +1,5 @@
 # experiment management
-hydra-core
+hydra-core>1
 pytest
 pre-commit>=3.7
 mlflow-skinny # can optionally install extras, see https://pypi.org/project/mlflow-skinny/
@@ -8,6 +8,7 @@ mlflow-skinny # can optionally install extras, see https://pypi.org/project/mlfl
 numpy
 matplotlib
 scikit-learn
+setuptools<82
 
 # data loading
 awkward
