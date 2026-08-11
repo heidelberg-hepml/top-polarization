@@ -15,12 +15,12 @@ from experiments.mlflow import log_mlflow
 from experiments.tagging.dataset import (
     DownTaggingDataset,
     PolarizationDataset,
-    TTSmeftDataset,
     PseudoscalarDataset,
+    TTSmeftDataset,
     VBFDataset,
 )
 from experiments.tagging.embedding import embed_tagging_data, get_num_tagging_features
-from experiments.tagging.likelihood import get_polarization, get_asymmetry
+from experiments.tagging.likelihood import get_asymmetry, get_polarization
 from experiments.tagging.plots import plot_mixer
 
 
@@ -680,7 +680,8 @@ class PolarizationExperiment(TaggingExperiment):
             pol = get_polarization(self.results[set_label], exp="polarization")
             LOGGER.info(
                 f"Degree of polarization: "
-                f"{pol['pol_l'][-1]:.3f} (L) and {pol['pol_r'][-1]:.3f} (R) at efficiency {pol['efficiency'][-1]}"
+                f"{pol['pol_l'][-1]:.3f} (L) and {pol['pol_r'][-1]:.3f} (R) at efficiency "
+                f"{pol['efficiency'][-1]}"
             )
             self.results[set_label]["efficiencies"] = pol["efficiency"]
             self.results[set_label]["pol_l"] = pol["pol_l"]
@@ -693,13 +694,13 @@ class TTSmeftExperiment(TaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.num_outputs = 1
-        self.extra_scalars = 7  # Differentiate between hadronic top, leptonic top, lepton, subjets, and constituents
+        self.extra_scalars = 7  # hadronic top, leptonic top, lepton, 3 subjets, and constituents
         if self.cfg.data.pid:
             self.extra_scalars += 6
 
     def _init_experiment(self, run_name_add=None):
         run_name_add = [
-            f"dataset=ttsmeft",
+            "dataset=ttsmeft",
             f"mass={self.cfg.data.mass_window}",
             f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
             f"lr={self.cfg.training.lr}",
@@ -729,28 +730,50 @@ class TTSmeftExperiment(TaggingExperiment):
         )
 
         def _coeffs(filename):
-            m = re.search(r'_re_(-?[\d]+(?:p[\d]+)?)_im_(-?[\d]+(?:p[\d]+)?)_', os.path.basename(filename))
+            m = re.search(
+                r"_re_(-?[\d]+(?:p[\d]+)?)_im_(-?[\d]+(?:p[\d]+)?)_", os.path.basename(filename)
+            )
             if m is None:
                 return None, None
-            return float(m.group(1).replace('p', '.')), float(m.group(2).replace('p', '.'))
+            return float(m.group(1).replace("p", ".")), float(m.group(2).replace("p", "."))
 
         if self.cfg.data.lbl_0 == "sm":
             null_files = [f for f in all_files if "re_0_im_0_" in f]
         elif self.cfg.data.lbl_0 == "neg":
             if self.cfg.data.bsm == "re":
-                null_files = [f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] < 0 and c[1] == 0]
+                null_files = [
+                    f
+                    for f in all_files
+                    if (c := _coeffs(f))[0] is not None and c[0] < 0 and c[1] == 0
+                ]
             elif self.cfg.data.bsm == "im":
-                null_files = [f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] == 0 and c[1] < 0]
+                null_files = [
+                    f
+                    for f in all_files
+                    if (c := _coeffs(f))[0] is not None and c[0] == 0 and c[1] < 0
+                ]
             elif self.cfg.data.bsm == "mix":
-                null_files = [f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] < 0 and c[1] < 0]
+                null_files = [
+                    f
+                    for f in all_files
+                    if (c := _coeffs(f))[0] is not None and c[0] < 0 and c[1] < 0
+                ]
         if self.cfg.data.bsm == "re":
-            pos_files = [f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] > 0 and c[1] == 0]
+            pos_files = [
+                f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] > 0 and c[1] == 0
+            ]
         elif self.cfg.data.bsm == "im":
-            pos_files = [f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] == 0 and c[1] > 0]
+            pos_files = [
+                f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] == 0 and c[1] > 0
+            ]
         elif self.cfg.data.bsm == "mix":
-            pos_files = [f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] > 0 and c[1] > 0]
+            pos_files = [
+                f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] > 0 and c[1] > 0
+            ]
         else:
-            raise ValueError(f"Unknown type for tt SMEFT data '{self.cfg.data.bsm}' (expected 're', 'im', or 'mix')")
+            raise ValueError(
+                f"Unknown type for tt SMEFT data '{self.cfg.data.bsm}' (expected 're', 'im', or 'mix')"
+            )
 
         filenames = {
             0: null_files,
@@ -765,20 +788,36 @@ class TTSmeftExperiment(TaggingExperiment):
         dataset_kwargs = {
             "length": getattr(self.cfg.data, "length", None),
             "pid": self.cfg.data.pid,
+            "include_ps": getattr(self.cfg.data, "include_ps", False),
             "use_cache": self.cfg.data.use_cache,
         }
         self._init_data(TTSmeftDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
+
+    def _cpflip_batch(self, fourmomenta, scalars, ptr, label):
+        new_fourmomenta = torch.cat(
+            [fourmomenta, fourmomenta * fourmomenta.new_tensor([1, -1, -1, -1])], dim=0
+        )  # Flip momentum
+        scalar_signs = scalars.new_ones(scalars.shape[1])
+        scalar_signs[6] = -1  # Lepton charge
+        if self.cfg.data.pid:
+            scalar_signs[7] = -1  # Charge from PID
+        if getattr(self.cfg.data, "include_ps", False):
+            scalar_signs[-1] = -1  # Pseudoscalars
+        new_scalars = torch.cat([scalars, scalars * scalar_signs], dim=0)
+        new_label = torch.cat([label, 1 - label], dim=0)
+        new_ptr = torch.cat([ptr, ptr[1:] + ptr[-1]])
+        return new_fourmomenta, new_scalars, new_ptr, new_label
 
     def _get_ypred_and_label(self, batch):
         fourmomenta, scalars, ptr, label, *_ = self._extract_batch(batch)
 
         if self.cfg.data.cpflip_batch:
-            fourmomenta = torch.cat([fourmomenta, fourmomenta * fourmomenta.new_tensor([1, -1, -1, -1])], dim=0) # Flip momentum
-            scalar_signs = scalars.new_ones(scalars.shape[1])
-            scalar_signs[-6] = -1 # Charge from PID
-            scalars = torch.cat([scalars, scalars * scalar_signs], dim=0)
-            label = torch.cat([label, 1 - label], dim=0)
-            ptr = torch.cat([ptr, ptr[1:] + ptr[-1]])
+            fourmomenta, scalars, ptr, label = self._cpflip_batch(
+                fourmomenta,
+                scalars,
+                ptr,
+                label,
+            )
 
         embedding = embed_tagging_data(
             fourmomenta,
@@ -798,7 +837,6 @@ class TTSmeftExperiment(TaggingExperiment):
         assert mode in ["val", "eval"]
 
         metrics = super()._evaluate_single(loader, title, mode, step)
-        momenta = {}
 
         # predictions
         mom_hadtop, mom_b, mom_hard, mom_soft, mom_leptop, mom_lep, charge, labels = (
@@ -813,12 +851,14 @@ class TTSmeftExperiment(TaggingExperiment):
         )
         self.model.eval()
         for batch in loader:
-            fourmomenta, scalars, _, _ = self._extract_batch(batch)
+            fourmomenta, scalars, ptr, label = self._extract_batch(batch)
             if self.cfg.data.cpflip_batch:
-                fourmomenta = torch.cat([fourmomenta, fourmomenta * fourmomenta.new_tensor([1, -1, -1, -1])], dim=0) # Flip momentum
-                scalar_signs = scalars.new_ones(scalars.shape[1])
-                scalar_signs[-6] = -1 # Charge from PID
-                scalars = torch.cat([scalars, scalars * scalar_signs], dim=0)
+                fourmomenta, scalars, ptr, label = self._cpflip_batch(
+                    fourmomenta,
+                    scalars,
+                    ptr,
+                    label,
+                )
             _, label, _, _ = self._get_ypred_and_label(batch)
             mask_hadtop, mask_b, mask_hard, mask_soft, mask_leptop, mask_lep = (
                 (scalars[:, 0] == 1),
@@ -849,16 +889,24 @@ class TTSmeftExperiment(TaggingExperiment):
             torch.cat(labels).cpu(),
         )
 
-        eps = torch.linalg.det(torch.stack([mom_hadtop, mom_leptop, mom_soft, mom_lep], dim=1)) / 173.**4
-        eps_null = eps[labels == 0]; eps_pos = eps[labels == 1]
+        eps = (
+            torch.linalg.det(torch.stack([mom_hadtop, mom_leptop, mom_soft, mom_lep], dim=1))
+            / 173.0**4
+        )
+        eps_null = eps[labels == 0]
+        eps_pos = eps[labels == 1]
         LOGGER.info(
             f"Epsilon information for entire {title} dataset:\n "
-            f"Epsilon tensor mean: {eps.mean().cpu().item():.3e}\n " 
-            f"Label 0 epsilon tensor mean: {eps_null.mean().cpu().item():.3e}\n " 
-            f"Label 1 epsilon tensor mean: {eps_pos.mean().cpu().item():.3e}" 
+            f"Epsilon tensor mean: {eps.mean().cpu().item():.3e}\n "
+            f"Label 0 epsilon tensor mean: {eps_null.mean().cpu().item():.3e}\n "
+            f"Label 1 epsilon tensor mean: {eps_pos.mean().cpu().item():.3e}"
         )
-        asym_null = (torch.sum(eps_null > 1e-6) - torch.sum(eps_null < -1e-6)) / (torch.sum(eps_null > 1e-6) + torch.sum(eps_null < -1e-6))
-        asym_pos = (torch.sum(eps_pos > 1e-6) - torch.sum(eps_pos < -1e-6)) / (torch.sum(eps_pos > 1e-6) + torch.sum(eps_pos < -1e-6))
+        asym_null = (torch.sum(eps_null > 1e-6) - torch.sum(eps_null < -1e-6)) / (
+            torch.sum(eps_null > 1e-6) + torch.sum(eps_null < -1e-6)
+        )
+        asym_pos = (torch.sum(eps_pos > 1e-6) - torch.sum(eps_pos < -1e-6)) / (
+            torch.sum(eps_pos > 1e-6) + torch.sum(eps_pos < -1e-6)
+        )
         LOGGER.info(
             f"Epsilon asymmetry in batch for {title} dataset: "
             f"{asym_null:.3f} (label 0) and {asym_pos:.3f} (label 1) where the c_tG operator has a "

@@ -272,12 +272,14 @@ class LGATrWrapper(nn.Module):
         framesnet,
         out_channels,
         output="sum",
+        include_ps=False,
         mean_aggregation=False,
         use_amp=False,
         attention_backend="xformers",
     ):
         super().__init__()
         self.output = output
+        self.include_ps = include_ps
         self.use_amp = use_amp
         self.attention_backend = attention_backend
         self.net = net(out_mv_channels=out_channels)
@@ -366,7 +368,14 @@ class LGATrWrapper(nn.Module):
         )
 
         mv = embed_vector(fourmomenta).unsqueeze(-2)
-        s = scalars if scalars.shape[-1] > 0 else None
+
+        if self.include_ps:
+            ps_idx = embedding["scalars"].size(-1) - 1
+            pseudoscalars = scalars[..., ps_idx]
+            s = torch.cat([scalars[..., :ps_idx], scalars[..., ps_idx + 1 :]], dim=-1)
+            mv[..., -1] = pseudoscalars.unsqueeze(-1)
+        else:
+            s = scalars if scalars.shape[-1] > 0 else None
 
         with torch.autocast("cuda", enabled=self.use_amp):
             mv_outputs, _ = self.net(mv, s, **mask_kwarg)

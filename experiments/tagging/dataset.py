@@ -117,6 +117,7 @@ class HEPTaggingDataset(TaggingDataset):
         seed=12345,
         split_fracs=(0.8, 0.1, 0.1),
         shuffle=True,
+        use_cache=True,
     ):
         super().__init__(length=length)
         self.seed = seed
@@ -124,6 +125,7 @@ class HEPTaggingDataset(TaggingDataset):
         self.shuffle = shuffle
         self.filename = None
         self.cache_key = {}
+        self.use_cache = use_cache
 
     @staticmethod
     def pid_encoding(pids: torch.Tensor) -> torch.Tensor:
@@ -286,11 +288,10 @@ class DownTaggingDataset(HEPTaggingDataset):
         use_ditop=False,
         use_cache=True,
     ):
-        super().__init__(length=length)
+        super().__init__(length=length, use_cache=use_cache)
         self.tag = tag
         self.include_pid = pid
         self.use_ditop = use_ditop
-        self.use_cache = use_cache
 
     def _cache_key_gen(self, target_length):
         cache_key = (
@@ -472,10 +473,9 @@ class PolarizationDataset(HEPTaggingDataset):
         use_ditop=False,
         use_cache=True,
     ):
-        super().__init__(length=length)
+        super().__init__(length=length, use_cache=use_cache)
         self.include_pid = pid
         self.use_ditop = use_ditop
-        self.use_cache = use_cache
 
     def _cache_key_gen(self, target_length):
         cache_key = (
@@ -652,11 +652,12 @@ class TTSmeftDataset(HEPTaggingDataset):
         self,
         length=-1,
         pid=False,
+        include_ps=False,
         use_cache=True,
     ):
-        super().__init__(length=length)
+        super().__init__(length=length, use_cache=use_cache)
         self.include_pid = pid
-        self.use_cache = use_cache
+        self.include_ps = include_ps
 
     def _cache_key_gen(self, target_length):
         cache_key = (
@@ -678,7 +679,7 @@ class TTSmeftDataset(HEPTaggingDataset):
         }
         num_events = len(parquet[0]) + len(parquet[1])
         return parquet, num_events
-    
+
     def _fill_data(self, parquet, network_dtype, momentum_dtype, balance=True):
         data_list = []
         indices = []
@@ -714,7 +715,7 @@ class TTSmeftDataset(HEPTaggingDataset):
         )
 
         return data_list, indices
-    
+
     def _build_event_graph(self, event, label, network_dtype, momentum_dtype):
         top_had = event["TopHad"]
         subjets = event["Subjets"]
@@ -822,13 +823,20 @@ class TTSmeftDataset(HEPTaggingDataset):
         # Lepton: [0, 0, 0, 0, 0, 0, charge]
         category[4 + len(const_parents_sorted) + 1, 6] = lep_charge
 
+        scalars = category
         if self.include_pid:
             pid_features = torch.zeros(6 + n_constituents, 6, dtype=network_dtype)
             pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
             pid_features[4 : 4 + n_constituents] = pid_encoded.to(network_dtype)
-            scalars = torch.cat([category, pid_features], dim=-1)
-        else:
-            scalars = category
+            scalars = torch.cat([scalars, pid_features], dim=-1)
+        if self.include_ps:
+            pseudoscalars = torch.tensor([], dtype=network_dtype)  # Array (n_pseudoscalars,)
+            # the pseudoscalars are inserted in the 16-vector of the GA for L-GATr
+            # max of 6 pseudoscalars for now (6 class tokens), to avoid new tokens
+            n_pseudoscalars = len(pseudoscalars)
+            assert n_pseudoscalars <= 6
+            pseudoscalars = F.pad(pseudoscalars, (0, 6 + n_constituents - n_pseudoscalars))
+            scalars = torch.cat([scalars, pseudoscalars.unsqueeze(1)], dim=-1)
 
         return Data(x=sequence, scalars=scalars, label=label)
 
@@ -847,9 +855,8 @@ class PseudoscalarDataset(HEPTaggingDataset):
         pid=False,
         use_cache=True,
     ):
-        super().__init__(length=length)
+        super().__init__(length=length, use_cache=use_cache)
         self.include_pid = pid
-        self.use_cache = use_cache
 
     def _cache_key_gen(self, target_length):
         cache_key = (
@@ -1083,8 +1090,7 @@ class VBFDataset(HEPTaggingDataset):
         length=-1,
         use_cache=True,
     ):
-        super().__init__(length=length)
-        self.use_cache = use_cache
+        super().__init__(length=length, use_cache=use_cache)
 
     def _cache_key_gen(self, target_length):
         cache_key = (
