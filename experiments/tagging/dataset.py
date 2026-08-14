@@ -69,10 +69,13 @@ class TaggingDataset(torch.utils.data.Dataset):
     def _save_to_cache(self, cache_key, data, indices, data_dir):
         cache_hash = self._hash_cache_key(cache_key)
         path = self._cache_path(cache_hash, data_dir)
-        torch.save(
-            {"key": cache_key, "data": data, "indices": indices},
-            path,
-        )
+        try:
+            torch.save(
+                {"key": cache_key, "data": data, "indices": indices},
+                path,
+            )
+        except Exception as e:
+            LOGGER.warning(f"[{self.__class__.__name__}] failed to save cache to {path}: {e}")
 
     def _load_from_cache(self, cache_key, data_dir):
         cache_hash = self._hash_cache_key(cache_key)
