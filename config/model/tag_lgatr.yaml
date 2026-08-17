@@ -27,5 +27,9 @@ net:
   nonlinearity: gelu
   mlp_ratio: 2
 
+ # Equivariant w.r.t. the full Lorentz group
+ primitives:
+  subgroup: false
+
 defaults:
  - framesnet: identity
