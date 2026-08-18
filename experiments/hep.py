@@ -1,4 +1,5 @@
 import torch
+from itertools import permutations
 
 EPS = 1e-10
 CUTOFF = 10
@@ -54,6 +55,37 @@ def lorentz_boost(particle, frame, eps=EPS):
     pprime = torch.where(mask.unsqueeze(1), pprime, p)
 
     return torch.cat([Eprime.unsqueeze(1), pprime], dim=1)
+
+
+def eps_tensor(*p, dtype, norm=173**4):
+    def permutation_sign(perm):
+        n = len(perm)
+        inversions = 0
+        for i in range(n):
+            for j in range(i + 1, n):
+                if perm[i] > perm[j]:
+                    inversions += 1
+        return 1.0 if inversions % 2 == 0 else -1.0
+    
+    def levi_cevita_tensor(dim):   
+        arr=torch.zeros(tuple([dim for _ in range(dim)]), dtype=dtype)
+        for x in permutations(tuple(range(dim))):
+            arr[x] = permutation_sign(x)
+        return arr
+
+    N = len(p)
+    if N != 4:
+        raise ValueError("Only 4D Levi-Civita tensor is supported.")
+    eps = levi_cevita_tensor(N)
+    g_munu = torch.diag(torch.tensor([1, -1, -1, -1], dtype=dtype))
+
+    torch.einsum('ij, j -> i', g_munu, p[0].squeeze(0))
+    return torch.einsum('ijkl, i, j, k, l -> ', 
+                        eps, 
+                        torch.einsum('ij, j -> i', g_munu, p[0].squeeze(0)),
+                        torch.einsum('ij, j -> i', g_munu, p[1].squeeze(0)),
+                        torch.einsum('ij, j -> i', g_munu, p[2].squeeze(0)),
+                        torch.einsum('ij, j -> i', g_munu, p[3].squeeze(0))) / norm
 
 
 def get_pt(p):
