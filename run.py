@@ -11,8 +11,8 @@ from omegaconf import OmegaConf
 from experiments.tagging.experiment import (
     DownTaggingExperiment,
     PolarizationExperiment,
-    TTSmeftExperiment,
     PseudoscalarExperiment,
+    TTSmeftExperiment,
     VBFExperiment,
 )
 

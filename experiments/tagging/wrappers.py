@@ -42,7 +42,7 @@ class TaggerWrapper(nn.Module):
             )
             self.framesnet.equivectors.init_standardization(fourmomenta_reduced, ptr)
 
-    def forward(self, embedding):
+    def forward(self, embedding, val=False):
         # extract embedding
         fourmomenta_withspurions = embedding["fourmomenta"]
         scalars_withspurions = embedding["scalars"]
@@ -157,7 +157,7 @@ class TransformerWrapper(AggregatedTaggerWrapper):
         if attention_backend == "flex":
             compile_flex_attention(package_name="lloca")
 
-    def forward(self, embedding):
+    def forward(self, embedding, val=False):
         # precompute attention mask to avoid cudaStreamSynchronize
         # from .tolist() in get_xformers_attention_mask
         batch_withspurions = embedding["batch"]
@@ -291,7 +291,7 @@ class LGATrWrapper(nn.Module):
         if attention_backend == "flex":
             compile_flex_attention(package_name="lgatr")
 
-    def forward(self, embedding):
+    def forward(self, embedding, val=False):
         # extract embedding (includes spurions)
         fourmomenta = embedding["fourmomenta"]
         scalars = torch.cat([embedding["scalars"], embedding["tagging_features"]], dim=-1)
@@ -392,7 +392,7 @@ class LGATrWrapper(nn.Module):
             scalar_per_graph = out_s[is_global]
             pseudo_per_graph = out_p[is_global]
         tracker = {}
-        if label is not None:
+        if val:
             for lbl in [0, 1]:
                 mask = label == lbl
                 if mask.any():
@@ -447,7 +447,7 @@ class LGATrSlimWrapper(nn.Module):
         if attention_backend == "flex":
             compile_flex_attention(package_name="lgatr")
 
-    def forward(self, embedding):
+    def forward(self, embedding, val=False):
         # extract embedding (includes spurions)
         fourmomenta = embedding["fourmomenta"]
         scalars = torch.cat([embedding["scalars"], embedding["tagging_features"]], dim=-1)
@@ -564,7 +564,7 @@ class LGATrSlimPseudoWrapper(nn.Module):
         if attention_backend == "flex":
             compile_flex_attention(package_name="lgatr")
 
-    def forward(self, embedding):
+    def forward(self, embedding, val=False):
         # extract embedding (includes spurions)
         fourmomenta = embedding["fourmomenta"]
         scalars = torch.cat([embedding["scalars"], embedding["tagging_features"]], dim=-1)
@@ -662,7 +662,7 @@ class LGATrSlimPseudoWrapper(nn.Module):
             scalar_per_graph = out_s[0, :, :][is_global]
             pseudo_per_graph = out_p[0, :, :][is_global]
         tracker = {}
-        if label is not None:
+        if val:
             for lbl in [0, 1]:
                 mask = label == lbl
                 if mask.any():

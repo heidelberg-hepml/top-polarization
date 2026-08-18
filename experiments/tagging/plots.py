@@ -33,18 +33,16 @@ def plot_mixer(cfg, plot_path, title, plot_dict):
                 plot_metric(
                     out,
                     [plot_dict["scalar_output_0"], plot_dict["scalar_output_1"]],
-                    "Scalar output",
+                    "Scalar output (val)",
                     labels=["label=0", "label=1"],
-                    ema=True,
                     # yrange=[-0.5, 0.5],
                 )
             if "pseudoscalar_output_0" in plot_dict:
                 plot_metric(
                     out,
                     [plot_dict["pseudoscalar_output_0"], plot_dict["pseudoscalar_output_1"]],
-                    "Pseudoscalar output",
+                    "Pseudoscalar output (val)",
                     labels=["label=0", "label=1"],
-                    ema=True,
                     # yrange=[-0.5, 0.5],
                 )
 

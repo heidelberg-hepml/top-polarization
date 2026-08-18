@@ -2,6 +2,7 @@ import glob
 import os
 import re
 import time
+from collections import defaultdict
 
 import numpy as np
 import torch
@@ -228,15 +229,22 @@ class TaggingExperiment(BaseExperiment):
 
         # predictions
         labels_true, labels_predict = [], []
+        trackers = defaultdict(list)
         self.model.eval()
         for batch in loader:
-            y_pred, label, _, _ = self._get_ypred_and_label(batch)
+            y_pred, label, tracker, _ = self._get_ypred_and_label(batch, val=(mode == "val"))
             labels_true.append(label)
             labels_predict.append(y_pred)
+            for key, value in tracker.items():
+                trackers[key].append(value.float().mean().item())
         labels_true, labels_predict = (
             torch.cat(labels_true).cpu().float(),
             torch.cat(labels_predict).cpu().float(),
         )
+
+        # tracked model outputs, averaged over the full dataset
+        for key, values in trackers.items():
+            metrics[key] = float(np.mean(values))
 
         # bce loss
         metrics["loss"] = self.loss(labels_predict, labels_true).item()
@@ -375,8 +383,10 @@ class TaggingExperiment(BaseExperiment):
             plot_dict["grad_norm"] = torch.stack(self.grad_norm_train).cpu()
             plot_dict["grad_norm_frames"] = torch.stack(self.grad_norm_frames).cpu()
             plot_dict["grad_norm_net"] = torch.stack(self.grad_norm_net).cpu()
-            for key, value in self.train_metrics.items():
-                plot_dict[key] = value
+            for metric_dict in [self.train_metrics, self.val_metrics]:
+                for key, value in metric_dict.items():
+                    if len(value) > 0:
+                        plot_dict[key] = value
         plot_mixer(self.cfg, plot_path, title, plot_dict)
 
     def _init_loss(self):
@@ -403,6 +413,9 @@ class TaggingExperiment(BaseExperiment):
         else:
             metrics = self._evaluate_single(self.val_loader, "val", mode="val", step=step)
         self.val_loss.append(metrics["loss"])
+        for key in self.val_metrics:
+            if key in metrics:
+                self.val_metrics[key].append(metrics[key])
         return metrics["loss"]
 
     def _batch_loss(self, batch):
@@ -420,7 +433,7 @@ class TaggingExperiment(BaseExperiment):
         label = batch.label.to(self.dtype)
         return fourmomenta, scalars, ptr, label
 
-    def _get_ypred_and_label(self, batch):
+    def _get_ypred_and_label(self, batch, val=False):
         fourmomenta, scalars, ptr, label, *_ = self._extract_batch(batch)
         embedding = embed_tagging_data(
             fourmomenta,
@@ -430,7 +443,7 @@ class TaggingExperiment(BaseExperiment):
         )
         embedding["num_graphs"] = label.shape[0]
         embedding["label"] = label
-        y_pred, tracker, frames = self.model(embedding)
+        y_pred, tracker, frames = self.model(embedding, val)
         if isinstance(self.loss, torch.nn.BCEWithLogitsLoss) and self.model.output != "split":
             y_pred = y_pred[:, 0]
         return y_pred, label, tracker, frames
@@ -808,7 +821,7 @@ class TTSmeftExperiment(TaggingExperiment):
         new_ptr = torch.cat([ptr, ptr[1:] + ptr[-1]])
         return new_fourmomenta, new_scalars, new_ptr, new_label
 
-    def _get_ypred_and_label(self, batch):
+    def _get_ypred_and_label(self, batch, val=False):
         fourmomenta, scalars, ptr, label, *_ = self._extract_batch(batch)
 
         if self.cfg.data.cpflip_batch:
@@ -827,7 +840,7 @@ class TTSmeftExperiment(TaggingExperiment):
         )
         embedding["num_graphs"] = label.shape[0]
         embedding["label"] = label
-        y_pred, tracker, frames = self.model(embedding)
+        y_pred, tracker, frames = self.model(embedding, val)
         if isinstance(self.loss, torch.nn.BCEWithLogitsLoss) and self.model.output != "split":
             y_pred = y_pred[:, 0]
         return y_pred, label, tracker, frames
