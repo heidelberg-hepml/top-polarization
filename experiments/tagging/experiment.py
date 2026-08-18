@@ -801,7 +801,7 @@ class TTSmeftExperiment(TaggingExperiment):
         dataset_kwargs = {
             "length": getattr(self.cfg.data, "length", None),
             "pid": self.cfg.data.pid,
-            "include_ps": getattr(self.cfg.data, "include_ps", False),
+            "include_ps": getattr(self.cfg.model, "include_ps", False),
             "use_cache": self.cfg.data.use_cache,
         }
         self._init_data(TTSmeftDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
@@ -814,7 +814,7 @@ class TTSmeftExperiment(TaggingExperiment):
         scalar_signs[6] = -1  # Lepton charge
         if self.cfg.data.pid:
             scalar_signs[7] = -1  # Charge from PID
-        if getattr(self.cfg.data, "include_ps", False):
+        if getattr(self.cfg.model, "include_ps", False):
             scalar_signs[-1] = -1  # Pseudoscalars
         new_scalars = torch.cat([scalars, scalars * scalar_signs], dim=0)
         new_label = torch.cat([label, 1 - label], dim=0)
