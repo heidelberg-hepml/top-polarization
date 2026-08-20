@@ -10,7 +10,8 @@ from torch_geometric.data import Data
 from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr
 from torch_geometric.data.storage import GlobalStorage
 
-from experiments.hep import PtPhiEtaM_to_EPPP, eps_tensor
+from experiments.hep import PtPhiEtaM_to_EPPP
+from experiments.tagging.pseudoscalars import eps_tensor, spin_correlation_nr
 from experiments.logger import LOGGER
 
 torch.serialization.add_safe_globals(
@@ -834,7 +835,8 @@ class TTSmeftDataset(HEPTaggingDataset):
             scalars = torch.cat([scalars, pid_features], dim=-1)
         if self.include_ps:
             pseudo_eps = eps_tensor(jet_four, toplep_four, subjet_four_sorted[1], lep_four, dtype=momentum_dtype)
-            pseudoscalars = torch.tensor([pseudo_eps], dtype=network_dtype)  # Array (n_pseudoscalars,)
+            pseudo_nr = spin_correlation_nr(jet_four, toplep_four, subjet_four_sorted[1], lep_four, lep_charge, dtype=momentum_dtype)
+            pseudoscalars = torch.tensor([pseudo_eps, pseudo_nr], dtype=network_dtype)  # Array (n_pseudoscalars,)
             # the pseudoscalars are inserted in the 16-vector of the GA for L-GATr
             # max of 6 pseudoscalars for now (6 class tokens), to avoid new tokens
             n_pseudoscalars = len(pseudoscalars)
