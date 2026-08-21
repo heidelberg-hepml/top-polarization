@@ -834,8 +834,10 @@ class TTSmeftDataset(HEPTaggingDataset):
             pid_features[4 : 4 + n_constituents] = pid_encoded.to(network_dtype)
             scalars = torch.cat([scalars, pid_features], dim=-1)
         if self.include_ps:
-            pseudo_eps = eps_tensor(jet_four, toplep_four, subjet_four_sorted[1], lep_four, dtype=momentum_dtype)
-            pseudo_nr = spin_correlation_nr(jet_four, toplep_four, subjet_four_sorted[1], lep_four, lep_charge, dtype=momentum_dtype)
+            down_leading = torch.isin(subjet_tags[subjet_order[1]], torch.tensor([-3,-1,1,3]))
+            down_four = subjet_four_sorted[1] if down_leading else subjet_four_sorted[2]
+            pseudo_eps = eps_tensor(jet_four, toplep_four, down_four, lep_four, dtype=momentum_dtype)
+            pseudo_nr = spin_correlation_nr(jet_four, toplep_four, down_four, lep_four, lep_charge, dtype=momentum_dtype)
             pseudoscalars = torch.tensor([pseudo_eps, pseudo_nr], dtype=network_dtype)  # Array (n_pseudoscalars,)
             # the pseudoscalars are inserted in the 16-vector of the GA for L-GATr
             # max of 6 pseudoscalars for now (6 class tokens), to avoid new tokens

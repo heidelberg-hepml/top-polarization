@@ -35,20 +35,19 @@ def plot_loss(file, losses, lr=None, labels=None, logy=True):
     plt.close()
 
 
-def plot_metric(
-    file, metrics, metric_label, labels=None, logy=False, metrics_std=None, ema=False, yrange=None
-):
+def plot_metric(file, metrics, metric_label, labels=None, logy=False, val_metric=False, cfg=None, metrics_std=None, ema=False, yrange=None):
     labels = [None for _ in range(len(metrics))] if labels is None else labels
     fig, ax = plt.subplots()
+    its_scale = cfg.training.validate_every_n_steps if val_metric else 1
 
     if metrics_std is not None:
         for metric, metric_std, label in zip(metrics, metrics_std, labels, strict=False):
             iterations = range(1, len(metric) + 1)
             if len(metric) == len(iterations):
-                its = iterations
+                its = np.array(iterations) * its_scale
             else:
                 frac = len(metrics[0]) / len(metric)
-                its = np.arange(1, len(metric) + 1) * frac
+                its = np.arange(1, len(metric) + 1) * frac * its_scale
             ax.plot(its, metric, label=label)
             metric_low = np.array(metric) - np.array(metric_std)
             metric_high = np.array(metric) + np.array(metric_std)
@@ -57,10 +56,10 @@ def plot_metric(
         for metric, label in zip(metrics, labels, strict=False):
             iterations = range(1, len(metric) + 1)
             if len(metric) == len(iterations):
-                its = iterations
+                its = np.array(iterations) * its_scale
             else:
                 frac = len(metrics[0]) / len(metric)
-                its = np.arange(1, len(metric) + 1) * frac
+                its = np.arange(1, len(metric) + 1) * frac * its_scale
             if ema:
                 metric = np.array(metric)
                 mean = np.mean(metric)
