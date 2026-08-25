@@ -360,6 +360,7 @@ class TaggingExperiment(BaseExperiment):
 
     def plot(self):
         plot_path = os.path.join(self.cfg.run_dir, f"plots_{self.cfg.run_idx}")
+        preds_path = os.path.join(self.cfg.run_dir, f"preds_{self.cfg.run_idx}")
         os.makedirs(plot_path, exist_ok=True)
         title = f"{type(self.model.net).__name__} - {self.cfg.exp_name}"
         LOGGER.info(f"Creating plots in {plot_path}")
@@ -387,7 +388,7 @@ class TaggingExperiment(BaseExperiment):
                 for key, value in metric_dict.items():
                     if len(value) > 0:
                         plot_dict[key] = value
-        plot_mixer(self.cfg, plot_path, title, plot_dict)
+        plot_mixer(self.cfg, plot_path, preds_path, title, plot_dict)
 
     def _init_loss(self):
         if self.model.output == "split":
