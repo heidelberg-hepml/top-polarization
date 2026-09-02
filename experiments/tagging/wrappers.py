@@ -544,6 +544,7 @@ class LGATrSlimPseudoWrapper(nn.Module):
         framesnet,
         out_channels,
         output="sum",
+        include_ps=False,
         mean_aggregation=False,
         attention_backend="xformers",
         use_amp=False,
@@ -552,6 +553,7 @@ class LGATrSlimPseudoWrapper(nn.Module):
         self.use_amp = use_amp
         self.attention_backend = attention_backend
         self.output = output
+        self.include_ps = include_ps
         out_c = {
             "out_p_channels": out_channels,
             "out_s_channels": out_channels,
@@ -633,12 +635,21 @@ class LGATrSlimPseudoWrapper(nn.Module):
 
         fourmomenta = fourmomenta.unsqueeze(0).to(scalars.dtype)
         scalars = scalars.unsqueeze(0)
-        pseudoscalars = torch.zeros(
-            *scalars.shape[:-1],
-            0,
-            dtype=scalars.dtype,
-            device=scalars.device,
-        )
+
+        if self.include_ps:
+            # the last entry of embedding["scalars"] holds the pseudoscalars,
+            # they are passed to the dedicated pseudoscalar channels of the network
+            ps_idx = embedding["scalars"].size(-1) - 1
+            p = scalars[..., ps_idx : ps_idx + 1]
+            s = torch.cat([scalars[..., :ps_idx], scalars[..., ps_idx + 1 :]], dim=-1)
+        else:
+            s = scalars
+            p = torch.zeros(
+                *scalars.shape[:-1],
+                0,
+                dtype=scalars.dtype,
+                device=scalars.device,
+            )
 
         mask_kwarg = get_attention_mask(
             batch,
@@ -647,8 +658,6 @@ class LGATrSlimPseudoWrapper(nn.Module):
         )
 
         v = fourmomenta.unsqueeze(-2)
-        s = scalars
-        p = pseudoscalars
 
         with torch.autocast("cuda", enabled=self.use_amp):
             _, out_s, out_p = self.net(v, s, p, **mask_kwarg)

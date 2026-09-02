@@ -11,8 +11,8 @@ from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr
 from torch_geometric.data.storage import GlobalStorage
 
 from experiments.hep import PtPhiEtaM_to_EPPP
-from experiments.tagging.pseudoscalars import eps_tensor, spin_correlation_nr
 from experiments.logger import LOGGER
+from experiments.tagging.pseudoscalars import eps_tensor, spin_correlation_nr
 
 torch.serialization.add_safe_globals(
     [DataEdgeAttr, DataTensorAttr, GlobalStorage]
@@ -671,6 +671,9 @@ class TTSmeftDataset(HEPTaggingDataset):
             self.seed,
             bool(self.shuffle),
             target_length,
+            # both change the scalar channels, so they have to invalidate the cache
+            bool(self.include_pid),
+            bool(self.include_ps),
         )
         return cache_key
 
@@ -764,7 +767,9 @@ class TTSmeftDataset(HEPTaggingDataset):
         lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
 
         b_idx = torch.argmax((subjet_tags == 5).to(torch.int)).item()
-        d_idx = torch.argmax(torch.isin(subjet_tags, torch.tensor([-3,-1,1,3])).to(torch.int)).item()
+        d_idx = torch.argmax(
+            torch.isin(subjet_tags, torch.tensor([-3, -1, 1, 3])).to(torch.int)
+        ).item()
         other_indices = [i for i in range(len(subjet_tags)) if i not in (b_idx, d_idx)]
         other_indices.sort(key=lambda idx: subjet_kin[idx, 0].item(), reverse=True)
         subjet_order = torch.tensor([b_idx, d_idx] + other_indices, dtype=torch.long)
@@ -835,9 +840,20 @@ class TTSmeftDataset(HEPTaggingDataset):
             pid_features[4 : 4 + n_constituents] = pid_encoded.to(network_dtype)
             scalars = torch.cat([scalars, pid_features], dim=-1)
         if self.include_ps:
-            pseudo_eps = eps_tensor(jet_four, toplep_four, subjet_four_sorted[1], lep_four, dtype=momentum_dtype)
-            pseudo_nr = spin_correlation_nr(jet_four, toplep_four, subjet_four_sorted[1], lep_four, lep_charge, dtype=momentum_dtype)
-            pseudoscalars = torch.tensor([pseudo_eps, pseudo_nr], dtype=network_dtype)  # Array (n_pseudoscalars,)
+            pseudo_eps = eps_tensor(
+                jet_four, toplep_four, subjet_four_sorted[1], lep_four, dtype=momentum_dtype
+            )
+            pseudo_nr = spin_correlation_nr(
+                jet_four,
+                toplep_four,
+                subjet_four_sorted[1],
+                lep_four,
+                lep_charge,
+                dtype=momentum_dtype,
+            )
+            pseudoscalars = torch.tensor(
+                [pseudo_eps, pseudo_nr], dtype=network_dtype
+            )  # Array (n_pseudoscalars,)
             # the pseudoscalars are inserted in the 16-vector of the GA for L-GATr
             # max of 6 pseudoscalars for now (6 class tokens), to avoid new tokens
             n_pseudoscalars = len(pseudoscalars)

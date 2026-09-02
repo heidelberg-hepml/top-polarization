@@ -4,10 +4,11 @@ exp_name: tt_smeft
 data:
   data_dir: data/tt_smeft/
   lbl_0: sm # [sm|neg]
-  bsm: im # [re|im|mix] 
+  bsm: im # [re|im|mix]
   cpflip_batch: true
   mass_window: loose
   pid: true
+  pseudoscalars: true
 
 defaults:
  - tagging

@@ -1,5 +1,6 @@
 _target_: experiments.tagging.wrappers.LGATrSlimPseudoWrapper
 output: sum
+include_ps: false
 mean_aggregation: false
 out_channels: null
 use_amp: false

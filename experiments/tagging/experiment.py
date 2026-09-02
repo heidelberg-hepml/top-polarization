@@ -711,6 +711,31 @@ class TTSmeftExperiment(TaggingExperiment):
         self.extra_scalars = 7  # hadronic top, leptonic top, lepton, 3 subjets, and constituents
         if self.cfg.data.pid:
             self.extra_scalars += 6
+        self.extra_ps = 0
+        if self.cfg.data.pseudoscalars:
+            # for later update we count the number of ps
+            # not used right now because we split them to have 1 per token
+            # max 6 for now
+            self.extra_ps += 2
+
+    def init_physics(self):
+        if self.extra_ps > 0:
+            modelname = self.cfg.model.net._target_.rsplit(".", 1)[-1]
+            if modelname == "LGATr":
+                self.cfg.model.include_ps = True
+            elif modelname == "LGATrSlimPseudo":
+                self.cfg.model.include_ps = True
+                self.cfg.model.net.in_p_channels = 1  # would be self.extra_ps
+            else:
+                # Use pseudoscalars as scalars for the transformer (no difference)
+                # and for LGATrSlim (breaks the P symmetry)
+                LOGGER.info(
+                    "The architecture is not compatible with pseudoscalars inputs. "
+                    "They will be passed as scalars instead."
+                )
+                self.extra_scalars += 1  # would be self.extra_ps
+
+        super().init_physics()
 
     def _init_experiment(self, run_name_add=None):
         run_name_add = [
@@ -802,7 +827,7 @@ class TTSmeftExperiment(TaggingExperiment):
         dataset_kwargs = {
             "length": getattr(self.cfg.data, "length", None),
             "pid": self.cfg.data.pid,
-            "include_ps": getattr(self.cfg.model, "include_ps", False),
+            "include_ps": self.cfg.data.pseudoscalars,
             "use_cache": self.cfg.data.use_cache,
         }
         self._init_data(TTSmeftDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
@@ -815,7 +840,7 @@ class TTSmeftExperiment(TaggingExperiment):
         scalar_signs[6] = -1  # Lepton charge
         if self.cfg.data.pid:
             scalar_signs[7] = -1  # Charge from PID
-        if getattr(self.cfg.model, "include_ps", False):
+        if self.cfg.data.pseudoscalars:
             scalar_signs[-1] = -1  # Pseudoscalars
         new_scalars = torch.cat([scalars, scalars * scalar_signs], dim=0)
         new_label = torch.cat([label, 1 - label], dim=0)
