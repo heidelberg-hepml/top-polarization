@@ -17,8 +17,11 @@ from experiments.tagging.dataset import (
     DownTaggingDataset,
     PolarizationDataset,
     PseudoscalarDataset,
+    TaggingDataset,
     TTSmeftDataset,
     VBFDataset,
+    relabel_ttsmeft_graph,
+    ttsmeft_graph_to_downtag_input,
 )
 from experiments.tagging.embedding import embed_tagging_data, get_num_tagging_features
 from experiments.tagging.likelihood import get_asymmetry, get_polarization
@@ -347,8 +350,13 @@ class TaggingExperiment(BaseExperiment):
             )
         return metrics
 
+    def _eval_output_suffix(self):
+        if not self.cfg.train and self.cfg.data.dataset_eval:
+            return f"_{self.cfg.data.dataset_eval}"
+        return ""
+
     def _save_metrics(self):
-        metric_path = os.path.join(self.cfg.run_dir, f"preds_{self.cfg.run_idx}")
+        metric_path = os.path.join(self.cfg.run_dir, f"preds_{self.cfg.run_idx}{self._eval_output_suffix()}")
         os.makedirs(metric_path, exist_ok=True)
         LOGGER.info(f"Saving labels in {metric_path}")
 
@@ -359,8 +367,9 @@ class TaggingExperiment(BaseExperiment):
         np.savetxt(file, labels)
 
     def plot(self):
-        plot_path = os.path.join(self.cfg.run_dir, f"plots_{self.cfg.run_idx}")
-        preds_path = os.path.join(self.cfg.run_dir, f"preds_{self.cfg.run_idx}")
+        suffix = self._eval_output_suffix()
+        plot_path = os.path.join(self.cfg.run_dir, f"plots_{self.cfg.run_idx}{suffix}")
+        preds_path = os.path.join(self.cfg.run_dir, f"preds_{self.cfg.run_idx}{suffix}")
         os.makedirs(plot_path, exist_ok=True)
         title = f"{type(self.model.net).__name__} - {self.cfg.exp_name}"
         LOGGER.info(f"Creating plots in {plot_path}")
@@ -504,6 +513,9 @@ class DownTaggingExperiment(TaggingExperiment):
             pol_experiment = PolarizationExperiment
             pol_experiment.init_data(self, mode=mode)
 
+        elif not self.cfg.train and self.cfg.data.dataset_eval == "ttsmeft":
+            self._init_ttsmeft_eval_data()
+
         else:
             if self.data:
                 return
@@ -533,6 +545,87 @@ class DownTaggingExperiment(TaggingExperiment):
             }
             self._init_data(DownTaggingDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
+    def _init_ttsmeft_eval_data(self):
+        if self.data:
+            return
+
+        if self.cfg.data.use_ditop:
+            raise NotImplementedError(
+                "data.dataset_eval='ttsmeft' currently only supports use_ditop=False."
+            )
+
+        data_dir = getattr(self.cfg.data, "ttsmeft_data_dir", "data/tt_smeft/")
+        mass_window = self.cfg.data.mass_window
+        lbl_0 = getattr(self.cfg.data, "ttsmeft_lbl_0", "sm")
+        bsm = getattr(self.cfg.data, "ttsmeft_bsm", "im")
+        length = getattr(self.cfg.data, "ttsmeft_length", -1)
+
+        filenames = TTSmeftExperiment._select_filenames(data_dir, mass_window, lbl_0, bsm)
+
+        ttsmeft_dataset = TTSmeftDataset(length=length, pid=True, include_ps=False, use_cache=True)
+        ttsmeft_dataset.load_data(
+            data_dir,
+            filenames,
+            network_float64=self.cfg.use_float64,
+            momentum_float64=self.cfg.data.momentum_float64,
+        )
+
+        test_indices = ttsmeft_dataset.get_subset("test").tolist()
+        ttsmeft_test_graphs = [ttsmeft_dataset.data_list[i] for i in test_indices]
+
+        network_dtype = torch.float64 if self.cfg.use_float64 else torch.float32
+        downtag_graphs, down_is_leading = [], []
+        for graph in ttsmeft_test_graphs:
+            downtag_graph, is_leading = ttsmeft_graph_to_downtag_input(
+                graph, self.cfg.data.pid, network_dtype
+            )
+            downtag_graphs.append(downtag_graph)
+            down_is_leading.append(is_leading)
+
+        self._ttsmeft_eval_graphs = ttsmeft_test_graphs
+        self._ttsmeft_eval_down_is_leading = down_is_leading
+        self._ttsmeft_eval_cache_path = os.path.join(
+            data_dir,
+            "cache",
+            f"ttsmeft_downtag_relabel_{ttsmeft_dataset._hash_cache_key(ttsmeft_dataset.cache_key)}.pt",
+        )
+
+        downtag_dataset = TaggingDataset()
+        downtag_dataset.data_list = downtag_graphs
+
+        self.data = downtag_dataset
+        self.data_train = downtag_dataset
+        self.data_val = downtag_dataset
+        self.data_test = downtag_dataset
+
+        LOGGER.info(
+            f"Built {len(downtag_graphs)} down-tagger-compatible events from the fixed tt_smeft "
+            f"test split ({data_dir}) for evaluation with data.dataset_eval='ttsmeft'"
+        )
+
+    def _save_ttsmeft_downtag_relabel(self):
+        labels_predict = self.results["test"]["labels_predict"]
+        predicted_down_is_leading = (labels_predict.round() == 1).tolist()
+
+        network_dtype = torch.float64 if self.cfg.use_float64 else torch.float32
+        momentum_dtype = torch.float64 if self.cfg.data.momentum_float64 else torch.float32
+
+        relabeled_graphs = [
+            relabel_ttsmeft_graph(graph, pred_leading != true_leading, network_dtype, momentum_dtype)
+            for graph, true_leading, pred_leading in zip(
+                self._ttsmeft_eval_graphs,
+                self._ttsmeft_eval_down_is_leading,
+                predicted_down_is_leading,
+            )
+        ]
+
+        os.makedirs(os.path.dirname(self._ttsmeft_eval_cache_path), exist_ok=True)
+        torch.save({"data_list": relabeled_graphs}, self._ttsmeft_eval_cache_path)
+        LOGGER.info(
+            f"Saved {len(relabeled_graphs)} down-tag-relabeled tt_smeft test events to "
+            f"{self._ttsmeft_eval_cache_path}"
+        )
+
     def evaluate(self):
         super().evaluate()
 
@@ -549,6 +642,9 @@ class DownTaggingExperiment(TaggingExperiment):
             self.results[set_label]["pol_r"] = pol["pol_r"]
             self.results[set_label]["score_l"] = pol["score_l"][-1]
             self.results[set_label]["score_r"] = pol["score_r"][-1]
+
+        if self.cfg.data.dataset_eval == "ttsmeft":
+            self._save_ttsmeft_downtag_relabel()
 
     @torch.no_grad()
     def _evaluate_single(self, loader, title, mode, step=None):
@@ -748,21 +844,19 @@ class TTSmeftExperiment(TaggingExperiment):
         ]
         super()._init_experiment(run_name_add=run_name_add)
 
-    def init_data(self, mode="train"):
-        if self.data:
-            return
-
-        if self.cfg.data.mass_window == "strict":
+    @staticmethod
+    def _select_filenames(data_dir, mass_window, lbl_0, bsm):
+        if mass_window == "strict":
             top_window = "165_190"
-        elif self.cfg.data.mass_window == "loose":
+        elif mass_window == "loose":
             top_window = "120_220"
         else:
-            raise ValueError(f"Unknown mass window definition '{self.cfg.data.mass_window}'")
+            raise ValueError(f"Unknown mass window definition '{mass_window}'")
 
         all_files = sorted(
             glob.glob(
                 os.path.join(
-                    self.cfg.data.data_dir,
+                    data_dir,
                     f"tt_ctg_*_{top_window}_train*.parquet",
                 )
             )
@@ -776,52 +870,57 @@ class TTSmeftExperiment(TaggingExperiment):
                 return None, None
             return float(m.group(1).replace("p", ".")), float(m.group(2).replace("p", "."))
 
-        if self.cfg.data.lbl_0 == "sm":
+        if lbl_0 == "sm":
             null_files = [f for f in all_files if "re_0_im_0_" in f]
-        elif self.cfg.data.lbl_0 == "neg":
-            if self.cfg.data.bsm == "re":
+        elif lbl_0 == "neg":
+            if bsm == "re":
                 null_files = [
                     f
                     for f in all_files
                     if (c := _coeffs(f))[0] is not None and c[0] < 0 and c[1] == 0
                 ]
-            elif self.cfg.data.bsm == "im":
+            elif bsm == "im":
                 null_files = [
                     f
                     for f in all_files
                     if (c := _coeffs(f))[0] is not None and c[0] == 0 and c[1] < 0
                 ]
-            elif self.cfg.data.bsm == "mix":
+            elif bsm == "mix":
                 null_files = [
                     f
                     for f in all_files
                     if (c := _coeffs(f))[0] is not None and c[0] < 0 and c[1] < 0
                 ]
-        if self.cfg.data.bsm == "re":
+        if bsm == "re":
             pos_files = [
                 f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] > 0 and c[1] == 0
             ]
-        elif self.cfg.data.bsm == "im":
+        elif bsm == "im":
             pos_files = [
                 f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] == 0 and c[1] > 0
             ]
-        elif self.cfg.data.bsm == "mix":
+        elif bsm == "mix":
             pos_files = [
                 f for f in all_files if (c := _coeffs(f))[0] is not None and c[0] > 0 and c[1] > 0
             ]
         else:
             raise ValueError(
-                f"Unknown type for tt SMEFT data '{self.cfg.data.bsm}' (expected 're', 'im', or 'mix')"
+                f"Unknown type for tt SMEFT data '{bsm}' (expected 're', 'im', or 'mix')"
             )
 
-        filenames = {
-            0: null_files,
-            1: pos_files,
-        }
+        return {0: null_files, 1: pos_files}
+
+    def init_data(self, mode="train"):
+        if self.data:
+            return
+
+        filenames = self._select_filenames(
+            self.cfg.data.data_dir, self.cfg.data.mass_window, self.cfg.data.lbl_0, self.cfg.data.bsm
+        )
 
         LOGGER.info(
             f"Using tt SMEFT dataset from {self.cfg.data.data_dir} for '{self.cfg.data.bsm}' tagging "
-            f"with {len(null_files)} files labeled 0 and {len(pos_files)} files labeled 1."
+            f"with {len(filenames[0])} files labeled 0 and {len(filenames[1])} files labeled 1."
         )
 
         dataset_kwargs = {
@@ -831,6 +930,29 @@ class TTSmeftExperiment(TaggingExperiment):
             "use_cache": self.cfg.data.use_cache,
         }
         self._init_data(TTSmeftDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
+
+        if not self.cfg.train and self.cfg.data.dataset_eval == "downtag":
+            self._load_downtag_relabeled_test_data()
+
+    def _load_downtag_relabeled_test_data(self):
+        cache_hash = self.data._hash_cache_key(self.data.cache_key)
+        path = os.path.join(
+            self.cfg.data.data_dir, "cache", f"ttsmeft_downtag_relabel_{cache_hash}.pt"
+        )
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"No down-tag-relabeled tt_smeft test dataset found at {path}. "
+                "Run the downtagging experiment with data.dataset_eval='ttsmeft' first "
+                "to generate it from the trained down-tagger."
+            )
+        relabeled_graphs = torch.load(path, weights_only=False)["data_list"]
+        relabeled_dataset = TaggingDataset()
+        relabeled_dataset.data_list = relabeled_graphs
+        self.data_test = relabeled_dataset
+        LOGGER.info(
+            f"Loaded {len(relabeled_graphs)} down-tag-relabeled events for tt_smeft test "
+            f"evaluation from {path}"
+        )
 
     def _cpflip_batch(self, fourmomenta, scalars, ptr, label):
         new_fourmomenta = torch.cat(

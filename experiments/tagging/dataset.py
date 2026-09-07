@@ -864,6 +864,105 @@ class TTSmeftDataset(HEPTaggingDataset):
         return Data(x=sequence, scalars=scalars, label=label)
 
 
+def ttsmeft_scalar_flags(n_cols):
+    if n_cols == 7:
+        return False, False
+    if n_cols == 13:
+        return True, False
+    if n_cols == 8:
+        return False, True
+    if n_cols == 14:
+        return True, True
+    raise ValueError(f"Unexpected number of tt_smeft scalar columns: {n_cols}")
+
+
+def _ttsmeft_role_masks(scalars):
+    is_jet = scalars[:, 0] == 1
+    is_subjet = scalars[:, 1] == 1
+    is_b = scalars[:, 2] == 1
+    is_down = scalars[:, 3] == 1
+    is_other = scalars[:, 4] == 1
+    is_toplep = scalars[:, 5] == 1
+    is_lep = scalars[:, 6] != 0
+    return is_jet, is_subjet, is_b, is_down, is_other, is_toplep, is_lep
+
+
+def ttsmeft_graph_to_downtag_input(graph, pid, network_dtype):
+    n_cols = graph.scalars.shape[1]
+    has_pid, _ = ttsmeft_scalar_flags(n_cols)
+    if pid and not has_pid:
+        raise ValueError(
+            "Down-tagger expects PID features, but the cached tt_smeft graph was built "
+            "without them. Rebuild the tt_smeft dataset cache with pid=True."
+        )
+
+    x, scalars = graph.x, graph.scalars
+    _, is_subjet, _, is_down, is_other, is_toplep, is_lep = _ttsmeft_role_masks(scalars)
+
+    down_row = torch.nonzero(is_subjet & is_down, as_tuple=True)[0].item()
+    other_row = torch.nonzero(is_subjet & is_other, as_tuple=True)[0].item()
+    down_is_leading = (
+        torch.linalg.norm(x[down_row, 1:3]) >= torch.linalg.norm(x[other_row, 1:3])
+    ).item()
+
+    new_category = torch.zeros(scalars.shape[0], 5, dtype=network_dtype)
+    new_category[:, 0] = scalars[:, 0]
+    new_category[:, 1] = scalars[:, 1]
+    new_category[:, 2] = scalars[:, 2]
+    if down_is_leading:
+        new_category[:, 3] = scalars[:, 3]
+        new_category[:, 4] = scalars[:, 4]
+    else:
+        new_category[:, 3] = scalars[:, 4]
+        new_category[:, 4] = scalars[:, 3]
+
+    keep = ~(is_toplep | is_lep)
+    new_x = x[keep]
+    new_category = new_category[keep]
+
+    if pid:
+        pid_features = scalars[keep, 7:13].to(network_dtype)
+        new_scalars = torch.cat([new_category, pid_features], dim=-1)
+    else:
+        new_scalars = new_category
+
+    label = torch.tensor([1.0 if down_is_leading else 0.0], dtype=network_dtype)
+    lep_vec = torch.cat([x[is_toplep], x[is_lep]], dim=0)
+    lep_charge = scalars[is_lep, 6].to(network_dtype)
+
+    downtag_graph = Data(x=new_x, scalars=new_scalars, label=label, lep_vec=lep_vec, lep_charge=lep_charge)
+    return downtag_graph, down_is_leading
+
+
+def relabel_ttsmeft_graph(graph, swap, network_dtype, momentum_dtype):
+    if not swap:
+        return graph
+
+    x, scalars = graph.x, graph.scalars
+    _, include_ps = ttsmeft_scalar_flags(scalars.shape[1])
+    is_jet, is_subjet, _, _, is_other, is_toplep, is_lep = _ttsmeft_role_masks(scalars)
+
+    new_scalars = scalars.clone()
+    new_scalars[:, 3] = scalars[:, 4]
+    new_scalars[:, 4] = scalars[:, 3]
+
+    if include_ps:
+        jet_four = x[is_jet]
+        toplep_four = x[is_toplep]
+        lep_four = x[is_lep]
+        lep_charge = scalars[is_lep, 6]
+        new_down_four = x[is_subjet & is_other]
+        pseudo_eps = eps_tensor(jet_four, toplep_four, new_down_four, lep_four, dtype=momentum_dtype)
+        pseudo_nr = spin_correlation_nr(
+            jet_four, toplep_four, new_down_four, lep_four, lep_charge, dtype=momentum_dtype
+        )
+        pseudoscalars = torch.tensor([pseudo_eps, pseudo_nr], dtype=network_dtype)
+        pseudoscalars = F.pad(pseudoscalars, (0, scalars.shape[0] - len(pseudoscalars)))
+        new_scalars[:, -1] = pseudoscalars
+
+    return Data(x=x, scalars=new_scalars, label=graph.label)
+
+
 class PseudoscalarDataset(HEPTaggingDataset):
     """
     Dataset for extracting the pseudoscalar component to build a CP-odd observable in ttH.
