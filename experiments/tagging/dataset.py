@@ -379,7 +379,9 @@ class DownTaggingDataset(HEPTaggingDataset):
         lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
         lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
 
-        b_idx = torch.argmax((subjet_tags == 5).to(torch.int)).item()
+        b_idx = torch.argmax(
+                    torch.isin(subjet_tags, torch.tensor([-5, 5])).to(torch.int)
+                ).item()
         other_indices = [i for i in range(len(subjet_tags)) if i != b_idx]
         other_indices.sort(key=lambda idx: subjet_kin[idx, 0].item(), reverse=True)
         subjet_order = torch.tensor([b_idx] + other_indices, dtype=torch.long)
@@ -570,7 +572,9 @@ class PolarizationDataset(HEPTaggingDataset):
         lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
         lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
 
-        b_idx = torch.argmax((subjet_tags == 5).to(torch.int)).item()
+        b_idx = torch.argmax(
+                    torch.isin(subjet_tags, torch.tensor([-5, 5])).to(torch.int)
+                ).item()
         other_indices = [i for i in range(len(subjet_tags)) if i != b_idx]
         other_indices.sort(key=lambda idx: subjet_kin[idx, 0].item(), reverse=True)
         subjet_order = torch.tensor([b_idx] + other_indices, dtype=torch.long)
@@ -766,7 +770,9 @@ class TTSmeftDataset(HEPTaggingDataset):
         lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
         lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
 
-        b_idx = torch.argmax((subjet_tags == 5).to(torch.int)).item()
+        b_idx = torch.argmax(
+            torch.isin(subjet_tags, torch.tensor([-5, 5])).to(torch.int)
+        ).item()
         d_idx = torch.argmax(
             torch.isin(subjet_tags, torch.tensor([-3, -1, 1, 3])).to(torch.int)
         ).item()
@@ -1080,7 +1086,9 @@ class PseudoscalarDataset(HEPTaggingDataset):
         lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
         lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
 
-        b_idx = torch.argmax((subjet_tags == 5).to(torch.int)).item()
+        b_idx = torch.argmax(
+                    torch.isin(subjet_tags, torch.tensor([-5, 5])).to(torch.int)
+                ).item()
         other_indices = [i for i in range(len(subjet_tags)) if i != b_idx]
         other_indices.sort(key=lambda idx: subjet_kin[idx, 0].item(), reverse=True)
         subjet_order = torch.tensor([b_idx] + other_indices, dtype=torch.long)

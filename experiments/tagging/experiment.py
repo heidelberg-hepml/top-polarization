@@ -1056,12 +1056,7 @@ class TTSmeftExperiment(TaggingExperiment):
         )
         eps_null = eps[labels == 0]
         eps_pos = eps[labels == 1]
-        LOGGER.info(
-            f"Epsilon information for entire {title} dataset:\n "
-            f"Epsilon tensor mean: {eps.mean().cpu().item():.3e}\n "
-            f"Label 0 epsilon tensor mean: {eps_null.mean().cpu().item():.3e}\n "
-            f"Label 1 epsilon tensor mean: {eps_pos.mean().cpu().item():.3e}"
-        )
+
         asym_null = (torch.sum(eps_null > 1e-6) - torch.sum(eps_null < -1e-6)) / (
             torch.sum(eps_null > 1e-6) + torch.sum(eps_null < -1e-6)
         )
