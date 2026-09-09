@@ -1,11 +1,11 @@
 import hashlib
 import json
 import os
+from typing import NamedTuple
 
 import awkward as ak
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch_geometric.data import Data
 from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr
 from torch_geometric.data.storage import GlobalStorage
@@ -379,9 +379,7 @@ class DownTaggingDataset(HEPTaggingDataset):
         lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
         lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
 
-        b_idx = torch.argmax(
-                    torch.isin(subjet_tags, torch.tensor([-5, 5])).to(torch.int)
-                ).item()
+        b_idx = torch.argmax(torch.isin(subjet_tags, torch.tensor([-5, 5])).to(torch.int)).item()
         other_indices = [i for i in range(len(subjet_tags)) if i != b_idx]
         other_indices.sort(key=lambda idx: subjet_kin[idx, 0].item(), reverse=True)
         subjet_order = torch.tensor([b_idx] + other_indices, dtype=torch.long)
@@ -572,9 +570,7 @@ class PolarizationDataset(HEPTaggingDataset):
         lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
         lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
 
-        b_idx = torch.argmax(
-                    torch.isin(subjet_tags, torch.tensor([-5, 5])).to(torch.int)
-                ).item()
+        b_idx = torch.argmax(torch.isin(subjet_tags, torch.tensor([-5, 5])).to(torch.int)).item()
         other_indices = [i for i in range(len(subjet_tags)) if i != b_idx]
         other_indices.sort(key=lambda idx: subjet_kin[idx, 0].item(), reverse=True)
         subjet_order = torch.tensor([b_idx] + other_indices, dtype=torch.long)
@@ -648,12 +644,48 @@ class PolarizationDataset(HEPTaggingDataset):
         )
 
 
+# tt_smeft scalars: [category(7), pid(5), charge, eps, nr], with the CP-odd columns last.
+# category = [is_hadtop, is_subjet, sub0, sub1, sub2, is_toplep, is_lepton]
+# pid = [is_electron, is_muon, is_photon, is_charged_hadron, is_neutral_hadron]
+TTSMEFT_N_CATEGORY = 7
+TTSMEFT_N_PID = 5
+TTSMEFT_N_GLOBAL_PS = 2  # eps_tensor, spin_correlation_nr
+
+
+class TTSmeftLayout(NamedTuple):
+    """Column layout of the tt_smeft ``scalars`` tensor.
+
+    The last ``n_ps`` columns are the CP-odd ones: the charge (C-odd), then the jet-level
+    pseudoscalars (P-odd, with ``include_ps``).
+    """
+
+    pid: bool = False
+    include_ps: bool = False
+
+    @property
+    def n_scalars(self):
+        return TTSMEFT_N_CATEGORY + (TTSMEFT_N_PID if self.pid else 0)
+
+    @property
+    def n_ps(self):
+        # the charge column always holds the lepton charge, and the constituent charges with pid
+        return 1 + (TTSMEFT_N_GLOBAL_PS if self.include_ps else 0)
+
+    @property
+    def n_cols(self):
+        return self.n_scalars + self.n_ps
+
+    @property
+    def charge_col(self):
+        return self.n_scalars
+
+
 class TTSmeftDataset(HEPTaggingDataset):
     """
     Dataset for identifying CP-even and CP-odd SMEFT contributions to ttbar production.
     """
 
-    CACHE_VERSION = 1
+    CACHE_VERSION = 2
     CACHE_PREFIX = "ttsmeft"
 
     def __init__(
@@ -661,11 +693,14 @@ class TTSmeftDataset(HEPTaggingDataset):
         length=-1,
         pid=False,
         include_ps=False,
+        tag_down=True,
         use_cache=True,
     ):
         super().__init__(length=length, use_cache=use_cache)
         self.include_pid = pid
         self.include_ps = include_ps
+        self.tag_down = tag_down
+        self.layout = TTSmeftLayout(pid=pid, include_ps=include_ps)
 
     def _cache_key_gen(self, target_length):
         cache_key = (
@@ -675,9 +710,10 @@ class TTSmeftDataset(HEPTaggingDataset):
             self.seed,
             bool(self.shuffle),
             target_length,
-            # both change the scalar channels, so they have to invalidate the cache
+            # all three change the produced tensors, so they have to invalidate the cache
             bool(self.include_pid),
             bool(self.include_ps),
+            bool(self.tag_down),
         )
         return cache_key
 
@@ -770,15 +806,19 @@ class TTSmeftDataset(HEPTaggingDataset):
         lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
         lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
 
-        b_idx = torch.argmax(
-            torch.isin(subjet_tags, torch.tensor([-5, 5])).to(torch.int)
-        ).item()
-        d_idx = torch.argmax(
-            torch.isin(subjet_tags, torch.tensor([-3, -1, 1, 3])).to(torch.int)
-        ).item()
-        other_indices = [i for i in range(len(subjet_tags)) if i not in (b_idx, d_idx)]
+        b_idx = int(
+            torch.argmax(torch.isin(subjet_tags, torch.tensor([-5, 5])).to(torch.int)).item()
+        )
+        d_idx = int(
+            torch.argmax(torch.isin(subjet_tags, torch.tensor([-3, -1, 1, 3])).to(torch.int)).item()
+        )
+        sorted_subjets = [b_idx]
+        if self.tag_down:
+            sorted_subjets.append(d_idx)
+
+        other_indices = [i for i in range(len(subjet_tags)) if i not in sorted_subjets]
         other_indices.sort(key=lambda idx: subjet_kin[idx, 0].item(), reverse=True)
-        subjet_order = torch.tensor([b_idx, d_idx] + other_indices, dtype=torch.long)
+        subjet_order = torch.tensor(sorted_subjets + other_indices, dtype=torch.long)
 
         subjet_four_sorted = subjet_four[subjet_order]
 
@@ -819,67 +859,56 @@ class TTSmeftDataset(HEPTaggingDataset):
 
         n_constituents = const_four_sorted.shape[0]
 
-        category = torch.zeros(6 + n_constituents, 7, dtype=network_dtype)
+        i_toplep = 4 + n_constituents
+        i_lep = i_toplep + 1
+        scalars = torch.zeros(6 + n_constituents, self.layout.n_cols, dtype=network_dtype)
+
         # Hadronic top: [1, 0, 0, 0, 0, 0, 0]
-        category[0, 0] = 1
+        scalars[0, 0] = 1
 
         # 3 Subjets: [0, 1, X, X, X, 0, 0] where one X=1 for subjet index
-        category[1:4, 1] = 1
-        category[1, 2] = 1
-        category[2, 3] = 1
-        category[3, 4] = 1
+        scalars[1:4, 1] = 1
+        scalars[1, 2] = 1
+        scalars[2, 3] = 1
+        scalars[3, 4] = 1
 
         # Constituents: [0, 0, X, X, X, 0, 0] where one X=1 for parent subjet (0, 1, or 2)
         for j, parent_idx in enumerate(const_parents_sorted):
-            category[4 + j, 2 + parent_idx] = 1
+            scalars[4 + j, 2 + parent_idx] = 1
 
         # Leptonic top: [0, 0, 0, 0, 0, 1, 0]
-        category[4 + len(const_parents_sorted), 5] = 1
+        scalars[i_toplep, 5] = 1
 
-        # Lepton: [0, 0, 0, 0, 0, 0, charge]
-        category[4 + len(const_parents_sorted) + 1, 6] = lep_charge
+        # Lepton: [0, 0, 0, 0, 0, 0, 1]
+        scalars[i_lep, 6] = 1
 
-        scalars = category
-        if self.include_pid:
-            pid_features = torch.zeros(6 + n_constituents, 6, dtype=network_dtype)
+        scalars[i_lep, self.layout.charge_col] = lep_charge
+        if self.layout.pid:
             pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
-            pid_features[4 : 4 + n_constituents] = pid_encoded.to(network_dtype)
-            scalars = torch.cat([scalars, pid_features], dim=-1)
-        if self.include_ps:
+            pid_encoded = pid_encoded.to(network_dtype)
+            # column 0 of the encoding is the charge, which is parity-odd and goes last
+            pid_lo = TTSMEFT_N_CATEGORY
+            scalars[4 : 4 + n_constituents, pid_lo : pid_lo + TTSMEFT_N_PID] = pid_encoded[:, 1:]
+            scalars[4 : 4 + n_constituents, self.layout.charge_col] = pid_encoded[:, 0]
+
+        if self.layout.include_ps:
             pseudo_eps = eps_tensor(
-                jet_four, toplep_four, subjet_four_sorted[1], lep_four, dtype=momentum_dtype
+                jet_four, toplep_four, subjet_four[d_idx], lep_four, dtype=momentum_dtype
             )
             pseudo_nr = spin_correlation_nr(
                 jet_four,
                 toplep_four,
-                subjet_four_sorted[1],
+                subjet_four[d_idx],
                 lep_four,
                 lep_charge,
                 dtype=momentum_dtype,
             )
-            pseudoscalars = torch.tensor(
+            # jet-level, so the same value on every token
+            scalars[:, -TTSMEFT_N_GLOBAL_PS:] = torch.tensor(
                 [pseudo_eps, pseudo_nr], dtype=network_dtype
-            )  # Array (n_pseudoscalars,)
-            # the pseudoscalars are inserted in the 16-vector of the GA for L-GATr
-            # max of 6 pseudoscalars for now (6 class tokens), to avoid new tokens
-            n_pseudoscalars = len(pseudoscalars)
-            assert n_pseudoscalars <= 6
-            pseudoscalars = F.pad(pseudoscalars, (0, 6 + n_constituents - n_pseudoscalars))
-            scalars = torch.cat([scalars, pseudoscalars.unsqueeze(1)], dim=-1)
+            )
 
         return Data(x=sequence, scalars=scalars, label=label)
-
-
-def ttsmeft_scalar_flags(n_cols):
-    if n_cols == 7:
-        return False, False
-    if n_cols == 13:
-        return True, False
-    if n_cols == 8:
-        return False, True
-    if n_cols == 14:
-        return True, True
-    raise ValueError(f"Unexpected number of tt_smeft scalar columns: {n_cols}")
 
 
 def _ttsmeft_role_masks(scalars):
@@ -889,14 +918,14 @@ def _ttsmeft_role_masks(scalars):
     is_down = scalars[:, 3] == 1
     is_other = scalars[:, 4] == 1
     is_toplep = scalars[:, 5] == 1
-    is_lep = scalars[:, 6] != 0
+    is_lep = scalars[:, 6] == 1
     return is_jet, is_subjet, is_b, is_down, is_other, is_toplep, is_lep
 
 
-def ttsmeft_graph_to_downtag_input(graph, pid, network_dtype):
-    n_cols = graph.scalars.shape[1]
-    has_pid, _ = ttsmeft_scalar_flags(n_cols)
-    if pid and not has_pid:
+def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype):
+    """Rebuild a tt_smeft graph in the format the down-tagger was trained on:
+    non-b subjets ordered by pt, no leptonic side."""
+    if pid and not layout.pid:
         raise ValueError(
             "Down-tagger expects PID features, but the cached tt_smeft graph was built "
             "without them. Rebuild the tt_smeft dataset cache with pid=True."
@@ -912,59 +941,60 @@ def ttsmeft_graph_to_downtag_input(graph, pid, network_dtype):
     ).item()
 
     new_category = torch.zeros(scalars.shape[0], 5, dtype=network_dtype)
-    new_category[:, 0] = scalars[:, 0]
-    new_category[:, 1] = scalars[:, 1]
-    new_category[:, 2] = scalars[:, 2]
-    if down_is_leading:
-        new_category[:, 3] = scalars[:, 3]
-        new_category[:, 4] = scalars[:, 4]
-    else:
-        new_category[:, 3] = scalars[:, 4]
-        new_category[:, 4] = scalars[:, 3]
+    new_category[:, :3] = scalars[:, :3]
+    down_col, other_col = (3, 4) if down_is_leading else (4, 3)
+    new_category[:, 3] = scalars[:, down_col]
+    new_category[:, 4] = scalars[:, other_col]
 
     keep = ~(is_toplep | is_lep)
-    new_x = x[keep]
-    new_category = new_category[keep]
-
+    new_scalars = new_category[keep]
     if pid:
-        pid_features = scalars[keep, 7:13].to(network_dtype)
-        new_scalars = torch.cat([new_category, pid_features], dim=-1)
-    else:
-        new_scalars = new_category
+        pid_lo = TTSMEFT_N_CATEGORY
+        # the down-tagger's pid encoding leads with the charge
+        new_scalars = torch.cat(
+            [
+                new_scalars,
+                scalars[keep, layout.charge_col, None].to(network_dtype),
+                scalars[keep, pid_lo : pid_lo + TTSMEFT_N_PID].to(network_dtype),
+            ],
+            dim=-1,
+        )
 
-    label = torch.tensor([1.0 if down_is_leading else 0.0], dtype=network_dtype)
-    lep_vec = torch.cat([x[is_toplep], x[is_lep]], dim=0)
-    lep_charge = scalars[is_lep, 6].to(network_dtype)
-
-    downtag_graph = Data(x=new_x, scalars=new_scalars, label=label, lep_vec=lep_vec, lep_charge=lep_charge)
+    downtag_graph = Data(
+        x=x[keep],
+        scalars=new_scalars,
+        label=torch.tensor([float(down_is_leading)], dtype=network_dtype),
+        lep_vec=torch.cat([x[is_toplep], x[is_lep]], dim=0),
+        lep_charge=scalars[is_lep, layout.charge_col].to(network_dtype),
+    )
     return downtag_graph, down_is_leading
 
 
-def relabel_ttsmeft_graph(graph, swap, network_dtype, momentum_dtype):
+def relabel_ttsmeft_graph(graph, swap, layout, network_dtype, momentum_dtype):
+    """Swap the down/other subjet labels of a tt_smeft graph and refresh its pseudoscalars."""
     if not swap:
         return graph
 
     x, scalars = graph.x, graph.scalars
-    _, include_ps = ttsmeft_scalar_flags(scalars.shape[1])
     is_jet, is_subjet, _, _, is_other, is_toplep, is_lep = _ttsmeft_role_masks(scalars)
 
     new_scalars = scalars.clone()
     new_scalars[:, 3] = scalars[:, 4]
     new_scalars[:, 4] = scalars[:, 3]
 
-    if include_ps:
-        jet_four = x[is_jet]
-        toplep_four = x[is_toplep]
-        lep_four = x[is_lep]
-        lep_charge = scalars[is_lep, 6]
+    if layout.include_ps:
+        # the jet-level pseudoscalars depend on which subjet is the down quark
         new_down_four = x[is_subjet & is_other]
-        pseudo_eps = eps_tensor(jet_four, toplep_four, new_down_four, lep_four, dtype=momentum_dtype)
-        pseudo_nr = spin_correlation_nr(
-            jet_four, toplep_four, new_down_four, lep_four, lep_charge, dtype=momentum_dtype
+        args = (x[is_jet], x[is_toplep], new_down_four, x[is_lep])
+        new_scalars[:, -TTSMEFT_N_GLOBAL_PS:] = torch.tensor(
+            [
+                eps_tensor(*args, dtype=momentum_dtype),
+                spin_correlation_nr(
+                    *args, scalars[is_lep, layout.charge_col], dtype=momentum_dtype
+                ),
+            ],
+            dtype=network_dtype,
         )
-        pseudoscalars = torch.tensor([pseudo_eps, pseudo_nr], dtype=network_dtype)
-        pseudoscalars = F.pad(pseudoscalars, (0, scalars.shape[0] - len(pseudoscalars)))
-        new_scalars[:, -1] = pseudoscalars
 
     return Data(x=x, scalars=new_scalars, label=graph.label)
 
@@ -1086,9 +1116,7 @@ class PseudoscalarDataset(HEPTaggingDataset):
         lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
         lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
 
-        b_idx = torch.argmax(
-                    torch.isin(subjet_tags, torch.tensor([-5, 5])).to(torch.int)
-                ).item()
+        b_idx = torch.argmax(torch.isin(subjet_tags, torch.tensor([-5, 5])).to(torch.int)).item()
         other_indices = [i for i in range(len(subjet_tags)) if i != b_idx]
         other_indices.sort(key=lambda idx: subjet_kin[idx, 0].item(), reverse=True)
         subjet_order = torch.tensor([b_idx] + other_indices, dtype=torch.long)

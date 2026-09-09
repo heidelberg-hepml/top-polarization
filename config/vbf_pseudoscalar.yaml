@@ -8,3 +8,6 @@ data:
 defaults:
  - tagging
  - _self_
+
+training:
+  iterations: 50000

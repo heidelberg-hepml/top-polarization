@@ -16,6 +16,37 @@ from experiments.misc import get_attention_mask
 from experiments.tagging.embedding import get_tagging_features
 
 
+def add_global_token(fourmomenta, scalars, pseudoscalars, ptr):
+    """Prepend one global token per graph, used to read out the classifier score.
+
+    The token carries no momentum and no features; it is identified by an extra scalar column
+    that is 1 on the global tokens and 0 everywhere else.
+
+    Returns the padded tensors plus the `is_global` mask selecting the new tokens.
+    """
+    batchsize = len(ptr) - 1
+    device = ptr.device
+
+    global_idxs = ptr[:-1] + torch.arange(batchsize, device=device)
+    is_global = torch.zeros(fourmomenta.shape[0] + batchsize, dtype=torch.bool, device=device)
+    is_global[global_idxs] = True
+
+    def pad(x, extra_columns=0):
+        out = x.new_zeros(is_global.shape[0], x.shape[1] + extra_columns)
+        out[~is_global, : x.shape[1]] = x
+        return out
+
+    fourmomenta = pad(fourmomenta)
+    pseudoscalars = pad(pseudoscalars)
+    scalars = pad(scalars, extra_columns=1)
+    scalars[is_global, -1] = 1
+
+    ptr = ptr.clone()
+    ptr[1:] = ptr[1:] + (torch.arange(batchsize, device=device) + 1)
+    batch = get_batch_from_ptr(ptr)
+    return fourmomenta, scalars, pseudoscalars, ptr, batch, is_global
+
+
 class TaggerWrapper(nn.Module):
     def __init__(
         self,
@@ -272,14 +303,12 @@ class LGATrWrapper(nn.Module):
         framesnet,
         out_channels,
         output="sum",
-        include_ps=False,
         mean_aggregation=False,
         use_amp=False,
         attention_backend="xformers",
     ):
         super().__init__()
         self.output = output
-        self.include_ps = include_ps
         self.use_amp = use_amp
         self.attention_backend = attention_backend
         self.net = net(out_mv_channels=out_channels)
@@ -295,6 +324,7 @@ class LGATrWrapper(nn.Module):
         # extract embedding (includes spurions)
         fourmomenta = embedding["fourmomenta"]
         scalars = torch.cat([embedding["scalars"], embedding["tagging_features"]], dim=-1)
+        pseudoscalars = embedding["pseudoscalars"]
         batch = embedding["batch"]
         ptr = embedding["ptr"]
         is_spurion = embedding["is_spurion"]
@@ -304,62 +334,15 @@ class LGATrWrapper(nn.Module):
 
         # handle global token
         if self.aggregator is None:
-            batchsize = len(ptr) - 1
-            global_idxs = ptr[:-1] + torch.arange(batchsize, device=batch.device)
-            is_global = torch.zeros(
-                fourmomenta.shape[0] + batchsize,
-                dtype=torch.bool,
-                device=ptr.device,
+            fourmomenta, scalars, pseudoscalars, ptr, batch, is_global = add_global_token(
+                fourmomenta, scalars, pseudoscalars, ptr
             )
-            is_global[global_idxs] = True
-            fourmomenta_buffer = fourmomenta.clone()
-            fourmomenta = torch.zeros(
-                is_global.shape[0],
-                *fourmomenta.shape[1:],
-                dtype=fourmomenta.dtype,
-                device=fourmomenta.device,
-            )
-            fourmomenta[~is_global] = fourmomenta_buffer
-            scalars_buffer = scalars.clone()
-            scalars = torch.zeros(
-                fourmomenta.shape[0],
-                scalars.shape[1] + 1,
-                dtype=scalars.dtype,
-                device=scalars.device,
-            )
-            token_idx = torch.nn.functional.one_hot(torch.arange(1, device=scalars.device))
-            token_idx = token_idx.repeat(batchsize, 1)
-            scalars[~is_global] = torch.cat(
-                (
-                    scalars_buffer,
-                    torch.zeros(
-                        scalars_buffer.shape[0],
-                        token_idx.shape[1],
-                        dtype=scalars.dtype,
-                        device=scalars.device,
-                    ),
-                ),
-                dim=-1,
-            )
-            scalars[is_global] = torch.cat(
-                (
-                    torch.zeros(
-                        token_idx.shape[0],
-                        scalars_buffer.shape[1],
-                        dtype=scalars.dtype,
-                        device=scalars.device,
-                    ),
-                    token_idx,
-                ),
-                dim=-1,
-            )
-            ptr[1:] = ptr[1:] + (torch.arange(batchsize, device=ptr.device) + 1)
-            batch = get_batch_from_ptr(ptr)
         else:
             is_global = None
 
         fourmomenta = fourmomenta.unsqueeze(0).to(scalars.dtype)
         scalars = scalars.unsqueeze(0)
+        pseudoscalars = pseudoscalars.unsqueeze(0)
 
         mask_kwarg = get_attention_mask(
             batch,
@@ -367,15 +350,15 @@ class LGATrWrapper(nn.Module):
             attention_backend=self.attention_backend,
         )
 
+        # the fourmomentum goes in channel 0, the pseudoscalars in the pseudoscalar component
+        # of channel 0 and of n_ps-1 extra channels
         mv = embed_vector(fourmomenta).unsqueeze(-2)
+        n_ps = pseudoscalars.shape[-1]
+        if n_ps > 1:
+            mv = torch.cat([mv, mv.new_zeros(*mv.shape[:-2], n_ps - 1, mv.shape[-1])], dim=-2)
+        mv[..., :n_ps, -1] = pseudoscalars
 
-        if self.include_ps:
-            ps_idx = embedding["scalars"].size(-1) - 1
-            pseudoscalars = scalars[..., ps_idx]
-            s = torch.cat([scalars[..., :ps_idx], scalars[..., ps_idx + 1 :]], dim=-1)
-            mv[..., -1] = pseudoscalars.unsqueeze(-1)
-        else:
-            s = scalars if scalars.shape[-1] > 0 else None
+        s = scalars if scalars.shape[-1] > 0 else None
 
         with torch.autocast("cuda", enabled=self.use_amp):
             mv_outputs, _ = self.net(mv, s, **mask_kwarg)
@@ -396,12 +379,9 @@ class LGATrWrapper(nn.Module):
             for lbl in [0, 1]:
                 mask = label == lbl
                 if mask.any():
-                    tracker[f"scalar_output_{lbl}"] = scalar_per_graph[mask].mean(
-                        dim=0, keepdim=True
-                    )
-                    tracker[f"pseudoscalar_output_{lbl}"] = pseudo_per_graph[mask].mean(
-                        dim=0, keepdim=True
-                    )
+                    # raw per-graph outputs, so the mean and std are taken over the full val set
+                    tracker[f"scalar_output_{lbl}"] = scalar_per_graph[mask]
+                    tracker[f"pseudoscalar_output_{lbl}"] = pseudo_per_graph[mask]
 
         if self.output == "sum":
             out = out_p + out_s
@@ -460,57 +440,9 @@ class LGATrSlimWrapper(nn.Module):
 
         # handle global token
         if self.aggregator is None:
-            batchsize = len(ptr) - 1
-            global_idxs = ptr[:-1] + torch.arange(batchsize, device=batch.device)
-            is_global = torch.zeros(
-                fourmomenta.shape[0] + batchsize,
-                dtype=torch.bool,
-                device=ptr.device,
+            fourmomenta, scalars, _, ptr, batch, is_global = add_global_token(
+                fourmomenta, scalars, scalars[:, :0], ptr
             )
-            is_global[global_idxs] = True
-            fourmomenta_buffer = fourmomenta.clone()
-            fourmomenta = torch.zeros(
-                is_global.shape[0],
-                *fourmomenta.shape[1:],
-                dtype=fourmomenta.dtype,
-                device=fourmomenta.device,
-            )
-            fourmomenta[~is_global] = fourmomenta_buffer
-            scalars_buffer = scalars.clone()
-            scalars = torch.zeros(
-                fourmomenta.shape[0],
-                scalars.shape[1] + 1,
-                dtype=scalars.dtype,
-                device=scalars.device,
-            )
-            token_idx = torch.nn.functional.one_hot(torch.arange(1, device=scalars.device))
-            token_idx = token_idx.repeat(batchsize, 1)
-            scalars[~is_global] = torch.cat(
-                (
-                    scalars_buffer,
-                    torch.zeros(
-                        scalars_buffer.shape[0],
-                        token_idx.shape[1],
-                        dtype=scalars.dtype,
-                        device=scalars.device,
-                    ),
-                ),
-                dim=-1,
-            )
-            scalars[is_global] = torch.cat(
-                (
-                    torch.zeros(
-                        token_idx.shape[0],
-                        scalars_buffer.shape[1],
-                        dtype=scalars.dtype,
-                        device=scalars.device,
-                    ),
-                    token_idx,
-                ),
-                dim=-1,
-            )
-            ptr[1:] = ptr[1:] + (torch.arange(batchsize, device=ptr.device) + 1)
-            batch = get_batch_from_ptr(ptr)
         else:
             is_global = None
 
@@ -544,7 +476,6 @@ class LGATrSlimPseudoWrapper(nn.Module):
         framesnet,
         out_channels,
         output="sum",
-        include_ps=False,
         mean_aggregation=False,
         attention_backend="xformers",
         use_amp=False,
@@ -553,7 +484,6 @@ class LGATrSlimPseudoWrapper(nn.Module):
         self.use_amp = use_amp
         self.attention_backend = attention_backend
         self.output = output
-        self.include_ps = include_ps
         out_c = {
             "out_p_channels": out_channels,
             "out_s_channels": out_channels,
@@ -570,6 +500,7 @@ class LGATrSlimPseudoWrapper(nn.Module):
         # extract embedding (includes spurions)
         fourmomenta = embedding["fourmomenta"]
         scalars = torch.cat([embedding["scalars"], embedding["tagging_features"]], dim=-1)
+        pseudoscalars = embedding["pseudoscalars"]
         batch = embedding["batch"]
         ptr = embedding["ptr"]
         is_spurion = embedding["is_spurion"]
@@ -579,77 +510,15 @@ class LGATrSlimPseudoWrapper(nn.Module):
 
         # handle global token
         if self.aggregator is None:
-            batchsize = len(ptr) - 1
-            global_idxs = ptr[:-1] + torch.arange(batchsize, device=batch.device)
-            is_global = torch.zeros(
-                fourmomenta.shape[0] + batchsize,
-                dtype=torch.bool,
-                device=ptr.device,
+            fourmomenta, scalars, pseudoscalars, ptr, batch, is_global = add_global_token(
+                fourmomenta, scalars, pseudoscalars, ptr
             )
-            is_global[global_idxs] = True
-            fourmomenta_buffer = fourmomenta.clone()
-            fourmomenta = torch.zeros(
-                is_global.shape[0],
-                *fourmomenta.shape[1:],
-                dtype=fourmomenta.dtype,
-                device=fourmomenta.device,
-            )
-            fourmomenta[~is_global] = fourmomenta_buffer
-            scalars_buffer = scalars.clone()
-            scalars = torch.zeros(
-                fourmomenta.shape[0],
-                scalars.shape[1] + 1,
-                dtype=scalars.dtype,
-                device=scalars.device,
-            )
-            token_idx = torch.nn.functional.one_hot(torch.arange(1, device=scalars.device))
-            token_idx = token_idx.repeat(batchsize, 1)
-            scalars[~is_global] = torch.cat(
-                (
-                    scalars_buffer,
-                    torch.zeros(
-                        scalars_buffer.shape[0],
-                        token_idx.shape[1],
-                        dtype=scalars.dtype,
-                        device=scalars.device,
-                    ),
-                ),
-                dim=-1,
-            )
-            scalars[is_global] = torch.cat(
-                (
-                    torch.zeros(
-                        token_idx.shape[0],
-                        scalars_buffer.shape[1],
-                        dtype=scalars.dtype,
-                        device=scalars.device,
-                    ),
-                    token_idx,
-                ),
-                dim=-1,
-            )
-            ptr[1:] = ptr[1:] + (torch.arange(batchsize, device=ptr.device) + 1)
-            batch = get_batch_from_ptr(ptr)
         else:
             is_global = None
 
         fourmomenta = fourmomenta.unsqueeze(0).to(scalars.dtype)
         scalars = scalars.unsqueeze(0)
-
-        if self.include_ps:
-            # the last entry of embedding["scalars"] holds the pseudoscalars,
-            # they are passed to the dedicated pseudoscalar channels of the network
-            ps_idx = embedding["scalars"].size(-1) - 1
-            p = scalars[..., ps_idx : ps_idx + 1]
-            s = torch.cat([scalars[..., :ps_idx], scalars[..., ps_idx + 1 :]], dim=-1)
-        else:
-            s = scalars
-            p = torch.zeros(
-                *scalars.shape[:-1],
-                0,
-                dtype=scalars.dtype,
-                device=scalars.device,
-            )
+        pseudoscalars = pseudoscalars.unsqueeze(0)
 
         mask_kwarg = get_attention_mask(
             batch,
@@ -660,7 +529,7 @@ class LGATrSlimPseudoWrapper(nn.Module):
         v = fourmomenta.unsqueeze(-2)
 
         with torch.autocast("cuda", enabled=self.use_amp):
-            _, out_s, out_p = self.net(v, s, p, **mask_kwarg)
+            _, out_s, out_p = self.net(v, scalars, pseudoscalars, **mask_kwarg)
 
         label = embedding.get("label")
         if self.aggregator is not None:
@@ -675,12 +544,9 @@ class LGATrSlimPseudoWrapper(nn.Module):
             for lbl in [0, 1]:
                 mask = label == lbl
                 if mask.any():
-                    tracker[f"scalar_output_{lbl}"] = scalar_per_graph[mask].mean(
-                        dim=0, keepdim=True
-                    )
-                    tracker[f"pseudoscalar_output_{lbl}"] = pseudo_per_graph[mask].mean(
-                        dim=0, keepdim=True
-                    )
+                    # raw per-graph outputs
+                    tracker[f"scalar_output_{lbl}"] = scalar_per_graph[mask]
+                    tracker[f"pseudoscalar_output_{lbl}"] = pseudo_per_graph[mask]
 
         if self.output == "sum":
             out = out_p[0, :, :] + out_s[0, :, :]

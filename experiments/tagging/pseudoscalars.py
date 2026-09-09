@@ -1,6 +1,8 @@
-import torch
-from experiments.hep import EPS, lorentz_boost
 from itertools import permutations
+
+import torch
+
+from experiments.hep import EPS, lorentz_boost
 
 
 def eps_tensor(*p, dtype, norm=173**4):
@@ -12,9 +14,9 @@ def eps_tensor(*p, dtype, norm=173**4):
                 if perm[i] > perm[j]:
                     inversions += 1
         return 1.0 if inversions % 2 == 0 else -1.0
-    
-    def levi_cevita_tensor(dim):   
-        arr=torch.zeros(tuple([dim for _ in range(dim)]), dtype=dtype)
+
+    def levi_cevita_tensor(dim):
+        arr = torch.zeros(tuple([dim for _ in range(dim)]), dtype=dtype)
         for x in permutations(tuple(range(dim))):
             arr[x] = permutation_sign(x)
         return arr
@@ -25,13 +27,17 @@ def eps_tensor(*p, dtype, norm=173**4):
     eps = levi_cevita_tensor(N)
     g_munu = torch.diag(torch.tensor([1, -1, -1, -1], dtype=dtype))
 
-    torch.einsum('ij, j -> i', g_munu, p[0].squeeze(0))
-    return torch.einsum('ijkl, i, j, k, l -> ', 
-                        eps, 
-                        torch.einsum('ij, j -> i', g_munu, p[0].squeeze(0)),
-                        torch.einsum('ij, j -> i', g_munu, p[1].squeeze(0)),
-                        torch.einsum('ij, j -> i', g_munu, p[2].squeeze(0)),
-                        torch.einsum('ij, j -> i', g_munu, p[3].squeeze(0))) / norm
+    return (
+        torch.einsum(
+            "ijkl, i, j, k, l -> ",
+            eps,
+            torch.einsum("ij, j -> i", g_munu, p[0].squeeze(0)),
+            torch.einsum("ij, j -> i", g_munu, p[1].squeeze(0)),
+            torch.einsum("ij, j -> i", g_munu, p[2].squeeze(0)),
+            torch.einsum("ij, j -> i", g_munu, p[3].squeeze(0)),
+        )
+        / norm
+    )
 
 
 def _normalize(v, eps=EPS):

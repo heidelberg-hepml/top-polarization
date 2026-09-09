@@ -24,12 +24,11 @@ def plot_mixer(cfg, plot_path, preds_path, title, plot_dict):
             "train_lr": np.asarray(plot_dict["train_lr"]),
             "grad_norm": np.asarray(plot_dict["grad_norm"]),
         }
-        if "scalar_output_0" in plot_dict:
-            preds_data["scalar_output_0"] = np.asarray(plot_dict["scalar_output_0"])
-            preds_data["scalar_output_1"] = np.asarray(plot_dict["scalar_output_1"])
-        if "pseudoscalar_output_0" in plot_dict:
-            preds_data["pseudoscalar_output_0"] = np.asarray(plot_dict["pseudoscalar_output_0"])
-            preds_data["pseudoscalar_output_1"] = np.asarray(plot_dict["pseudoscalar_output_1"])
+        for output in ["scalar", "pseudoscalar"]:
+            for lbl in [0, 1]:
+                for key in [f"{output}_output_{lbl}", f"{output}_output_{lbl}_std"]:
+                    if key in plot_dict:
+                        preds_data[key] = np.asarray(plot_dict[key])
         np.savez(f"{preds_path}/training.npz", **preds_data)
 
         file = f"{plot_path}/training.pdf"
@@ -48,25 +47,20 @@ def plot_mixer(cfg, plot_path, preds_path, title, plot_dict):
                 logy=True,
             )
 
-            if "scalar_output_0" in plot_dict:
+            for output, name in [("scalar", "Scalar"), ("pseudoscalar", "Pseudoscalar")]:
+                if f"{output}_output_0" not in plot_dict:
+                    continue
+                stds = [f"{output}_output_{lbl}_std" for lbl in [0, 1]]
                 plot_metric(
                     out,
-                    [plot_dict["scalar_output_0"], plot_dict["scalar_output_1"]],
-                    "Scalar output (val)",
+                    [plot_dict[f"{output}_output_{lbl}"] for lbl in [0, 1]],
+                    f"{name} output (val)",
                     labels=["label=0", "label=1"],
                     val_metric=True,
                     cfg=cfg,
-                    # yrange=[-0.5, 0.5],
-                )
-            if "pseudoscalar_output_0" in plot_dict:
-                plot_metric(
-                    out,
-                    [plot_dict["pseudoscalar_output_0"], plot_dict["pseudoscalar_output_1"]],
-                    "Pseudoscalar output (val)",
-                    labels=["label=0", "label=1"],
-                    val_metric=True,
-                    cfg=cfg,
-                    # yrange=[-0.5, 0.5],
+                    metrics_std=[plot_dict[k] for k in stds]
+                    if all(k in plot_dict for k in stds)
+                    else None,
                 )
 
     if cfg.plotting.score and cfg.evaluate and not dataset_eval_active:
@@ -115,15 +109,9 @@ def plot_mixer(cfg, plot_path, preds_path, title, plot_dict):
         }
         for output in ["scalar", "pseudo"]:
             if f"fpr_{output}" in plot_dict["results_test"]:
-                preds_data[f"fpr_{output}"] = np.asarray(
-                    plot_dict["results_test"][f"fpr_{output}"]
-                )
-                preds_data[f"tpr_{output}"] = np.asarray(
-                    plot_dict["results_test"][f"tpr_{output}"]
-                )
-                preds_data[f"auc_{output}"] = np.asarray(
-                    plot_dict["results_test"][f"auc_{output}"]
-                )
+                preds_data[f"fpr_{output}"] = np.asarray(plot_dict["results_test"][f"fpr_{output}"])
+                preds_data[f"tpr_{output}"] = np.asarray(plot_dict["results_test"][f"tpr_{output}"])
+                preds_data[f"auc_{output}"] = np.asarray(plot_dict["results_test"][f"auc_{output}"])
         np.savez(f"{preds_path}/roc.npz", **preds_data)
 
         file = f"{plot_path}/roc.pdf"

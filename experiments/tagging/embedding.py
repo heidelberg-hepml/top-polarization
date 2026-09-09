@@ -7,19 +7,65 @@ from torch_geometric.utils import scatter
 from experiments.hep import get_eta, get_phi, get_pt
 from experiments.tagging.dataset import EPS
 
+TAGGING_FEATURES = (
+    "log_pt",
+    "log_energy",
+    "log_pt_rel",
+    "log_energy_rel",
+    "dphi",
+    "deta",
+    "dr",
+)
+
 # weaver defaults for tagging features standardization (mean, std)
-TAGGING_FEATURES_PREPROCESSING = [
-    [1.7, 0.7],  # log_pt
-    [2.0, 0.7],  # log_energy
-    [-4.7, 0.7],  # log_pt_rel
-    [-4.7, 0.7],  # log_energy_rel
-    [0, 1],  # dphi
-    [0, 1],  # deta
-    [0.2, 4],  # dr
-]
+TAGGING_FEATURES_PREPROCESSING = {
+    "log_pt": (1.7, 0.7),
+    "log_energy": (2.0, 0.7),
+    "log_pt_rel": (-4.7, 0.7),
+    "log_energy_rel": (-4.7, 0.7),
+    "dphi": (0, 1),
+    "deta": (0, 1),
+    "dr": (0.2, 4),
+}
+
+# Subsets selectable through cfg.data.tagging_features
+TAGGING_FEATURE_SUBSETS = {
+    "all": TAGGING_FEATURES,
+    "zinvariant": ("log_pt", "log_pt_rel", "dphi", "deta", "dr"),
+    "so3invariant": ("log_energy", "log_energy_rel"),
+    None: (),
+}
+
+# `deta` is the only parity-odd tagging feature
+TAGGING_FEATURES_PARITY_ODD = ("deta",)
 
 
-def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data):
+def get_tagging_feature_names(tagging_features="all"):
+    """Names of the features returned by get_tagging_features(), in order."""
+    try:
+        return TAGGING_FEATURE_SUBSETS[tagging_features]
+    except KeyError:
+        raise ValueError(f"Unknown tagging_features: {tagging_features}") from None
+
+
+def get_num_tagging_features(tagging_features="all"):
+    return len(get_tagging_feature_names(tagging_features))
+
+
+def get_num_parity_odd_tagging_features(tagging_features="all"):
+    names = get_tagging_feature_names(tagging_features)
+    return sum(name in TAGGING_FEATURES_PARITY_ODD for name in names)
+
+
+def split_tagging_features_by_parity(features, tagging_features="all"):
+    """Split the tagging features into their parity-even and parity-odd columns."""
+    names = get_tagging_feature_names(tagging_features)
+    even = [i for i, name in enumerate(names) if name not in TAGGING_FEATURES_PARITY_ODD]
+    odd = [i for i, name in enumerate(names) if name in TAGGING_FEATURES_PARITY_ODD]
+    return features[..., even], features[..., odd]
+
+
+def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data, n_ps=0, split_parity=None):
     """
     Embed tagging data
     We use torch_geometric sparse representations to be more memory efficient
@@ -35,6 +81,12 @@ def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data):
         Indices of the first particle for each jet
         Also includes the first index after the batch ends
     cfg_data: settings for embedding
+    n_ps: int
+        Number of trailing `scalars` columns holding parity-odd features.
+    split_parity: bool or None
+        Whether to split the parity-odd inputs off into embedding["pseudoscalars"]: the n_ps
+        trailing `scalars` columns together with the parity-odd tagging features. Only makes
+        sense for models with a dedicated pseudoscalar stream. Defaults to n_ps > 0.
 
     Returns
     -------
@@ -42,6 +94,7 @@ def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data):
     """
     batchsize = len(ptr) - 1
     arange = torch.arange(batchsize, device=fourmomenta.device)
+    ptr = ptr.clone()
 
     # crop jets to max_particles
     if cfg_data.max_particles is not None:
@@ -130,9 +183,23 @@ def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data):
 
     tagging_features = tagging_features.to(scalars.dtype)
 
+    # split off the parity-odd inputs
+    if split_parity is None:
+        split_parity = n_ps > 0
+    if split_parity:
+        n_even = scalars.shape[-1] - n_ps
+        scalars, pseudoscalars = scalars[..., :n_even], scalars[..., n_even:]
+        tagging_features, odd_tagging_features = split_tagging_features_by_parity(
+            tagging_features, cfg_data.tagging_features
+        )
+        pseudoscalars = torch.cat([pseudoscalars, odd_tagging_features], dim=-1)
+    else:
+        pseudoscalars = scalars[..., :0]
+
     embedding = {
         "fourmomenta": fourmomenta,
         "scalars": scalars,
+        "pseudoscalars": pseudoscalars,
         "is_spurion": is_spurion,
         "tagging_features": tagging_features,
         "batch": batch,
@@ -252,15 +319,20 @@ def get_tagging_features(fourmomenta, jet, tagging_features="all", eps=1e-10):
     jet: torch.tensor of shape (n_particles, 4)
         Jet momenta in the shape (E, px, py, pz)
     tagging_features: str
-        Type of tagging features to include. Options are None, 'all', 'zinvariant', 'so3invariant'.
-        Note that all features are SO(2)-invariant.
+        Which subset of TAGGING_FEATURES to include, see TAGGING_FEATURE_SUBSETS.
     eps: float
 
     Returns
     -------
-    features: torch.tensor of shape (n_particles, 7)
-        Features: log_pt, log_energy, log_pt_rel, log_energy_rel, dphi, deta, dr
+    features: torch.tensor of shape (n_particles, n_selected)
+        Columns in the order given by get_tagging_feature_names(tagging_features)
     """
+    names = get_tagging_feature_names(tagging_features)
+    if not names:
+        return torch.zeros(
+            fourmomenta.shape[0], 0, device=fourmomenta.device, dtype=fourmomenta.dtype
+        )
+
     log_pt = get_pt(fourmomenta).unsqueeze(-1).log()
     log_energy = fourmomenta[..., 0].unsqueeze(-1).clamp(min=eps).log()
 
@@ -273,43 +345,19 @@ def get_tagging_features(fourmomenta, jet, tagging_features="all", eps=1e-10):
     eta_4, eta_jet = get_eta(fourmomenta), get_eta(jet)
     deta = -(eta_4 - eta_jet).unsqueeze(-1)
     dr = torch.sqrt((dphi**2 + deta**2).clamp(min=eps))
-    features = [
-        log_pt,
-        log_energy,
-        log_pt_rel,
-        log_energy_rel,
-        dphi,
-        deta,
-        dr,
-    ]
-    for i, feature in enumerate(features):
-        mean, factor = TAGGING_FEATURES_PREPROCESSING[i]
-        features[i] = (feature - mean) * factor
-    if tagging_features == "zinvariant":
-        # exclude energy, because it is not invariant under z-boosts
-        idx = [0, 2, 4, 5, 6]
-    elif tagging_features == "so3invariant":
-        # exclude everything except energy, because it is not invariant under SO(3) rotations
-        idx = [1, 3]
-    elif tagging_features is None:
-        return torch.zeros(
-            features[0].shape[0], 0, device=fourmomenta.device, dtype=fourmomenta.dtype
-        )
-    else:
-        idx = list(range(len(features)))
-    features = [features[i] for i in idx]
-    features = torch.cat(features, dim=-1)
-    return features
 
+    values = {
+        "log_pt": log_pt,
+        "log_energy": log_energy,
+        "log_pt_rel": log_pt_rel,
+        "log_energy_rel": log_energy_rel,
+        "dphi": dphi,
+        "deta": deta,
+        "dr": dr,
+    }
 
-def get_num_tagging_features(tagging_features="all"):
-    if tagging_features == "all":
-        return 7
-    elif tagging_features == "zinvariant":
-        return 5
-    elif tagging_features == "so3invariant":
-        return 2
-    elif tagging_features is None:
-        return 0
-    else:
-        raise ValueError(f"Unknown tagging_features: {tagging_features}")
+    features = []
+    for name in names:
+        mean, factor = TAGGING_FEATURES_PREPROCESSING[name]
+        features.append((values[name] - mean) * factor)
+    return torch.cat(features, dim=-1)
