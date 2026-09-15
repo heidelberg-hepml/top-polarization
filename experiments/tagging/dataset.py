@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import time
 from typing import NamedTuple
 
 import awkward as ak
@@ -19,6 +20,48 @@ torch.serialization.add_safe_globals(
 )  # Needed to cache sequence data
 
 EPS = 1e-5
+
+
+class _BuildProgress:
+    """Log how far cache generation has got, and when it should finish.
+
+    Building the graph list is the slow part of a cache run, so `step()` is called
+    once per event and reports at a fixed wall-clock interval (never per event).
+    """
+
+    def __init__(self, owner_name, total, every_seconds=60.0):
+        self.owner_name = owner_name
+        self.total = total if total and total > 0 else None
+        self.every_seconds = every_seconds
+        self.n = 0
+        self.start = time.time()
+        self.last_report = self.start
+
+    def step(self, n=1):
+        self.n += n
+        now = time.time()
+        if now - self.last_report < self.every_seconds:
+            return
+        self.last_report = now
+        elapsed = now - self.start
+        if self.total is None:
+            LOGGER.info(f"[{self.owner_name}] built {self.n} events after {elapsed / 60:.2f}min")
+            return
+        frac = self.n / self.total
+        estimate = elapsed / frac if frac > 0 else 0.0
+        remaining = max(estimate - elapsed, 0.0)
+        LOGGER.info(
+            f"[{self.owner_name}] built {self.n}/{self.total} events ({100 * frac:.1f}%) "
+            f"after {elapsed / 60:.2f}min, remaining {remaining / 60:.2f}min, "
+            f"total estimate {estimate / 60:.2f}min = {estimate / 60**2:.2f}h"
+        )
+
+    def done(self):
+        elapsed = time.time() - self.start
+        LOGGER.info(
+            f"[{self.owner_name}] built {self.n} events in {elapsed / 60:.2f}min "
+            f"= {elapsed / 60**2:.2f}h"
+        )
 
 
 class TaggingDataset(torch.utils.data.Dataset):
@@ -102,6 +145,9 @@ class TaggingDataset(torch.utils.data.Dataset):
         elif isinstance(filename, (dict)):
             return tuple(sorted((k, cls._normalize_filename_key(v)) for k, v in filename.items()))
         return filename
+
+    def _build_progress(self, total):
+        return _BuildProgress(self.__class__.__name__, total)
 
 
 class HEPTaggingDataset(TaggingDataset):
@@ -322,12 +368,15 @@ class DownTaggingDataset(HEPTaggingDataset):
         label_counts = 0
 
         parquet, perm = self._shuffle_data(parquet)
+        progress = self._build_progress(len(parquet))
         for event in parquet:
+            progress.step()
             graph = self._build_event_graph(event, network_dtype, momentum_dtype)
             label_counts += graph.label.item()
             data_list.append(graph)
         indices += perm
 
+        progress.done()
         LOGGER.info(
             f"[{self.__class__.__name__}] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
         )
@@ -507,11 +556,13 @@ class PolarizationDataset(HEPTaggingDataset):
         label_counts = 0
 
         offset = 0
+        progress = self._build_progress(sum(len(p) for p in parquet))
         for lbl, p in enumerate(parquet):
             p, perm = self._shuffle_data(p, evt_types=len(parquet))
             if offset > 0:
                 perm = [pm + offset for pm in perm]
             for event in p:
+                progress.step()
                 graph = self._build_event_graph(event, lbl, network_dtype, momentum_dtype)
                 label_counts += graph.label
                 data_list.append(graph)
@@ -519,6 +570,7 @@ class PolarizationDataset(HEPTaggingDataset):
             offset += len(data_list)
         data_list, _ = self._shuffle_data(data_list)
 
+        progress.done()
         LOGGER.info(
             f"[{self.__class__.__name__}] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
         )
@@ -745,11 +797,13 @@ class TTSmeftDataset(HEPTaggingDataset):
             parquet = balanced_parquet
 
         offset = 0
+        progress = self._build_progress(sum(len(p) for p in parquet.values()))
         for lbl, p in parquet.items():
             p, perm = self._shuffle_data(p, evt_types=len(parquet))
             if offset > 0:
                 perm = [pm + offset for pm in perm]
             for event in p:
+                progress.step()
                 graph = self._build_event_graph(event, lbl, network_dtype, momentum_dtype)
                 label_counts += graph.label
                 data_list.append(graph)
@@ -757,6 +811,7 @@ class TTSmeftDataset(HEPTaggingDataset):
             offset += len(data_list)
         data_list, _ = self._shuffle_data(data_list)
 
+        progress.done()
         LOGGER.info(
             f"[{self.__class__.__name__}] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
         )
@@ -1055,11 +1110,13 @@ class PseudoscalarDataset(HEPTaggingDataset):
             parquet = balanced_parquet
 
         offset = 0
+        progress = self._build_progress(sum(len(p) for p in parquet.values()))
         for lbl, p in parquet.items():
             p, perm = self._shuffle_data(p, evt_types=len(parquet))
             if offset > 0:
                 perm = [pm + offset for pm in perm]
             for event in p:
+                progress.step()
                 graph = self._build_event_graph(event, lbl, network_dtype, momentum_dtype)
                 label_counts += graph.label
                 data_list.append(graph)
@@ -1067,6 +1124,7 @@ class PseudoscalarDataset(HEPTaggingDataset):
             offset += len(data_list)
         data_list, _ = self._shuffle_data(data_list)
 
+        progress.done()
         LOGGER.info(
             f"[{self.__class__.__name__}] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
         )
@@ -1272,11 +1330,13 @@ class VBFDataset(HEPTaggingDataset):
         label_counts = 0
 
         offset = 0
+        progress = self._build_progress(sum(len(p) for p in parquet.values()))
         for lbl, p in parquet.items():
             p, perm = self._shuffle_data(p, evt_types=len(parquet))
             if offset > 0:
                 perm = [pm + offset for pm in perm]
             for event in p:
+                progress.step()
                 graph = self._build_event_graph(event, lbl, network_dtype, momentum_dtype)
                 label_counts += graph.label
                 data_list.append(graph)
@@ -1284,6 +1344,7 @@ class VBFDataset(HEPTaggingDataset):
             offset += len(data_list)
         data_list, _ = self._shuffle_data(data_list)
 
+        progress.done()
         LOGGER.info(
             f"[{self.__class__.__name__}] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
         )
