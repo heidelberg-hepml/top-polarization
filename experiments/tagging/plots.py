@@ -47,14 +47,14 @@ def plot_mixer(cfg, plot_path, preds_path, title, plot_dict):
                 logy=True,
             )
 
-            for output, name in [("scalar", "Scalar"), ("pseudoscalar", "Pseudoscalar")]:
+            for output in ["scalar", "pseudoscalar"]:
                 if f"{output}_output_0" not in plot_dict:
                     continue
                 stds = [f"{output}_output_{lbl}_std" for lbl in [0, 1]]
                 plot_metric(
                     out,
                     [plot_dict[f"{output}_output_{lbl}"] for lbl in [0, 1]],
-                    f"{name} output (val)",
+                    f"{output} output (val)",
                     labels=["label=0", "label=1"],
                     val_metric=True,
                     cfg=cfg,

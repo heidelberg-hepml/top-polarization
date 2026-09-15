@@ -33,14 +33,13 @@ from experiments.tagging.embedding import (
 from experiments.tagging.likelihood import get_asymmetry, get_polarization
 from experiments.tagging.plots import plot_mixer
 
+PSEUDOSCALAR_MODELS = ("LGATr", "LGATrSlimPseudo")
+
 
 class TaggingExperiment(BaseExperiment):
     """
     Base class for jet tagging experiments, focusing on binary classification
     """
-
-    # architectures with a dedicated pseudoscalar stream
-    PSEUDOSCALAR_MODELS = ("LGATr", "LGATrSlimPseudo")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -54,7 +53,7 @@ class TaggingExperiment(BaseExperiment):
         self.split_parity = False  # route the parity-odd inputs to the pseudoscalar stream
 
     def init_physics(self):
-        modelname = self.cfg.model.net._target_.rsplit(".", 1)[-1]
+        self.modelname = self.cfg.model.net._target_.rsplit(".", 1)[-1]
         self.momentum_dtype = torch.float64 if self.cfg.data.momentum_float64 else torch.float32
 
         self.cfg.model.out_channels = self.num_outputs
@@ -64,37 +63,37 @@ class TaggingExperiment(BaseExperiment):
         if not self.ps_task:
             assert self.n_ps_data == 0, "No pseudoscalars can be given unless ps_task is set"
             self.n_ps = 0
-        elif modelname in self.PSEUDOSCALAR_MODELS:
+        elif self.modelname in PSEUDOSCALAR_MODELS:
             # the parity-odd tagging features join the dataset pseudoscalars
             self.split_parity = True
             self.n_ps = self.n_ps_data + n_tagging_odd
             n_tagging -= n_tagging_odd
         else:
             # no pseudoscalar stream, so they travel as scalars and parity is broken
-            LOGGER.info(f"{modelname} takes no pseudoscalar inputs, passing them as scalars.")
+            LOGGER.info(f"{self.modelname} takes no pseudoscalar inputs, passing them as scalars.")
             self.extra_scalars += self.n_ps_data
             self.n_ps, self.n_ps_data = 0, 0
 
-        if modelname in ["LGATr", "LGATrSlim", "LGATrSlimPseudo"]:
+        if self.modelname in ["LGATr", "LGATrSlim", "LGATrSlimPseudo"]:
             # Lorentz-equivariance by internal representations
             in_s_channels = self.extra_scalars + n_tagging
             self.cfg.model.net.in_s_channels = 0 if self.cfg.model.mean_aggregation else 1
             self.cfg.model.net.in_s_channels += in_s_channels
-            if modelname == "LGATr":
+            if self.modelname == "LGATr":
                 # 1 mv for the vector, n_ps mv for the pseudoscalars
                 self.cfg.model.net.in_mv_channels = max(1, self.n_ps)
-            elif modelname == "LGATrSlimPseudo":
+            elif self.modelname == "LGATrSlimPseudo":
                 self.cfg.model.net.in_p_channels = self.n_ps
 
             # doesn't affect results and never needed
             self.cfg.data.boost_jet = False
-        elif modelname == "Transformer":
+        elif self.modelname == "Transformer":
             # Non-equivariant or canonicalization
             self.cfg.model.in_channels = 7 + self.extra_scalars
             if self.cfg.model.add_fourmomenta_backbone:
                 self.cfg.model.in_channels += 4
 
-            if modelname == "Transformer":
+            if self.modelname == "Transformer":
                 self.cfg.model.in_channels += 0 if self.cfg.model.mean_aggregation else 1
 
             # decide which entries to use for the framesnet
@@ -108,7 +107,7 @@ class TaggingExperiment(BaseExperiment):
                 # not allowed, because the network is not Lorentz-equivariant
                 self.cfg.data.boost_jet = False
         else:
-            raise NotImplementedError(f"Model {modelname} not implemented")
+            raise NotImplementedError(f"Model {self.modelname} not implemented")
 
     def init_data(self):
         raise NotImplementedError
@@ -516,7 +515,7 @@ class TaggingExperiment(BaseExperiment):
             "gamma_mean": [],
             "gamma_max": [],
         }
-        if "LGATr" in self.cfg.model.net._target_:
+        if self.modelname in PSEUDOSCALAR_MODELS:
             for output in ["scalar", "pseudoscalar"]:
                 for lbl in [0, 1]:
                     metrics[f"{output}_output_{lbl}"] = []
