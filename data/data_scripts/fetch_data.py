@@ -75,10 +75,11 @@ def main():
                                 OUT,
                             )
                 elif PROC == "tt_smeft":
-                    load(
-                        f"tt_ctg_re_0_im_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train.parquet",
-                        OUT,
-                    )
+                    for nr in [1,2]:
+                        load(
+                            f"tt_ctg_re_0_im_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet",
+                            OUT,
+                        )
                 elif PROC == "tth":
                     for nr in range(1, 3):
                         load(
