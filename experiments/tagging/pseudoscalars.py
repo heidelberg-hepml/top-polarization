@@ -27,17 +27,8 @@ def eps_tensor(*p, dtype, norm=173**4):
     eps = levi_cevita_tensor(N)
     g_munu = torch.diag(torch.tensor([1, -1, -1, -1], dtype=dtype))
 
-    return (
-        torch.einsum(
-            "ijkl, i, j, k, l -> ",
-            eps,
-            torch.einsum("ij, j -> i", g_munu, p[0].squeeze(0)),
-            torch.einsum("ij, j -> i", g_munu, p[1].squeeze(0)),
-            torch.einsum("ij, j -> i", g_munu, p[2].squeeze(0)),
-            torch.einsum("ij, j -> i", g_munu, p[3].squeeze(0)),
-        )
-        / norm
-    )
+    lowered = [torch.einsum("ij, nj -> ni", g_munu, q.reshape(-1, 4)) for q in p]
+    return torch.einsum("ijkl, ni, nj, nk, nl -> n", eps, *lowered) / norm
 
 
 def _normalize(v, eps=EPS):

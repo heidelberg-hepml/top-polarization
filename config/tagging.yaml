@@ -4,7 +4,6 @@ exp_name: tagging
 data:
   dataset_eval: null
   length: -1
-  use_cache: true
   tagging_features: all
   boost_jet: false
   beam_reference: lightlike

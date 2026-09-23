@@ -589,7 +589,6 @@ class DownTaggingExperiment(TaggingExperiment):
                 "tag": self.cfg.data.tag,
                 "pid": self.cfg.data.pid,
                 "use_ditop": self.cfg.data.use_ditop,
-                "use_cache": self.cfg.data.use_cache,
             }
             self._init_data(DownTaggingDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
@@ -597,7 +596,7 @@ class DownTaggingExperiment(TaggingExperiment):
         """tt_smeft data settings to mirror when evaluating the down-tagger on tt_smeft.
 
         Overridable from the down-tagging config with a `ttsmeft_` prefix; the defaults match
-        config/tt_smeft.yaml so both runs build the same dataset (and cache key).
+        config/tt_smeft.yaml so both runs build the same dataset.
         """
         defaults = {
             "data_dir": "data/tt_smeft/",
@@ -609,7 +608,6 @@ class DownTaggingExperiment(TaggingExperiment):
             "pid": True,
             "pseudoscalars": True,
             "tag_down": True,
-            "use_cache": self.cfg.data.use_cache,
         }
         resolved = {
             key: getattr(self.cfg.data, f"ttsmeft_{key}", default)
@@ -649,7 +647,7 @@ class DownTaggingExperiment(TaggingExperiment):
         )
 
         test_indices = ttsmeft_dataset.get_subset("test").tolist()
-        ttsmeft_test_graphs = [ttsmeft_dataset.data_list[i] for i in test_indices]
+        ttsmeft_test_graphs = [ttsmeft_dataset[i] for i in test_indices]
 
         network_dtype = torch.float64 if self.cfg.use_float64 else torch.float32
         downtag_graphs, down_is_leading = [], []
@@ -667,8 +665,7 @@ class DownTaggingExperiment(TaggingExperiment):
             ttsmeft_dataset, data_dir
         )
 
-        downtag_dataset = TaggingDataset()
-        downtag_dataset.data_list = downtag_graphs
+        downtag_dataset = TaggingDataset(downtag_graphs)
 
         self.data = downtag_dataset
         self.data_train = downtag_dataset
@@ -863,7 +860,6 @@ class PolarizationExperiment(TaggingExperiment):
             "length": getattr(self.cfg.data, "length", None),
             "pid": self.cfg.data.pid,
             "use_ditop": self.cfg.data.use_ditop,
-            "use_cache": self.cfg.data.use_cache,
         }
         self._init_data(PolarizationDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
@@ -911,14 +907,14 @@ class TTSmeftExperiment(TaggingExperiment):
             "pid": cfg_data.pid,
             "include_ps": cfg_data.pseudoscalars,
             "tag_down": cfg_data.tag_down,
-            "use_cache": cfg_data.use_cache,
         }
 
     @staticmethod
     def _relabel_cache_path(dataset, data_dir):
         """Where the down-tag-relabeled test split of `dataset` is cached."""
-        cache_hash = dataset._hash_cache_key(dataset.cache_key)
-        return os.path.join(data_dir, "cache", f"ttsmeft_downtag_relabel_{cache_hash}.pt")
+        return os.path.join(
+            data_dir, "cache", f"ttsmeft_downtag_relabel_{dataset.fingerprint()}.pt"
+        )
 
     def _init_experiment(self, run_name_add=None):
         run_name_add = [
@@ -941,12 +937,7 @@ class TTSmeftExperiment(TaggingExperiment):
             raise ValueError(f"Unknown mass window definition '{mass_window}'")
 
         all_files = sorted(
-            glob.glob(
-                os.path.join(
-                    data_dir,
-                    f"tt_ctg_*_{top_window}_train*.parquet",
-                )
-            )
+            glob.glob(os.path.join(data_dir, f"tt_ctg_*_{top_window}_train*.parquet"))
         )
 
         def _coeffs(filename):
@@ -1026,8 +1017,7 @@ class TTSmeftExperiment(TaggingExperiment):
                 "to generate it from the trained down-tagger."
             )
         relabeled_graphs = torch.load(path, weights_only=False)["data_list"]
-        relabeled_dataset = TaggingDataset()
-        relabeled_dataset.data_list = relabeled_graphs
+        relabeled_dataset = TaggingDataset(relabeled_graphs)
         self.data_test = relabeled_dataset
         LOGGER.info(
             f"Loaded {len(relabeled_graphs)} down-tag-relabeled events for tt_smeft test "
@@ -1208,7 +1198,6 @@ class PseudoscalarExperiment(TaggingExperiment):
         dataset_kwargs = {
             "length": getattr(self.cfg.data, "length", None),
             "pid": self.cfg.data.pid,
-            "use_cache": self.cfg.data.use_cache,
         }
         self._init_data(PseudoscalarDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
@@ -1261,6 +1250,5 @@ class VBFExperiment(TaggingExperiment):
 
         dataset_kwargs = {
             "length": getattr(self.cfg.data, "length", None),
-            "use_cache": self.cfg.data.use_cache,
         }
         self._init_data(VBFDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)

@@ -5,7 +5,9 @@ from lloca.utils.utils import get_batch_from_ptr
 from torch_geometric.utils import scatter
 
 from experiments.hep import get_eta, get_phi, get_pt
-from experiments.tagging.dataset import EPS
+
+# fourmomenta with all components below this are padding
+EPS = 1e-5
 
 TAGGING_FEATURES = (
     "log_pt",
