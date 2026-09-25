@@ -1,5 +1,3 @@
-import hashlib
-import json
 from typing import NamedTuple
 
 import numpy as np
@@ -402,20 +400,6 @@ class TTSmeftDataset(TokenDataset):
         self.include_ps = include_ps
         self.tag_down = tag_down
         self.layout = TTSmeftLayout(pid=pid, include_ps=include_ps)
-
-    def fingerprint(self):
-        """Hash of everything that decides the events and their features."""
-        key = [
-            self.filenames,
-            self.length,
-            self.seed,
-            list(self.split_fracs),
-            self.shuffle,
-            self.include_pid,
-            self.include_ps,
-            self.tag_down,
-        ]
-        return hashlib.sha256(json.dumps(key).encode("utf-8")).hexdigest()
 
     def _read(self, path):
         return read_events(path)

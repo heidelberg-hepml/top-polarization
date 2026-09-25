@@ -624,8 +624,8 @@ class DownTaggingExperiment(TaggingExperiment):
                 "data.dataset_eval='ttsmeft' currently only supports use_ditop=False."
             )
 
-        # The relabeled graphs are consumed by TTSmeftExperiment, so they have to be built with
-        # exactly the settings that experiment will use: same options, same cache key.
+        # The predictions are consumed by TTSmeftExperiment, so the test split has to be built
+        # with exactly the settings that experiment will use
         ttsmeft_cfg = self._ttsmeft_eval_cfg()
         data_dir = ttsmeft_cfg.data_dir
 
@@ -646,24 +646,13 @@ class DownTaggingExperiment(TaggingExperiment):
             momentum_float64=self.cfg.data.momentum_float64,
         )
 
-        test_indices = ttsmeft_dataset.get_subset("test").tolist()
-        ttsmeft_test_graphs = [ttsmeft_dataset[i] for i in test_indices]
-
         network_dtype = torch.float64 if self.cfg.use_float64 else torch.float32
-        downtag_graphs, down_is_leading = [], []
-        for graph in ttsmeft_test_graphs:
-            downtag_graph, is_leading = ttsmeft_graph_to_downtag_input(
-                graph, ttsmeft_dataset.layout, self.cfg.data.pid, network_dtype
-            )
-            downtag_graphs.append(downtag_graph)
-            down_is_leading.append(is_leading)
-
-        self._ttsmeft_eval_graphs = ttsmeft_test_graphs
-        self._ttsmeft_eval_down_is_leading = down_is_leading
-        self._ttsmeft_eval_layout = ttsmeft_dataset.layout
-        self._ttsmeft_eval_cache_path = TTSmeftExperiment._relabel_cache_path(
-            ttsmeft_dataset, data_dir
-        )
+        downtag_graphs = [
+            ttsmeft_graph_to_downtag_input(
+                ttsmeft_dataset[i], ttsmeft_dataset.layout, self.cfg.data.pid, network_dtype
+            )[0]
+            for i in ttsmeft_dataset.get_subset("test").tolist()
+        ]
 
         downtag_dataset = TaggingDataset(downtag_graphs)
 
@@ -675,36 +664,6 @@ class DownTaggingExperiment(TaggingExperiment):
         LOGGER.info(
             f"Built {len(downtag_graphs)} down-tagger-compatible events from the fixed tt_smeft "
             f"test split ({data_dir}) for evaluation with data.dataset_eval='ttsmeft'"
-        )
-
-    def _save_ttsmeft_downtag_relabel(self):
-        labels_predict = self.results["test"]["labels_predict"]
-        predicted_down_is_leading = (labels_predict.round() == 1).tolist()
-
-        network_dtype = torch.float64 if self.cfg.use_float64 else torch.float32
-        momentum_dtype = torch.float64 if self.cfg.data.momentum_float64 else torch.float32
-
-        relabeled_graphs = [
-            relabel_ttsmeft_graph(
-                graph,
-                pred_leading != true_leading,
-                self._ttsmeft_eval_layout,
-                network_dtype,
-                momentum_dtype,
-            )
-            for graph, true_leading, pred_leading in zip(
-                self._ttsmeft_eval_graphs,
-                self._ttsmeft_eval_down_is_leading,
-                predicted_down_is_leading,
-                strict=True,
-            )
-        ]
-
-        os.makedirs(os.path.dirname(self._ttsmeft_eval_cache_path), exist_ok=True)
-        torch.save({"data_list": relabeled_graphs}, self._ttsmeft_eval_cache_path)
-        LOGGER.info(
-            f"Saved {len(relabeled_graphs)} down-tag-relabeled tt_smeft test events to "
-            f"{self._ttsmeft_eval_cache_path}"
         )
 
     def evaluate(self):
@@ -724,8 +683,9 @@ class DownTaggingExperiment(TaggingExperiment):
             self.results[set_label]["score_l"] = pol["score_l"][-1]
             self.results[set_label]["score_r"] = pol["score_r"][-1]
 
-        if self.cfg.data.dataset_eval == "ttsmeft":
-            self._save_ttsmeft_downtag_relabel()
+        # labels.txt holds the down tags that the tt_smeft evaluation reads (data.downtag_labels)
+        if self.cfg.data.dataset_eval == "ttsmeft" and not self.cfg.evaluation.save_labels:
+            self._save_metrics()
 
     @torch.no_grad()
     def _evaluate_single(self, loader, title, mode, step=None):
@@ -901,20 +861,13 @@ class TTSmeftExperiment(TaggingExperiment):
 
     @staticmethod
     def _dataset_kwargs(cfg_data):
-        """Dataset options that define the tt_smeft graphs (and hence the cache key)."""
+        """Dataset options that define the tt_smeft graphs."""
         return {
             "length": cfg_data.length,
             "pid": cfg_data.pid,
             "include_ps": cfg_data.pseudoscalars,
             "tag_down": cfg_data.tag_down,
         }
-
-    @staticmethod
-    def _relabel_cache_path(dataset, data_dir):
-        """Where the down-tag-relabeled test split of `dataset` is cached."""
-        return os.path.join(
-            data_dir, "cache", f"ttsmeft_downtag_relabel_{dataset.fingerprint()}.pt"
-        )
 
     def _init_experiment(self, run_name_add=None):
         run_name_add = [
@@ -1006,22 +959,36 @@ class TTSmeftExperiment(TaggingExperiment):
         self._init_data(TTSmeftDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
         if not self.cfg.train and self.cfg.data.dataset_eval == "downtag":
-            self._load_downtag_relabeled_test_data()
+            self._relabel_test_data()
 
-    def _load_downtag_relabeled_test_data(self):
-        path = self._relabel_cache_path(self.data, self.cfg.data.data_dir)
-        if not os.path.exists(path):
-            raise FileNotFoundError(
-                f"No down-tag-relabeled tt_smeft test dataset found at {path}. "
-                "Run the downtagging experiment with data.dataset_eval='ttsmeft' first "
-                "to generate it from the trained down-tagger."
+    def _relabel_test_data(self):
+        """Replace the true down tag of the test split by the down-tagger prediction."""
+        # labels.txt of a downtagging run with data.dataset_eval='ttsmeft': one row per test
+        # event, (down subjet is the leading one, predicted probability of that)
+        path = self.cfg.data.downtag_labels
+        labels = np.loadtxt(path)
+        true_leading, pred_leading = labels[:, 0] == 1, labels[:, 1].round() == 1
+
+        network_dtype = torch.float64 if self.cfg.use_float64 else torch.float32
+        test_graphs = [self.data[i] for i in self.data.get_subset("test").tolist()]
+        # guards against labels from a differently built test split
+        own_leading = [
+            ttsmeft_graph_to_downtag_input(graph, self.layout, False, network_dtype)[1]
+            for graph in test_graphs
+        ]
+        if not np.array_equal(own_leading, true_leading):
+            raise ValueError(
+                f"Down tags in {path} do not match the tt_smeft test split. Run the downtagging "
+                "experiment with data.dataset_eval='ttsmeft' and the same tt_smeft settings."
             )
-        relabeled_graphs = torch.load(path, weights_only=False)["data_list"]
-        relabeled_dataset = TaggingDataset(relabeled_graphs)
-        self.data_test = relabeled_dataset
+
+        self.data_test = TaggingDataset(
+            relabel_ttsmeft_graph(graph, swap, self.layout, network_dtype, self.momentum_dtype)
+            for graph, swap in zip(test_graphs, true_leading != pred_leading, strict=True)
+        )
         LOGGER.info(
-            f"Loaded {len(relabeled_graphs)} down-tag-relabeled events for tt_smeft test "
-            f"evaluation from {path}"
+            f"Relabeled the down tag of {(true_leading != pred_leading).sum()}/{len(test_graphs)} "
+            f"tt_smeft test events with the down-tagger predictions from {path}"
         )
 
     def _cpflip_batch(self, fourmomenta, scalars, ptr, label):
