@@ -629,8 +629,7 @@ class BaseExperiment:
             if self._terminate_training:
                 LOGGER.error(
                     f"Terminating training at iteration {step}: loss has been nonfinite for "
-                    f"{self._nan_streak} consecutive optimizer steps (diverged). "
-                    "Falling back to the best checkpoint."
+                    f"{self._nan_streak} consecutive optimizer steps (diverged)"
                 )
                 break
             # validation (and early stopping)
@@ -792,7 +791,11 @@ class BaseExperiment:
         acc_loss = torch.tensor(self._acc_loss_sum / K, device=self.device)
         self._acc_loss_sum = 0.0
 
-        if (not torch.isfinite(acc_loss)) or (not torch.isfinite(grad_norm)):
+        nonfinite = (~torch.isfinite(acc_loss) | ~torch.isfinite(grad_norm)).float()
+        if self.world_size > 1:
+            # all ranks have to skip together, the loss all_reduce below is collective
+            dist.all_reduce(nonfinite, op=dist.ReduceOp.MAX)
+        if nonfinite:
             self._nan_streak += 1
             nan_max = self.cfg.training.nan_max_consecutive
             LOGGER.warning(
@@ -801,6 +804,8 @@ class BaseExperiment:
                 f"[{self._nan_streak}/{nan_max}]"
             )
             self.optimizer.zero_grad(set_to_none=True)
+            # lets the GradScaler lower its scale after an overflow (no-op without AMP)
+            self.scaler.update()
             if nan_max is not None and self._nan_streak >= nan_max:
                 self._terminate_training = True
             return
