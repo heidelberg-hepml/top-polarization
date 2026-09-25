@@ -128,28 +128,6 @@ def pol_opt(p, mom, sign):
     return torch.linalg.norm(pol_vec, axis=1), costheta
 
 
-def get_asymmetry(lp, lt):
-    def asym(n_pos, n_neg):
-        return (n_pos - n_neg) / (n_pos + n_neg)
-
-    def err_asym(n_pos, n_neg):
-        return 1 / (n_pos + n_neg) ** 2 * np.sqrt(2 * n_pos**2 * n_neg + 2 * n_pos * n_neg**2)
-
-    score_0 = lp[lt == 0] * 2 - 1
-    score_1 = lp[lt == 1] * 2 - 1
-    n_pos_0 = torch.sum(score_0 > 1e-6)
-    n_neg_0 = torch.sum(score_0 < -1e-6)
-    n_pos_1 = torch.sum(score_1 > 1e-6)
-    n_neg_1 = torch.sum(score_1 < -1e-6)
-
-    asym_0 = asym(n_pos_0, n_neg_0)
-    asym_1 = asym(n_pos_1, n_neg_1)
-    err_asym_0 = err_asym(n_pos_0, n_neg_0)
-    err_asym_1 = err_asym(n_pos_1, n_neg_1)
-
-    return (asym_0, err_asym_0), (asym_1, err_asym_1)
-
-
 def get_likelihood(left, right, bins=40, threshold=3):
     "Not used right now. Need expected number of events to obtain valid likelihood"
 

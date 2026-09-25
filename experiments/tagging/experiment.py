@@ -30,7 +30,7 @@ from experiments.tagging.embedding import (
     get_num_parity_odd_tagging_features,
     get_num_tagging_features,
 )
-from experiments.tagging.likelihood import get_asymmetry, get_polarization
+from experiments.tagging.likelihood import get_polarization
 from experiments.tagging.plots import plot_mixer
 
 PSEUDOSCALAR_MODELS = ("LGATr", "LGATrSlimPseudo")
@@ -1003,111 +1003,11 @@ class TTSmeftExperiment(TaggingExperiment):
         new_ptr = torch.cat([ptr, ptr[1:] + ptr[-1]])
         return new_fourmomenta, new_scalars, new_ptr, new_label
 
-    def _get_ypred_and_label(self, batch, val=False):
-        fourmomenta, scalars, ptr, label, *_ = self._extract_batch(batch)
-
-        if self.cfg.data.cpflip_batch:
-            fourmomenta, scalars, ptr, label = self._cpflip_batch(
-                fourmomenta,
-                scalars,
-                ptr,
-                label,
-            )
-
-        embedding = embed_tagging_data(
-            fourmomenta,
-            scalars,
-            ptr,
-            self.cfg.data,
-            n_ps=self.n_ps_data,
-            split_parity=self.split_parity,
-        )
-        embedding["num_graphs"] = label.shape[0]
-        embedding["label"] = label
-        y_pred, tracker, frames = self.model(embedding, val)
-        if isinstance(self.loss, torch.nn.BCEWithLogitsLoss) and self.model.output != "split":
-            y_pred = y_pred[:, 0]
-        return y_pred, label, tracker, frames
-
-    @torch.no_grad()
-    def _evaluate_single(self, loader, title, mode, step=None):
-        assert mode in ["val", "eval"]
-
-        metrics = super()._evaluate_single(loader, title, mode, step)
-
-        # predictions
-        mom_hadtop, mom_b, mom_hard, mom_soft, mom_leptop, mom_lep, charge, labels = (
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-        )
-        self.model.eval()
-        for batch in loader:
-            fourmomenta, scalars, ptr, label = self._extract_batch(batch)
-            if self.cfg.data.cpflip_batch:
-                fourmomenta, scalars, ptr, label = self._cpflip_batch(
-                    fourmomenta,
-                    scalars,
-                    ptr,
-                    label,
-                )
-            _, label, _, _ = self._get_ypred_and_label(batch)
-            mask_hadtop, mask_b, mask_hard, mask_soft, mask_leptop, mask_lep = (
-                (scalars[:, 0] == 1),
-                (scalars[:, 1] + scalars[:, 2] == 2),
-                (scalars[:, 1] + scalars[:, 3] == 2),
-                (scalars[:, 1] + scalars[:, 4] == 2),
-                (scalars[:, 5] == 1),
-                (scalars[:, 6] != 0),
-            )
-
-            mom_hadtop.append(fourmomenta[mask_hadtop])
-            mom_b.append(fourmomenta[mask_b])
-            mom_hard.append(fourmomenta[mask_hard])
-            mom_soft.append(fourmomenta[mask_soft])
-            mom_leptop.append(fourmomenta[mask_leptop])
-            mom_lep.append(fourmomenta[mask_lep])
-            charge.append(scalars[scalars[:, 6] == 1][:, self.layout.charge_col])
-            labels.append(label)
-
-        mom_hadtop, mom_b, mom_hard, mom_soft, mom_leptop, mom_lep, charge, labels = (
-            torch.cat(mom_hadtop).cpu(),
-            torch.cat(mom_b).cpu(),
-            torch.cat(mom_hard).cpu(),
-            torch.cat(mom_soft).cpu(),
-            torch.cat(mom_leptop).cpu(),
-            torch.cat(mom_lep).cpu(),
-            torch.cat(charge).cpu(),
-            torch.cat(labels).cpu(),
-        )
-
-        eps = (
-            torch.linalg.det(torch.stack([mom_hadtop, mom_leptop, mom_soft, mom_lep], dim=1))
-            / 173.0**4
-        )
-        eps_null = eps[labels == 0]
-        eps_pos = eps[labels == 1]
-
-        asym_null = (torch.sum(eps_null > 1e-6) - torch.sum(eps_null < -1e-6)) / (
-            torch.sum(eps_null > 1e-6) + torch.sum(eps_null < -1e-6)
-        )
-        asym_pos = (torch.sum(eps_pos > 1e-6) - torch.sum(eps_pos < -1e-6)) / (
-            torch.sum(eps_pos > 1e-6) + torch.sum(eps_pos < -1e-6)
-        )
-        LOGGER.info(
-            f"Epsilon asymmetry in batch for {title} dataset: "
-            f"{asym_null:.3f} (label 0) and {asym_pos:.3f} (label 1) where the c_tG operator has a "
-            f"{'real only' if self.cfg.data.bsm == 're' else 'imaginary only' if self.cfg.data.bsm == 'im' else 'mixed real and imaginary'} coupling."
-        )
-
-        results = metrics
-
-        return results
+    def _extract_batch(self, batch):
+        fourmomenta, scalars, ptr, label = super()._extract_batch(batch)
+        if self.cfg.data.cpflip_batch and self.model.training:
+            return self._cpflip_batch(fourmomenta, scalars, ptr, label)
+        return fourmomenta, scalars, ptr, label
 
 
 class PseudoscalarExperiment(TaggingExperiment):
