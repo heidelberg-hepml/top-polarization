@@ -1,34 +1,12 @@
-from itertools import permutations
-
 import torch
 
 from experiments.hep import EPS, lorentz_boost
 
 
 def eps_tensor(*p, dtype, norm=173**4):
-    def permutation_sign(perm):
-        n = len(perm)
-        inversions = 0
-        for i in range(n):
-            for j in range(i + 1, n):
-                if perm[i] > perm[j]:
-                    inversions += 1
-        return 1.0 if inversions % 2 == 0 else -1.0
-
-    def levi_cevita_tensor(dim):
-        arr = torch.zeros(tuple([dim for _ in range(dim)]), dtype=dtype)
-        for x in permutations(tuple(range(dim))):
-            arr[x] = permutation_sign(x)
-        return arr
-
-    N = len(p)
-    if N != 4:
-        raise ValueError("Only 4D Levi-Civita tensor is supported.")
-    eps = levi_cevita_tensor(N)
-    g_munu = torch.diag(torch.tensor([1, -1, -1, -1], dtype=dtype))
-
-    lowered = [torch.einsum("ij, nj -> ni", g_munu, q.reshape(-1, 4)) for q in p]
-    return torch.einsum("ijkl, ni, nj, nk, nl -> n", eps, *lowered) / norm
+    """Return eps^{mu nu rho sigma} p1_mu p2_nu p3_rho p4_sigma / m_t^4, with eps^{0123} = 1."""
+    metric = torch.tensor([1.0, -1.0, -1.0, -1.0], dtype=dtype)
+    return torch.linalg.det(torch.stack([q.reshape(-1, 4) * metric for q in p], dim=-1)) / norm
 
 
 def _normalize(v, eps=EPS):
@@ -50,15 +28,10 @@ def spin_correlation_nr(p_top_had, p_top_lep, p_prox_down, p_lep, lep_charge, dt
     p_beam = _normalize(lorentz_boost(beam, ttbar)[:, 1:4])
 
     costheta_kb = (p_beam * k_axis).sum(dim=-1)
-    sintheta_kb = torch.sqrt((1.0 - costheta_kb**2).clamp(min=0.0))
     sign_kb = torch.sign(costheta_kb)
 
     n_axis = _normalize(sign_kb.unsqueeze(-1) * torch.cross(p_beam, k_axis, dim=-1))
-    r_axis = _normalize(
-        sign_kb.unsqueeze(-1)
-        * (p_beam - costheta_kb.unsqueeze(-1) * k_axis)
-        / sintheta_kb.clamp(min=EPS).unsqueeze(-1)
-    )
+    r_axis = _normalize(sign_kb.unsqueeze(-1) * (p_beam - costheta_kb.unsqueeze(-1) * k_axis))
 
     d_top = _normalize(lorentz_boost(analyzer_top, top)[:, 1:4])
     d_atop = _normalize(lorentz_boost(analyzer_atop, atop)[:, 1:4])
