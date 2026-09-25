@@ -3,9 +3,9 @@ exp_name: tt_smeft
 
 data:
   data_dir: data/tt_smeft/
-  lbl_0: sm # [sm|neg]
-  bsm: im # [re|im|mix]
-  c_value: 2.6
+  lbl_0: sm # sm | neg
+  bsm: im # re | im | mix
+  c_value: 2.6 # |c_tG| of the BSM files: 0.1 | 2.6
   cpflip_batch: false # only used with lbl_0=neg and bsm=im
   mass_window: loose
   pid: true

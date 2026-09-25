@@ -3,7 +3,6 @@ import os
 import re
 import time
 from collections import defaultdict
-from types import SimpleNamespace
 
 import numpy as np
 import torch
@@ -592,29 +591,6 @@ class DownTaggingExperiment(TaggingExperiment):
             }
             self._init_data(DownTaggingDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
-    def _ttsmeft_eval_cfg(self):
-        """tt_smeft data settings to mirror when evaluating the down-tagger on tt_smeft.
-
-        Overridable from the down-tagging config with a `ttsmeft_` prefix; the defaults match
-        config/tt_smeft.yaml so both runs build the same dataset.
-        """
-        defaults = {
-            "data_dir": "data/tt_smeft/",
-            "mass_window": self.cfg.data.mass_window,
-            "lbl_0": "sm",
-            "bsm": "im",
-            "c_value": 2.6,
-            "length": -1,
-            "pid": True,
-            "pseudoscalars": True,
-            "tag_down": True,
-        }
-        resolved = {
-            key: getattr(self.cfg.data, f"ttsmeft_{key}", default)
-            for key, default in defaults.items()
-        }
-        return SimpleNamespace(**resolved)
-
     def _init_ttsmeft_eval_data(self):
         if self.data:
             return
@@ -624,9 +600,8 @@ class DownTaggingExperiment(TaggingExperiment):
                 "data.dataset_eval='ttsmeft' currently only supports use_ditop=False."
             )
 
-        # The predictions are consumed by TTSmeftExperiment, so the test split has to be built
-        # with exactly the settings that experiment will use
-        ttsmeft_cfg = self._ttsmeft_eval_cfg()
+        ttsmeft_cfg = self.cfg.data.ttsmeft
+        assert ttsmeft_cfg.tag_down, "data.ttsmeft.tag_down=false leaves no true down tag"
         data_dir = ttsmeft_cfg.data_dir
 
         filenames = TTSmeftExperiment._select_filenames(
