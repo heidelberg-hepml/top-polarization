@@ -389,7 +389,7 @@ class TTSmeftDataset(TokenDataset):
     """CP-even vs CP-odd SMEFT ttbar events.
 
     With tag_down the down subjet takes the first non-b slot, otherwise the non-b subjets keep
-    their pt order.
+    their pt order and the pseudoscalars use the leading one in place of the down subjet.
     """
 
     BALANCE = True
@@ -429,7 +429,9 @@ class TTSmeftDataset(TokenDataset):
 
         x = torch.from_numpy(tokens["x"]).to(momentum_dtype)
         if layout.include_ps:
-            down_slot = np.where(np.isin(events["tags"][:, 1], DOWN_TAGS), 2, 3)
+            down_slot = (
+                np.where(np.isin(events["tags"][:, 1], DOWN_TAGS), 2, 3) if self.tag_down else 2
+            )
             args = (x[offsets[:-1]], x[toplep], x[offsets[:-1] + down_slot], x[lepton])
             pseudoscalars = torch.stack(
                 [

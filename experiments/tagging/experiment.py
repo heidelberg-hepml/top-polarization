@@ -848,6 +848,9 @@ class TTSmeftExperiment(TaggingExperiment):
         self.extra_scalars = self.layout.n_scalars
         self.ps_task = True
         self.n_ps_data = self.layout.n_ps
+        assert self.cfg.data.max_particles is None, (
+            "data.max_particles crops the leptonic top and the lepton, set it to null"
+        )
 
         # `_cpflip_batch` relabels the CP-conjugate copy as the opposite class
         if self.cfg.data.cpflip_batch and (
@@ -935,7 +938,10 @@ class TTSmeftExperiment(TaggingExperiment):
         else:
             raise ValueError(f"Unknown lbl_0 '{lbl_0}' for tt SMEFT data (expected 'sm' or 'neg')")
         pos_files = _select(+1)
-
+        assert null_files and pos_files, (
+            f"No tt_smeft files for one label with lbl_0={lbl_0}, bsm={bsm}, c_value={c_value} "
+            f"in {data_dir}"
+        )
         return {0: null_files, 1: pos_files}
 
     def init_data(self, mode="train"):
@@ -965,6 +971,7 @@ class TTSmeftExperiment(TaggingExperiment):
         """Replace the true down tag of the test split by the down-tagger prediction."""
         # labels.txt of a downtagging run with data.dataset_eval='ttsmeft': one row per test
         # event, (down subjet is the leading one, predicted probability of that)
+        assert self.cfg.data.tag_down, "data.dataset_eval=downtag requires data.tag_down=true"
         path = self.cfg.data.downtag_labels
         labels = np.loadtxt(path)
         true_leading, pred_leading = labels[:, 0] == 1, labels[:, 1].round() == 1
