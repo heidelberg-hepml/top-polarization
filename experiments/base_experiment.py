@@ -590,9 +590,7 @@ class BaseExperiment:
             f"while validating every {self.cfg.training.validate_every_n_steps} iterations"
             + (f" with gradient accumulation over {K} steps" if K > 1 else "")
         )
-        # validate once with the initial random weights, so the training plots start at
-        # iteration 0 and show where the loss and the scalar/pseudoscalar outputs begin.
-        # Not fed into early stopping, which still starts from the first real validation.
+        # validation at iteration 0, not used for early stopping
         self._validate(-1)
 
         self.training_start_time = time.time()

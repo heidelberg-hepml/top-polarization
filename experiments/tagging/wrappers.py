@@ -17,12 +17,9 @@ from experiments.tagging.embedding import get_tagging_features
 
 
 def add_global_token(fourmomenta, scalars, pseudoscalars, ptr):
-    """Prepend one global token per graph, used to read out the classifier score.
+    """Prepend a zero global token per graph, flagged by an extra scalar column.
 
-    The token carries no momentum and no features; it is identified by an extra scalar column
-    that is 1 on the global tokens and 0 everywhere else.
-
-    Returns the padded tensors plus the `is_global` mask selecting the new tokens.
+    Return the padded tensors, the new ptr and batch, and the `is_global` token mask.
     """
     batchsize = len(ptr) - 1
     device = ptr.device
@@ -350,8 +347,7 @@ class LGATrWrapper(nn.Module):
             attention_backend=self.attention_backend,
         )
 
-        # the fourmomentum goes in channel 0, the pseudoscalars in the pseudoscalar component
-        # of channel 0 and of n_ps-1 extra channels
+        # pseudoscalar i goes in the e0123 component of mv channel i (channel 0 holds the vector)
         mv = embed_vector(fourmomenta).unsqueeze(-2)
         n_ps = pseudoscalars.shape[-1]
         if n_ps > 1:
@@ -379,7 +375,7 @@ class LGATrWrapper(nn.Module):
             for lbl in [0, 1]:
                 mask = label == lbl
                 if mask.any():
-                    # raw per-graph outputs, so the mean and std are taken over the full val set
+                    # per-graph outputs, averaged over the full val set in _evaluate_single
                     tracker[f"scalar_output_{lbl}"] = scalar_per_graph[mask]
                     tracker[f"pseudoscalar_output_{lbl}"] = pseudo_per_graph[mask]
 
@@ -544,7 +540,7 @@ class LGATrSlimPseudoWrapper(nn.Module):
             for lbl in [0, 1]:
                 mask = label == lbl
                 if mask.any():
-                    # raw per-graph outputs
+                    # per-graph outputs, averaged over the full val set in _evaluate_single
                     tracker[f"scalar_output_{lbl}"] = scalar_per_graph[mask]
                     tracker[f"pseudoscalar_output_{lbl}"] = pseudo_per_graph[mask]
 

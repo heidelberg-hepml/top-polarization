@@ -14,10 +14,10 @@ colors = ["black", "#0343DE", "#A52A2A", "darkorange"]
 
 
 def plot_mixer(cfg, plot_path, preds_path, title, plot_dict):
+    os.makedirs(preds_path, exist_ok=True)
     dataset_eval_active = not cfg.train and cfg.data.dataset_eval == "polarized"
 
     if cfg.plotting.loss and cfg.train:
-        os.makedirs(preds_path, exist_ok=True)
         preds_data = {
             "train_loss": np.asarray(plot_dict["train_loss"]),
             "val_loss": np.asarray(plot_dict["val_loss"]),
@@ -64,7 +64,6 @@ def plot_mixer(cfg, plot_path, preds_path, title, plot_dict):
                 )
 
     if cfg.plotting.score and cfg.evaluate and not dataset_eval_active:
-        os.makedirs(preds_path, exist_ok=True)
         preds_data = {
             "labels_true": np.asarray(plot_dict["results_test"]["labels_true"]),
             "labels_predict": np.asarray(plot_dict["results_test"]["labels_predict"]),
@@ -101,7 +100,6 @@ def plot_mixer(cfg, plot_path, preds_path, title, plot_dict):
                     plot_score(cfg, out, lt, lp, title=f"{title} ({output})", logy=True)
 
     if cfg.plotting.roc and cfg.evaluate and not dataset_eval_active:
-        os.makedirs(preds_path, exist_ok=True)
         preds_data = {
             "fpr": np.asarray(plot_dict["results_test"]["fpr"]),
             "tpr": np.asarray(plot_dict["results_test"]["tpr"]),
@@ -134,7 +132,6 @@ def plot_mixer(cfg, plot_path, preds_path, title, plot_dict):
                     )
 
     if cfg.plotting.polarization and cfg.evaluate:
-        os.makedirs(preds_path, exist_ok=True)
         preds_data = {
             "score_l": np.asarray(plot_dict["results_test"]["score_l"]),
             "score_r": np.asarray(plot_dict["results_test"]["score_r"]),

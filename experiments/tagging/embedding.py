@@ -67,7 +67,7 @@ def split_tagging_features_by_parity(features, tagging_features="all"):
     return features[..., even], features[..., odd]
 
 
-def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data, n_ps=0, split_parity=None):
+def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data, n_ps=0, split_parity=False):
     """
     Embed tagging data
     We use torch_geometric sparse representations to be more memory efficient
@@ -85,10 +85,9 @@ def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data, n_ps=0, split_parity
     cfg_data: settings for embedding
     n_ps: int
         Number of trailing `scalars` columns holding parity-odd features.
-    split_parity: bool or None
-        Whether to split the parity-odd inputs off into embedding["pseudoscalars"]: the n_ps
-        trailing `scalars` columns together with the parity-odd tagging features. Only makes
-        sense for models with a dedicated pseudoscalar stream. Defaults to n_ps > 0.
+    split_parity: bool
+        Move the n_ps trailing `scalars` columns and the parity-odd tagging features into
+        embedding["pseudoscalars"], for models with a pseudoscalar stream.
 
     Returns
     -------
@@ -186,8 +185,6 @@ def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data, n_ps=0, split_parity
     tagging_features = tagging_features.to(scalars.dtype)
 
     # split off the parity-odd inputs
-    if split_parity is None:
-        split_parity = n_ps > 0
     if split_parity:
         n_even = scalars.shape[-1] - n_ps
         scalars, pseudoscalars = scalars[..., :n_even], scalars[..., n_even:]

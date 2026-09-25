@@ -334,9 +334,6 @@ class PseudoscalarDataset(TokenDataset):
 class VBFDataset(TokenDataset):
     """VBF parton-level events of three particles each, one file per label."""
 
-    def __init__(self, length=-1):
-        super().__init__(length=length)
-
     def _read(self, path):
         x = np.load(path)
         return {"x": x.reshape(-1, 4), "ntokens": np.full(len(x), x.shape[1])}

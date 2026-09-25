@@ -818,7 +818,6 @@ class PolarizationExperiment(TaggingExperiment):
 class TTSmeftExperiment(TaggingExperiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.num_outputs = 1
         self.layout = TTSmeftLayout(pid=self.cfg.data.pid, include_ps=self.cfg.data.pseudoscalars)
         self.extra_scalars = self.layout.n_scalars
         self.ps_task = True
