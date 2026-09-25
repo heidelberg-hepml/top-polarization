@@ -376,7 +376,7 @@ class BaseExperiment:
             def is_io(name):
                 return name.startswith(("linear_in.", "linear_out."))
 
-            wd_io = self.cfg.training.get("weight_decay_io", None)
+            wd_io = self.cfg.training.weight_decay_io
             if wd_io is None:
                 wd_io = self.cfg.training.weight_decay
             weights = [(n, p) for n, p in self.model.net.named_parameters() if not is_bias(p)]
@@ -794,7 +794,7 @@ class BaseExperiment:
 
         if (not torch.isfinite(acc_loss)) or (not torch.isfinite(grad_norm)):
             self._nan_streak += 1
-            nan_max = self.cfg.training.get("nan_max_consecutive", 20)
+            nan_max = self.cfg.training.nan_max_consecutive
             LOGGER.warning(
                 f"Nonfinite update at iteration {step} (loss={acc_loss.item()}, "
                 f"grad_norm={grad_norm}); skipping optimizer step "

@@ -9,6 +9,7 @@ weight_decay: 0
 
 lr_factor_framesnet: 1
 weight_decay_framesnet: 0
+weight_decay_io: 0  # linear_in/out weight decay, null = weight_decay
 
 scheduler: CosineAnnealingLR
 scheduler_scale: 1
@@ -30,3 +31,6 @@ clip_grad_norm_framesnet: null
 clip_grad_norm: null
 clip_grad_value: null
 max_grad_norm: null
+
+# terminate the run after this many consecutive nonfinite optimizer steps (null disables)
+nan_max_consecutive: 20

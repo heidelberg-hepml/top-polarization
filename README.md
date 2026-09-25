@@ -28,7 +28,7 @@ When committing, ruff will automatically fix any issues it can and report the re
 ### Getting the data
 To automatically download the datasets, run:
 ```bash
-python ./data/data_scripts/fetch_data.py --process [tt|tth|vbf] --mass [strict|loose] --out [OUTPUT_DIR]
+python ./data/data_scripts/fetch_data.py --process [tt_pol|tt_smeft|tth|vbf] --mass [strict|loose] --out [OUTPUT_DIR]
 ```
 
 ## Running Experiments
