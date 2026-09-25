@@ -373,11 +373,23 @@ class BaseExperiment:
             def is_bias(param):
                 return param.ndim <= 1
 
+            def is_io(name):
+                return name.startswith(("linear_in.", "linear_out."))
+
+            wd_io = self.cfg.training.get("weight_decay_io", None)
+            if wd_io is None:
+                wd_io = self.cfg.training.weight_decay
+            weights = [(n, p) for n, p in self.model.net.named_parameters() if not is_bias(p)]
             param_groups = [
                 {
-                    "params": [p for p in self.model.net.parameters() if not is_bias(p)],
+                    "params": [p for n, p in weights if not is_io(n)],
                     "lr": self.cfg.training.lr,
                     "weight_decay": self.cfg.training.weight_decay,
+                },
+                {
+                    "params": [p for n, p in weights if is_io(n)],
+                    "lr": self.cfg.training.lr,
+                    "weight_decay": wd_io,
                 },
                 {
                     "params": [p for p in self.model.net.parameters() if is_bias(p)],

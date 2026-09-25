@@ -11,6 +11,7 @@ weight_decay: 0
 
 lr_factor_framesnet: 1
 weight_decay_framesnet: 0
+weight_decay_io: 0  # linear_in/out weight decay, set to `null` for default
 
 # LR: Default CosineAnnealingLR
 lr: 1e-3
