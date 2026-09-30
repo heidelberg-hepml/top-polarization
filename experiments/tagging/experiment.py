@@ -545,6 +545,13 @@ class DownTaggingExperiment(TaggingExperiment):
         ]
         super()._init_experiment(run_name_add=run_name_add)
 
+    def _eval_output_suffix(self):
+        suffix = super()._eval_output_suffix()
+        if suffix == "_ttsmeft":
+            # one labels.txt per tt_smeft task, read by tt_smeft via data.downtag_labels
+            suffix += f"_{self.cfg.data.ttsmeft.lbl_0}"
+        return suffix
+
     def _extract_batch(self, batch):
         batch = batch.to(self.device)
         fourmomenta = batch.x.to(self.momentum_dtype)
