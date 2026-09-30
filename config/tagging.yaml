@@ -29,6 +29,7 @@ plotting:
  roc: true
  loss: true
  score: true
+ calibration: true
  polarization: false
 
 defaults:

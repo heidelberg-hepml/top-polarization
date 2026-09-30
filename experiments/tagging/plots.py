@@ -99,6 +99,22 @@ def plot_mixer(cfg, plot_path, preds_path, title, plot_dict):
                     plot_score(cfg, out, lt, lp, title=f"{title} ({output})")
                     plot_score(cfg, out, lt, lp, title=f"{title} ({output})", logy=True)
 
+    if cfg.plotting.calibration and cfg.evaluate and not dataset_eval_active:
+        lt = np.asarray(plot_dict["results_test"]["labels_true"])
+        preds_data, file = {}, f"{plot_path}/calibration.pdf"
+        with PdfPages(file) as out:
+            for output in [None, "scalar", "pseudo"]:
+                key = "labels_predict" if output is None else f"labels_predict_{output}"
+                if key not in plot_dict["results_test"]:
+                    continue
+                lp = np.asarray(plot_dict["results_test"][key])
+                net = cfg.model.net._target_.split(".")[-1]
+                name = net if output is None else f"{net} ({output})"
+                calib = plot_calibration(out, lt, lp, label=name)
+                suffix = "" if output is None else f"_{output}"
+                preds_data.update({f"{k}{suffix}": v for k, v in calib.items()})
+        np.savez(f"{preds_path}/calibration.npz", **preds_data)
+
     if cfg.plotting.roc and cfg.evaluate and not dataset_eval_active:
         preds_data = {
             "fpr": np.asarray(plot_dict["results_test"]["fpr"]),
@@ -302,6 +318,42 @@ def plot_score(
 
     fig.savefig(out, bbox_inches="tight", format="pdf")
     plt.close()
+
+
+def plot_calibration(out, labels_true, labels_predicted, label=None, bins=20):
+    # reliability diagram: fraction of label=1 per score bin, binomial errors
+    edges = np.linspace(0, 1, bins + 1)
+    idx = np.clip(np.digitize(labels_predicted, edges) - 1, 0, bins - 1)
+    count = np.bincount(idx, minlength=bins)
+    n = np.maximum(count, 1)
+    score_mean = np.bincount(idx, weights=labels_predicted, minlength=bins) / n
+    frac = np.bincount(idx, weights=labels_true, minlength=bins) / n
+    frac_err = np.sqrt(frac * (1 - frac) / n)
+    ece = np.sum(count * np.abs(frac - score_mean)) / count.sum()
+    mask = count > 0
+    x, y, dy = score_mean[mask], frac[mask], frac_err[mask]
+
+    fig, ax = plt.subplots(figsize=(5, 4))
+    ax.set_xlabel("Predicted probability", fontsize=FONTSIZE)
+    ax.set_ylabel("Fraction of label=1", fontsize=FONTSIZE)
+    ax.plot([0, 1], [0, 1], "k--")
+    ax.plot(x, y, color=colors[2], label=label)
+    ax.fill_between(x, y - dy, y + dy, color=colors[2], alpha=0.2)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.legend(frameon=False, fontsize=FONTSIZE, loc="lower right")
+    ax.text(
+        0.05,
+        0.95,
+        s=f"ECE = {ece:.4f}",
+        horizontalalignment="left",
+        verticalalignment="top",
+        transform=ax.transAxes,
+        fontsize=FONTSIZE,
+    )
+    fig.savefig(out, bbox_inches="tight", format="pdf")
+    plt.close()
+    return {"edges": edges, "count": count, "score_mean": score_mean, "frac": frac, "ece": ece}
 
 
 def plot_pol(out, score_l, score_r, title=None, xrange=[-1, 1], bins=20):
