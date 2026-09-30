@@ -901,6 +901,8 @@ class BaseExperiment:
         LOGGER.debug(f"Saving config at {config_filename}")
         with open(config_filename, "w", encoding="utf-8") as file:
             file.write(OmegaConf.to_yaml(self.cfg))
+            # hydra strips its own settings from cfg, keep them for -cp <run_dir> -cn config
+            file.write((Path(__file__).parents[1] / "config" / "hydra.yaml").read_text())
 
         if to_mlflow and self.cfg.use_mlflow:
             for key, value in flatten_dict(self.cfg).items():
@@ -913,7 +915,9 @@ class BaseExperiment:
                 f"Tried to load information from existing config but {config_filename} does not exist"
             )
         LOGGER.info(f"Loading information from config from {config_filename}")
-        return OmegaConf.load(config_filename)
+        cfg = OmegaConf.load(config_filename)
+        cfg.pop("hydra", None)
+        return cfg
 
     def _save_model(self, filename=None):
         if not self.cfg.save:
