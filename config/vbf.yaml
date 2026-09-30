@@ -1,12 +1,13 @@
 exp_type: vbf
-exp_name: vbf_cp
+exp_name: vbf
 
 data:
   data_dir: 'data/vbf/'
-  exp_type: cp
+  exp_type: cp # cp | pseudoscalar
 
 defaults:
  - tagging
+ - override model: tag_slim_pseudo
  - _self_
 
 training:

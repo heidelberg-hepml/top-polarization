@@ -9,18 +9,21 @@ data:
   use_ditop: false
   ttsmeft: # tt_smeft data for dataset_eval=ttsmeft, must match the tt_smeft run
     data_dir: data/tt_smeft/
-    mass_window: ${data.mass_window}
+    mass_window: loose
     lbl_0: sm
     bsm: im
     c_value: 2.6
     length: -1
     pid: true
-    pseudoscalars: true
+    pseudoscalars: false
     tag_down: true
 
 plotting:
- polarization: true
+  polarization: true
 
 defaults:
  - tagging
  - _self_
+
+training:
+  iterations: 500000

@@ -1,4 +1,3 @@
-# transformer settings optimized by us
 iterations: 200000
 batchsize: 128
 

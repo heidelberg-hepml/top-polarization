@@ -34,6 +34,6 @@ plotting:
 
 defaults:
  - default
- - model: tag_transformer
- - training: tag_default
+ - model: tag_slim
+ - training: tag_slim
  - _self_

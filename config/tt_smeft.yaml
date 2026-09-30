@@ -9,10 +9,11 @@ data:
   cpflip_batch: false # only used with lbl_0=neg and bsm=im
   mass_window: loose
   pid: true
-  pseudoscalars: true # jet-level pseudoscalars (eps, spin correlation)
+  pseudoscalars: false # jet-level pseudoscalars (eps, spin correlation)
   tag_down: true # tag the down quark in the input sequence
   downtag_labels: null # labels.txt of a downtagging run, used with dataset_eval=downtag
 
 defaults:
  - tagging
+ - override model: tag_slim_pseudo
  - _self_
