@@ -55,6 +55,8 @@ class TokenDataset(torch.utils.data.Dataset):
         self.splits = {}
         # per-event tensors attached to every graph
         self.extras = {}
+        # per token, the index within its event of the token its tagging features are relative to
+        self.ref = None
 
     def load_data(self, data_dir, filenames, network_float64=False, momentum_float64=True):
         """Read `filenames`, a dict from each label to its files or a list of unlabelled files."""
@@ -95,6 +97,8 @@ class TokenDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         lo, hi = self.ptr[idx], self.ptr[idx + 1]
         graph = Data(x=self.x[lo:hi], scalars=self.scalars[lo:hi], label=int(self.labels[idx]))
+        if self.ref is not None:
+            graph.ref = self.ref[lo:hi]
         for name, value in self.extras.items():
             graph[name] = value[idx]
         return graph
@@ -226,6 +230,16 @@ def _tail_tokens(tokens, n_tail, i):
     return torch.from_numpy(tokens["offsets"][1:] - n_tail + i)
 
 
+def _top_ref(tokens, events, n_tail):
+    """Reference tokens of the top datasets: the hadronic top (token 0) for the hadronic side,
+    the leptonic top (first tail token) for itself and the lepton (second tail token)."""
+    ref = torch.zeros(len(tokens["position"]), dtype=torch.int32)
+    toplep_position = torch.from_numpy(events["ntokens"] - n_tail).to(torch.int32)
+    for i in range(2):
+        ref[_tail_tokens(tokens, n_tail, i)] = toplep_position
+    return ref
+
+
 def _pid_features(pid, dtype):
     """PID_FEATURES rows of all tokens, zero for tokens without a PID."""
     rows = PID_FEATURES[np.where(pid < 0, len(PID_FEATURES) - 1, pid)]
@@ -262,6 +276,7 @@ class TopTaggingDataset(TokenDataset):
             scalars = torch.cat([scalars, _pid_features(tokens["pid"], network_dtype)], dim=-1)
 
         x = torch.from_numpy(tokens["x"]).to(momentum_dtype)
+        ref = _top_ref(tokens, events, n_tail)
         self._ntokens = events["ntokens"]
         if not self.use_ditop:
             is_tail = tokens["position"] >= events["ntokens"].repeat(events["ntokens"]) - n_tail
@@ -269,9 +284,9 @@ class TopTaggingDataset(TokenDataset):
                 "lep_vec": x[is_tail].reshape(-1, n_tail, 4),
                 "lep_charge": lep_charge.to(torch.long),
             }
-            x, scalars = x[~is_tail], scalars[~is_tail]
+            x, scalars, ref = x[~is_tail], scalars[~is_tail], ref[~is_tail]
             self._ntokens = events["ntokens"] - n_tail
-        self.x, self.scalars = x, scalars
+        self.x, self.scalars, self.ref = x, scalars, ref
         self.labels = torch.from_numpy(self._labels(events)).to(torch.long)
 
 
@@ -287,14 +302,40 @@ class DownTaggingDataset(TopTaggingDataset):
 
 
 class PolarizationDataset(TopTaggingDataset):
-    """Left- (label 0) against right-handed (label 1) hadronic tops."""
+    """Left- (label 0) against right-handed (label 1) hadronic tops.
+
+    Scalars as in TopTaggingDataset, but the C-odd charges (lepton charge with use_ditop, PID
+    charge with pid) move into one trailing charge column, and the lepton gets an is_lepton flag.
+    charge_last=False keeps the TopTaggingDataset layout, as the down tagger expects.
+    """
+
+    def __init__(self, length=-1, pid=False, use_ditop=False, charge_last=True):
+        super().__init__(length=length, pid=pid, use_ditop=use_ditop)
+        self.charge_last = charge_last
+
+    def _build(self, events, tokens, network_dtype, momentum_dtype):
+        super()._build(events, tokens, network_dtype, momentum_dtype)
+        if not self.charge_last or not (self.use_ditop or self.include_pid):
+            return
+        s = self.scalars
+        charge = s.new_zeros(len(s))
+        if self.include_pid:
+            pid_charge_col = 7 if self.use_ditop else 5
+            charge = s[:, pid_charge_col].clone()
+            s = torch.cat([s[:, :pid_charge_col], s[:, pid_charge_col + 1 :]], dim=-1)
+        if self.use_ditop:
+            is_lepton = s[:, 6] != 0
+            charge[is_lepton] = s[is_lepton, 6]
+            s[:, 6] = is_lepton.to(s.dtype)
+        self.scalars = torch.cat([s, charge[:, None]], dim=-1)
 
 
 class PseudoscalarDataset(TokenDataset):
     """CP-even against CP-odd ttH events, with H -> gamma gamma.
 
-    Scalars: [is_hadtop, is_subjet, sub0, sub1, sub2, is_toplep, lepton charge, is_higgs or
-    is_photon, photon0, photon1] (+ 6 PID features with pid, for constituents and photons).
+    Scalars: [is_hadtop, is_subjet, sub0, sub1, sub2, is_toplep, is_lepton, is_higgs or
+    is_photon, photon0, photon1] (+ 5 PID features with pid, for constituents and photons), then
+    the C-odd charge column (lepton charge, and the constituent charges with pid).
     """
 
     BALANCE = True
@@ -314,16 +355,27 @@ class PseudoscalarDataset(TokenDataset):
         )
         scalars = _top_category(tokens, events, n_tail, 10, network_dtype)
         scalars[toplep, 5] = 1
-        scalars[lepton, 6] = torch.from_numpy(events["lep_charge"]).to(network_dtype)
+        scalars[lepton, 6] = 1
         for col, photon in enumerate([photon0, photon1]):
             scalars[photon, 7] = 1
             scalars[photon, 8 + col] = 1
         scalars[higgs, 7] = 1
 
+        charge = scalars.new_zeros(len(scalars), 1)
         if self.include_pid:
             pid = tokens["pid"].copy()
             pid[torch.cat([photon0, photon1]).numpy()] = PHOTON_PID
-            scalars = torch.cat([scalars, _pid_features(pid, network_dtype)], dim=-1)
+            rows = _pid_features(pid, network_dtype)
+            scalars = torch.cat([scalars, rows[:, 1:]], dim=-1)
+            charge = rows[:, :1]
+        charge[lepton, 0] = torch.from_numpy(events["lep_charge"]).to(network_dtype)
+        scalars = torch.cat([scalars, charge], dim=-1)
+
+        # the Higgs is its own reference and that of the photons
+        self.ref = _top_ref(tokens, events, n_tail)
+        higgs_position = torch.from_numpy(events["ntokens"] - n_tail + 2).to(torch.int32)
+        for token in [higgs, photon0, photon1]:
+            self.ref[token] = higgs_position
 
         self.x = torch.from_numpy(tokens["x"]).to(momentum_dtype)
         self.scalars = scalars
@@ -443,6 +495,7 @@ class TTSmeftDataset(TokenDataset):
             )
 
         self.x, self.scalars = x, scalars
+        self.ref = _top_ref(tokens, events, n_tail)
         self.labels = torch.from_numpy(events["label"]).to(torch.long)
         self._ntokens = events["ntokens"]
 
@@ -516,6 +569,7 @@ def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype):
 
     downtag_graph = Data(
         x=x[keep],
+        ref=graph.ref[keep],
         scalars=new_scalars,
         label=torch.tensor([float(down_is_leading)], dtype=network_dtype),
         lep_vec=torch.cat([x[is_toplep], x[is_lep]], dim=0),
@@ -550,4 +604,4 @@ def relabel_ttsmeft_graph(graph, swap, layout, network_dtype, momentum_dtype):
             ]
         ).to(network_dtype)
 
-    return Data(x=x.clone(), scalars=new_scalars, label=graph.label)
+    return Data(x=x.clone(), ref=graph.ref.clone(), scalars=new_scalars, label=graph.label)

@@ -67,7 +67,7 @@ def split_tagging_features_by_parity(features, tagging_features="all"):
     return features[..., even], features[..., odd]
 
 
-def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data, n_ps=0, split_parity=False):
+def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data, n_ps=0, split_parity=False, ref=None):
     """
     Embed tagging data
     We use torch_geometric sparse representations to be more memory efficient
@@ -88,6 +88,9 @@ def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data, n_ps=0, split_parity
     split_parity: bool
         Move the n_ps trailing `scalars` columns and the parity-odd tagging features into
         embedding["pseudoscalars"], for models with a pseudoscalar stream.
+    ref: torch.tensor of shape (n_particles) or None
+        Index within its event of the token each particle's tagging features are taken
+        relative to. None takes them relative to the sum of all particles of the event.
 
     Returns
     -------
@@ -96,6 +99,9 @@ def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data, n_ps=0, split_parity
     batchsize = len(ptr) - 1
     arange = torch.arange(batchsize, device=fourmomenta.device)
     ptr = ptr.clone()
+    if ref is not None:
+        # before cropping, which can drop the reference tokens
+        ref = fourmomenta[ptr[get_batch_from_ptr(ptr)] + ref.long()]
 
     # crop jets to max_particles
     if cfg_data.max_particles is not None:
@@ -111,6 +117,8 @@ def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data, n_ps=0, split_parity
             offsets = ptr[kept_idx] + local_idx
             fourmomenta = fourmomenta.index_select(0, offsets)
             scalars = scalars.index_select(0, offsets)
+            if ref is not None:
+                ref = ref.index_select(0, offsets)
             ptr = torch.cat([ptr.new_zeros(1), kept_counts.cumsum(0)])
 
     # beam reference
@@ -154,6 +162,10 @@ def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data, n_ps=0, split_parity
             device=scalars.device,
         )
         scalars[~is_spurion] = scalars_buffer
+        if ref is not None:
+            ref_buffer = ref
+            ref = fourmomenta.clone()
+            ref[~is_spurion] = ref_buffer
         ptr[1:] = ptr[1:] + (arange + 1) * n_spurions
 
     # add mass regulator
@@ -171,10 +183,15 @@ def embed_tagging_data(fourmomenta, scalars, ptr, cfg_data, n_ps=0, split_parity
         ).index_select(0, batch)
         jet_boost = restframe_boost(jet)
         fourmomenta = torch.einsum("ijk,ik->ij", jet_boost, fourmomenta)
+        if ref is not None:
+            ref = torch.einsum("ijk,ik->ij", jet_boost, ref)
 
-    jet = scatter(fourmomenta[~is_spurion], batch[~is_spurion], dim=0, reduce="sum").index_select(
-        0, batch
-    )
+    if ref is not None:
+        jet = ref
+    else:
+        jet = scatter(
+            fourmomenta[~is_spurion], batch[~is_spurion], dim=0, reduce="sum"
+        ).index_select(0, batch)
     tagging_features = get_tagging_features(
         fourmomenta,
         jet,
@@ -342,7 +359,7 @@ def get_tagging_features(fourmomenta, jet, tagging_features="all", eps=1e-10):
     phi_4, phi_jet = get_phi(fourmomenta), get_phi(jet)
     dphi = ((phi_4 - phi_jet + torch.pi) % (2 * torch.pi) - torch.pi).unsqueeze(-1)
     eta_4, eta_jet = get_eta(fourmomenta), get_eta(jet)
-    deta = -(eta_4 - eta_jet).unsqueeze(-1)
+    deta = (eta_4 - eta_jet).unsqueeze(-1)
     dr = torch.sqrt((dphi**2 + deta**2).clamp(min=eps))
 
     values = {

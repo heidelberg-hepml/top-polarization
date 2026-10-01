@@ -182,6 +182,7 @@ class TaggingExperiment(BaseExperiment):
                 self.cfg.data,
                 n_ps=self.n_ps_data,
                 split_parity=self.split_parity,
+                ref=batch.get("ref"),
             )
             self.model.init_standardization(embedding["fourmomenta"], embedding["ptr"])
 
@@ -497,6 +498,7 @@ class TaggingExperiment(BaseExperiment):
             self.cfg.data,
             n_ps=self.n_ps_data,
             split_parity=self.split_parity,
+            ref=batch.get("ref"),
         )
         embedding["num_graphs"] = label.shape[0]
         embedding["label"] = label
@@ -752,9 +754,12 @@ class PolarizationExperiment(TaggingExperiment):
         self.num_outputs = 1
         self.extra_scalars = 5  # Differentiate between fatjet, subjets, and constituents
         if self.cfg.data.pid:
-            self.extra_scalars += 6
+            self.extra_scalars += 5
         if self.cfg.data.use_ditop:
             self.extra_scalars += 2
+        # L and R are CP mirrors, the trailing charge column is C-odd
+        self.ps_task = True
+        self.n_ps_data = int(self.cfg.data.pid or self.cfg.data.use_ditop)
 
     def _init_experiment(self, run_name_add=None):
         run_name_add = [
@@ -802,6 +807,8 @@ class PolarizationExperiment(TaggingExperiment):
             "length": getattr(self.cfg.data, "length", None),
             "pid": self.cfg.data.pid,
             "use_ditop": self.cfg.data.use_ditop,
+            # the down tagger also evaluates on this data (dataset_eval=polarized), in its own layout
+            "charge_last": self.ps_task,
         }
         self._init_data(PolarizationDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
@@ -1006,8 +1013,9 @@ class PseudoscalarExperiment(TaggingExperiment):
             10  # Differentiate between tops, higgs, photons, subjets, and constituents
         )
         if self.cfg.data.pid:
-            self.extra_scalars += 6
+            self.extra_scalars += 5
         self.ps_task = True
+        self.n_ps_data = 1  # trailing C-odd charge column
 
     def _init_experiment(self, run_name_add=None):
         run_name_add = [
