@@ -286,6 +286,8 @@ class TopTaggingDataset(TokenDataset):
             }
             x, scalars, ref = x[~is_tail], scalars[~is_tail], ref[~is_tail]
             self._ntokens = events["ntokens"] - n_tail
+        # truth: the leading non-b subjet is the down quark (evaluation only)
+        self.extras["down_hard"] = torch.from_numpy(np.isin(events["tags"][:, 1], DOWN_TAGS)).long()
         self.x, self.scalars, self.ref = x, scalars, ref
         self.labels = torch.from_numpy(self._labels(events)).to(torch.long)
 

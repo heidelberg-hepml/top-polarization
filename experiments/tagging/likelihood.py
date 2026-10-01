@@ -128,6 +128,116 @@ def pol_opt(p, mom, sign):
     return torch.linalg.norm(pol_vec, axis=1), costheta
 
 
+M_TOP, M_W = 172.5, 80.4
+EFFICIENCIES = np.linspace(0.2, 1.0, 33)  # contains 0.2, 0.5 and 1.0
+PROBE_KEYS = ["fraction", "beta_abs", "beta_truth", "beta_truth_err", "beta_truth_raw"]
+SLOPE_KEYS = ["slope_cos", "slope_cos_err", "slope_u", "slope_u_err"]
+
+
+def _unit(v):
+    return v / torch.linalg.norm(v, dim=-1, keepdim=True)
+
+
+def stack_jets(results):
+    """(n, 4, 6) momenta in the order hadtop, b, hard, soft, leptop, lepton."""
+    return torch.stack(
+        [results[k] for k in ["q_hadtop", "q_b", "q_hard", "q_soft", "q_leptop", "q_lep"]], dim=-1
+    )
+
+
+def probe_frame(jets, charge):
+    """Unit vectors of the hard and soft light jet and the spin axis in the hadronic top rest frame.
+
+    The spin axis is the leptonic top direction, signed by the lepton charge (as in `pol_opt`).
+    """
+    hadtop = jets[:, :, 0]
+    hard, soft, leptop = (lorentz_boost(jets[:, :, i], hadtop)[:, 1:4] for i in (2, 3, 4))
+    return _unit(hard), _unit(soft), charge[:, None] * _unit(leptop)
+
+
+def kinematic_p(jets):
+    """Tweedie's p(d = hard jet) from the W helicity angle (V-A, no right-handed W)."""
+    w = jets[:, :, 2] + jets[:, :, 3]
+    b, hard = (_unit(lorentz_boost(jets[:, :, i], w)[:, 1:4]) for i in (1, 2))
+    c = -(b * hard).sum(-1)  # cos of the hard jet to -b in the W frame
+    f0 = M_TOP**2 / (M_TOP**2 + 2 * M_W**2)
+
+    def rho(c):
+        return 0.75 * f0 * (1 - c**2) + 0.375 * (1 - f0) * (1 - c) ** 2
+
+    return rho(c) / (rho(c) + rho(-c))
+
+
+def lr_slope(x, y, bins=20):
+    """Slope through the origin of g(x) = (f_R - f_L) / (f_R + f_L), with y = 1 for R and 0 for L.
+
+    f are the binned densities of x in [-1, 1]. The error comes from the Poisson counts per bin.
+    """
+    idx = np.clip(np.digitize(x, np.linspace(-1, 1, bins + 1)) - 1, 0, bins - 1)
+    n_l, n_r = (np.bincount(idx[y == i], minlength=bins).astype(float) for i in (0, 1))
+    mean_x = np.bincount(idx, weights=x, minlength=bins) / np.maximum(n_l + n_r, 1)
+    f_l, f_r = n_l / n_l.sum(), n_r / n_r.sum()
+    ok = (n_l > 0) & (n_r > 0)
+    g = (f_r - f_l)[ok] / (f_r + f_l)[ok]
+    var = 4 * (f_l**2 * f_r / n_r.sum() + f_r**2 * f_l / n_l.sum())[ok] / (f_r + f_l)[ok] ** 4
+    w = 1 / var
+    xm = mean_x[ok]
+    return (w * xm * g).sum() / (w * xm**2).sum(), 1 / np.sqrt((w * xm**2).sum())
+
+
+def probe_report(results, polarized, efficiencies=EFFICIENCIES):
+    """Spin analyzing power of the down tagger and of baselines on the same events.
+
+    beta_abs = <|k|> is the draft's beta_d, valid only for a calibrated p. beta_truth =
+    <d_true . k / |k|> and beta_truth_raw = <d_true . k> use the true down direction. With
+    `polarized` (labels_true = L/R) the slopes of the L-R asymmetry in cos(theta) = n . k / |k|
+    and in u = n . k are added; u has slope 1 for a calibrated probe at P = 1.
+    Probes: net (labels_predict), kinematic (Tweedie c_W), soft (d = softer jet), truth.
+    """
+    jets, charge = stack_jets(results).double(), results["charge"].double()
+    q_hard, q_soft, n_hat = probe_frame(jets, charge)
+    d_hard = results["down_hard"].double()
+    d_true = torch.where(d_hard[:, None] == 1, q_hard, q_soft)
+    probes = {
+        "net": results["labels_predict"].double(),
+        "kinematic": kinematic_p(jets),
+        "soft": torch.zeros_like(d_hard),
+        "truth": d_hard,
+    }
+    y = results["labels_true"].numpy() if polarized else None
+
+    keys = PROBE_KEYS + (SLOPE_KEYS if polarized else [])
+    report = {"efficiencies": [float(e) for e in efficiencies]}
+    for name, p in probes.items():
+        report[name] = {key: [] for key in keys}
+        for eff in efficiencies:
+            mask = cut_efficiency(p[:, None], efficiency=eff)
+            if mask.sum() < 2:  # an untrained network can leave the cut empty
+                for key in keys:
+                    report[name][key].append(float("nan"))
+                continue
+            pm = p[mask, None]
+            k = pm * q_hard[mask] + (1 - pm) * q_soft[mask]
+            norm = torch.linalg.norm(k, dim=-1)
+            dot = (d_true[mask] * k).sum(-1)
+            row = {
+                "fraction": mask.double().mean().item(),
+                "beta_abs": norm.mean().item(),
+                "beta_truth": (dot / norm).mean().item(),
+                "beta_truth_err": (dot / norm).std().item() / mask.sum().double().sqrt().item(),
+                "beta_truth_raw": dot.mean().item(),
+            }
+            if polarized:
+                u = (n_hat[mask] * k).sum(-1)
+                for tag, x in [("cos", u / norm), ("u", u)]:
+                    row[f"slope_{tag}"], row[f"slope_{tag}_err"] = lr_slope(
+                        x.numpy(), y[mask.numpy()]
+                    )
+            for key in keys:
+                report[name][key].append(float(row[key]))
+    return report
+
+
 def get_likelihood(left, right, bins=40, threshold=3):
     "Not used right now. Need expected number of events to obtain valid likelihood"
 

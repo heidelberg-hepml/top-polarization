@@ -1,4 +1,5 @@
 import glob
+import json
 import os
 import re
 import time
@@ -13,6 +14,7 @@ from torch_geometric.loader import DataLoader
 from experiments.base_experiment import BaseExperiment
 from experiments.logger import LOGGER
 from experiments.mlflow import log_mlflow
+from experiments.tagging.asymmetry import asymmetry, o1
 from experiments.tagging.dataset import (
     DownTaggingDataset,
     PolarizationDataset,
@@ -29,7 +31,7 @@ from experiments.tagging.embedding import (
     get_num_parity_odd_tagging_features,
     get_num_tagging_features,
 )
-from experiments.tagging.likelihood import get_polarization
+from experiments.tagging.likelihood import get_polarization, probe_report
 from experiments.tagging.plots import plot_mixer
 
 PSEUDOSCALAR_MODELS = ("LGATr", "LGATrSlimPseudo")
@@ -251,6 +253,22 @@ class TaggingExperiment(BaseExperiment):
 
         if self.cfg.evaluation.save_labels:
             self._save_metrics()
+        if self.cfg.save:
+            self._save_results()
+
+    def _save_results(self):
+        """Write the scalar metrics and event counts of the evaluated sets to results_<idx>.json."""
+        out = {"n_events": {s: len(getattr(self, f"data_{s}")) for s in ["train", "val", "test"]}}
+        for set_label, res in self.results.items():
+            out[set_label] = {
+                k: float(v) for k, v in res.items() if isinstance(v, (int, float, np.number))
+            } | res.get("extra", {})
+        path = os.path.join(
+            self.cfg.run_dir, f"results_{self.cfg.run_idx}{self._eval_output_suffix()}.json"
+        )
+        with open(path, "w") as f:
+            json.dump(out, f, indent=1)
+        LOGGER.info(f"Saved results in {path}")
 
     @torch.no_grad()
     def _evaluate_single(self, loader, title, mode, step=None):
@@ -552,6 +570,8 @@ class DownTaggingExperiment(TaggingExperiment):
         if suffix == "_ttsmeft":
             # one labels.txt per tt_smeft task, read by tt_smeft via data.downtag_labels
             suffix += f"_{self.cfg.data.ttsmeft.lbl_0}"
+            if self.cfg.data.ttsmeft.c_value != 2.6:  # e.g. 0.1 -> _c0p1
+                suffix += f"_c{self.cfg.data.ttsmeft.c_value}".replace(".", "p")
         return suffix
 
     def _extract_batch(self, batch):
@@ -667,6 +687,33 @@ class DownTaggingExperiment(TaggingExperiment):
             self.results[set_label]["score_l"] = pol["score_l"][-1]
             self.results[set_label]["score_r"] = pol["score_r"][-1]
 
+            polarized = self.cfg.data.dataset_eval == "polarized"
+            probe = probe_report(self.results[set_label], polarized)
+            self.results[set_label]["probe"] = probe
+            at = [
+                int(np.argmin(np.abs(np.array(probe["efficiencies"]) - e))) for e in (0.2, 0.5, 1)
+            ]
+            self.results[set_label]["extra"] = {
+                "probe": probe,
+                "pol_l": {
+                    str(pol["efficiency"][i]): float(pol["pol_l"][i]) for i in (0, 375, 1000)
+                },
+                "pol_r": {
+                    str(pol["efficiency"][i]): float(pol["pol_r"][i]) for i in (0, 375, 1000)
+                },
+            }
+            for name in ["net", "kinematic", "soft", "truth"]:
+                LOGGER.info(
+                    f"Probe {name} ({set_label}), efficiency 0.2 / 0.5 / 1.0: "
+                    + " ".join(
+                        f"{key}=" + "/".join(f"{probe[name][key][i]:.3f}" for i in at)
+                        for key in probe[name]
+                        if not key.endswith("_err") and key != "beta_truth_raw"
+                    )
+                )
+        if self.cfg.save:
+            self._save_results()
+
         # labels.txt holds the down tags that the tt_smeft evaluation reads (data.downtag_labels)
         if self.cfg.data.dataset_eval == "ttsmeft" and not self.cfg.evaluation.save_labels:
             self._save_metrics()
@@ -688,9 +735,12 @@ class DownTaggingExperiment(TaggingExperiment):
             [],
             [],
         )
+        down_hard = []
         self.model.eval()
         for batch in loader:
             fourmomenta, scalars, _, _, lep_vec, lep_charge = self._extract_batch(batch)
+            # the true down tag; L/R datasets carry it separately, the others have it as label
+            down_hard.append(getattr(batch, "down_hard", batch.label).flatten().cpu().double())
             mask_hadtop, mask_b, mask_hard, mask_soft = (
                 (scalars[:, 0] == 1),
                 (scalars[:, 1] + scalars[:, 2] == 2),
@@ -742,6 +792,7 @@ class DownTaggingExperiment(TaggingExperiment):
                 mom_lep,
                 charge,
             )
+            momenta["down_hard"] = torch.cat(down_hard)
 
         results = metrics | momenta
 
@@ -981,10 +1032,70 @@ class TTSmeftExperiment(TaggingExperiment):
             relabel_ttsmeft_graph(graph, swap, self.layout, network_dtype, self.momentum_dtype)
             for graph, swap in zip(test_graphs, true_leading != pred_leading, strict=True)
         )
+        self.downtag_labels = labels
+        self.downtag_accuracy = float((true_leading == pred_leading).mean())
         LOGGER.info(
             f"Relabeled the down tag of {(true_leading != pred_leading).sum()}/{len(test_graphs)} "
             f"tt_smeft test events with the down-tagger predictions from {path}"
         )
+
+    def _eval_output_suffix(self):
+        suffix = super()._eval_output_suffix()
+        if suffix == "_downtag" and self.cfg.data.c_value != 2.6:
+            suffix += f"_c{self.cfg.data.c_value}".replace(".", "p")
+        return suffix
+
+    def evaluate(self):
+        super().evaluate()
+        if "test" in self.cfg.evaluation.eval_set and self.cfg.data.bsm == "im":
+            self._evaluate_asymmetry()
+        if self.cfg.save:
+            self._save_results()
+
+    def _event_jets(self, idx):
+        """Momenta (n, 4, 6) as in `stack_jets`, lepton charge and the truth down-is-harder flag."""
+        data = self.data
+        start, end = data.ptr[idx], data.ptr[idx + 1]
+        down, other = data.x[start + 2], data.x[start + 3]  # tag_down slots
+        harder = torch.linalg.norm(down[:, 1:3], dim=-1) >= torch.linalg.norm(other[:, 1:3], dim=-1)
+        hard, soft = (torch.where(harder[:, None], a, b) for a, b in [(down, other), (other, down)])
+        jets = torch.stack(
+            [data.x[start], data.x[start + 1], hard, soft, data.x[end - 2], data.x[end - 1]], dim=-1
+        )
+        return jets, data.scalars[end - 1, self.layout.charge_col].double(), harder.double()
+
+    def _evaluate_asymmetry(self):
+        """Sign asymmetries of O1 and of the network output on the test events, per coupling."""
+        assert self.cfg.data.tag_down, "O1 with the truth down quark needs data.tag_down=true"
+        cfg, res = self.cfg.data, self.results["test"]
+        jets, charge, harder = self._event_jets(self.data.get_subset("test"))
+        arrays = {
+            "labels": res["labels_true"].numpy(),
+            "omega": (2 * res.get("labels_predict_pseudo", res["labels_predict"]) - 1).numpy(),
+            "o1_truth": o1(jets, charge, harder).numpy(),
+            "c0": 0.0 if cfg.lbl_0 == "sm" else -float(cfg.c_value),
+            "c1": float(cfg.c_value),
+        }
+        if cfg.dataset_eval == "downtag":
+            labels = self.downtag_labels
+            assert np.array_equal(labels[:, 0], harder.numpy()), "labels.txt misaligned with test"
+            arrays["o1_tagger"] = o1(jets, charge, torch.from_numpy(labels[:, 1])).numpy()
+            res.setdefault("extra", {})["downtag_label_accuracy"] = self.downtag_accuracy
+        asym = {}
+        for key in [k for k in arrays if k.startswith(("o1_", "omega"))]:
+            for label in (0, 1):
+                a, sigma = asymmetry(arrays[key][arrays["labels"] == label])
+                asym[f"{key}_c={arrays[f'c{label}']:g}"] = {"A": a, "sigma": sigma}
+                LOGGER.info(
+                    f"Asymmetry of {key} at c = {arrays[f'c{label}']:g}: {a:+.5f} +- {sigma:.5f}"
+                )
+        res.setdefault("extra", {})["asymmetry"] = asym
+        if self.cfg.save:
+            path = os.path.join(
+                self.cfg.run_dir, f"preds_{self.cfg.run_idx}{self._eval_output_suffix()}"
+            )
+            os.makedirs(path, exist_ok=True)
+            np.savez(os.path.join(path, "o1.npz"), **arrays)
 
     def _cpflip_batch(self, fourmomenta, scalars, ptr, label):
         new_fourmomenta = torch.cat(
