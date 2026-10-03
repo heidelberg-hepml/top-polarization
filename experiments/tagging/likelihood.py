@@ -43,11 +43,13 @@ def get_polarization(results, exp):
         else:
             raise ValueError(f"Experiment type {exp} not implemented")
         # like_ratio = get_likelihood(score_l, score_r)
-        pol["pol_l"].append(beta_l)
-        pol["pol_r"].append(beta_r)
+        pol["pol_l"].append(beta_l.mean())
+        pol["pol_r"].append(beta_r.mean())
         pol["score_l"].append(score_l)
         pol["score_r"].append(score_r)
         # pol["like_ratio"].append(like_ratio)
+    # per-event beta at efficiency 1, aligned with labels_predict, for the statistical error
+    pol["beta_l"], pol["beta_r"] = beta_l, beta_r
     return pol
 
 
@@ -56,8 +58,8 @@ def polarized(labels, efficiency=1):
     labels_cut = labels[mask]
     score_l = 2 * labels_cut[labels_cut[:, 0] == 0, 1] - 1
     score_r = 2 * labels_cut[labels_cut[:, 0] == 1, 1] - 1
-    beta_l = (score_l < 0).float().mean()
-    beta_r = (score_r >= 0).float().mean()
+    beta_l = (score_l < 0).float()
+    beta_r = (score_r >= 0).float()
 
     return beta_l, beta_r, score_l, score_r
 
@@ -77,7 +79,6 @@ def unpolarized(labels, jets, charge, efficiency=1):
         jets_cut[labels_cut[:, 0] == 1],
         charge_cut[labels_cut[:, 0] == 1],
     )
-    beta_l, beta_r = torch.mean(beta_l), torch.mean(beta_r)
 
     return beta_l, beta_r, costheta_l, costheta_r
 

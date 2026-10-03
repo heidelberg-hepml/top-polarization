@@ -686,6 +686,8 @@ class DownTaggingExperiment(TaggingExperiment):
             self.results[set_label]["pol_r"] = pol["pol_r"]
             self.results[set_label]["score_l"] = pol["score_l"][-1]
             self.results[set_label]["score_r"] = pol["score_r"][-1]
+            self.results[set_label]["beta_l"] = pol["beta_l"]
+            self.results[set_label]["beta_r"] = pol["beta_r"]
 
             polarized = self.cfg.data.dataset_eval == "polarized"
             probe = probe_report(self.results[set_label], polarized)
@@ -878,6 +880,8 @@ class PolarizationExperiment(TaggingExperiment):
             self.results[set_label]["pol_r"] = pol["pol_r"]
             self.results[set_label]["score_l"] = pol["score_l"][-1]
             self.results[set_label]["score_r"] = pol["score_r"][-1]
+            self.results[set_label]["beta_l"] = pol["beta_l"]
+            self.results[set_label]["beta_r"] = pol["beta_r"]
 
 
 class TTSmeftExperiment(TaggingExperiment):

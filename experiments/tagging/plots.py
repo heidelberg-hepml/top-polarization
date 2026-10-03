@@ -154,6 +154,8 @@ def plot_mixer(cfg, plot_path, preds_path, title, plot_dict):
             "efficiencies": np.asarray(plot_dict["results_test"]["efficiencies"]),
             "pol_l": np.asarray(plot_dict["results_test"]["pol_l"]),
             "pol_r": np.asarray(plot_dict["results_test"]["pol_r"]),
+            "beta_l": np.asarray(plot_dict["results_test"]["beta_l"]),
+            "beta_r": np.asarray(plot_dict["results_test"]["beta_r"]),
         }
         np.savez(f"{preds_path}/polarization.npz", **preds_data)
 
