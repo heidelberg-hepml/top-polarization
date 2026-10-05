@@ -156,8 +156,8 @@ def guess_model_name(preds_dir):
 def _val_iters(n_train, n_val):
     if n_val == 0:
         return np.array([])
-    frac = n_train / n_val
-    return np.arange(1, n_val + 1) * frac
+    # first validation runs before training (step 0), then every n_train / (n_val - 1) steps
+    return np.arange(n_val) * n_train / max(n_val - 1, 1)
 
 
 def plot_loss(outdir, training, title=None):
