@@ -403,7 +403,7 @@ def plot_eff(out, efficiencies, pol_l, pol_r, title=None, xrange=[0.2, 1.0], yra
 
     fig, ax = plt.subplots(figsize=(5, 4))
     ax.set_ylabel(r"$\beta_{\mathrm{opt}}$", fontsize=FONTSIZE)
-    ax.set_xlabel("Efficiency", fontsize=FONTSIZE)
+    ax.set_xlabel("Fraction of most confident events", fontsize=FONTSIZE)
     ax.plot(
         efficiencies,
         pol_l,

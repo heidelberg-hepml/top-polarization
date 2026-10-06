@@ -84,10 +84,12 @@ def unpolarized(labels, jets, charge, efficiency=1):
 
 
 def cut_efficiency(labels, efficiency=1):
-    cut_mask = torch.logical_or(
-        labels[:, -1] >= 1 - (efficiency / 2), labels[:, -1] < (efficiency / 2)
-    )
-    return cut_mask
+    """Keep the fraction `efficiency` of all events with the largest |p - 1/2|.
+
+    Ties at the threshold are all kept, so a constant score keeps every event.
+    """
+    conf = (labels[:, -1].double() - 0.5).abs()
+    return conf >= torch.quantile(conf, 1 - efficiency)
 
 
 def pol_opt(p, mom, sign):
