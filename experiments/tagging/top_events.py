@@ -4,10 +4,11 @@ import awkward as ak
 import numpy as np
 import torch
 
-from experiments.hep import PtPhiEtaM_to_EPPP
+from experiments.hep import PtPhiEtaM_to_EPPP, lorentz_boost
 
-# tokens of an event: [tophad, b subjet, leading subjet, subleading subjet, constituents, tail]
-# with the non-b subjets in decreasing pt, the constituents grouped by subjet in that order
+# tokens of an event: [tophad, b subjet, harder subjet, softer subjet, constituents, tail]
+# with the non-b subjets in decreasing energy in the hadronic top rest frame, the constituents
+# grouped by subjet in that order
 # and pt-sorted within a group, and the tail holding the objects outside the hadronic top
 N_HEAD = 4
 N_SUBJETS = 3
@@ -54,12 +55,20 @@ def _fourmomenta(record):
     return PtPhiEtaM_to_EPPP(torch.from_numpy(np.stack(columns, axis=-1))).numpy()
 
 
-def _subjet_order(tags, pts):
-    """Return the subjet indices in (b, leading non-b, subleading non-b) order."""
+def rest_frame_energy(fourmomenta, tophad):
+    """Energy of fourmomenta (..., 4) in the rest frame of the hadronic tops tophad (n, 4)."""
+    shape = fourmomenta.shape[:-1]
+    frame = tophad.reshape(shape[0], *[1] * (len(shape) - 1), 4).expand(*shape, 4)
+    boosted = lorentz_boost(fourmomenta.reshape(-1, 4), frame.reshape(-1, 4))
+    return boosted[:, 0].reshape(shape)
+
+
+def _subjet_order(tags, hardness):
+    """Return the subjet indices in (b, harder non-b, softer non-b) order."""
     is_b = np.isin(tags, B_TAGS)
     assert (is_b.sum(1) == 1).all(), "every event needs exactly one b-tagged subjet"
     # stable, so ties keep the order of the file
-    non_b = np.argsort(np.where(is_b, np.inf, -pts), axis=1, kind="stable")[:, :2]
+    non_b = np.argsort(np.where(is_b, np.inf, -hardness), axis=1, kind="stable")[:, :2]
     return np.concatenate([np.argmax(is_b, axis=1)[:, None], non_b], axis=1)
 
 
@@ -79,7 +88,11 @@ def read_events(parquet_path, tail=TAIL):
         f"{parquet_path} has events with more or less than {N_SUBJETS} subjets"
     )
 
-    order = _subjet_order(ak.to_numpy(subjets["tag"]), ak.to_numpy(subjets["pt"]))
+    tophad = _fourmomenta(events["TopHad"])
+    hardness = rest_frame_energy(
+        torch.from_numpy(_fourmomenta(subjets)), torch.from_numpy(tophad)
+    ).numpy()
+    order = _subjet_order(ak.to_numpy(subjets["tag"]), hardness)
     subjets = subjets[np.arange(len(events))[:, None], ak.Array(order)]
 
     constituents = subjets["Constituents"]
@@ -97,7 +110,7 @@ def read_events(parquet_path, tail=TAIL):
     )
 
     x = np.zeros((offsets[-1], 4), dtype=np.float64)
-    x[offsets[:-1]] = _fourmomenta(events["TopHad"])
+    x[offsets[:-1]] = tophad
     x[offsets[:-1, None] + 1 + np.arange(N_SUBJETS)] = _fourmomenta(subjets)
     x[const_tokens] = _fourmomenta(constituents)
     for i, name in enumerate(tail):

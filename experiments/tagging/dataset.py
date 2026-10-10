@@ -14,6 +14,7 @@ from experiments.tagging.top_events import (
     PID_FEATURES,
     TAIL,
     read_events,
+    rest_frame_energy,
 )
 
 # arrays of a file with one entry per token, all others have one entry per event
@@ -286,14 +287,15 @@ class TopTaggingDataset(TokenDataset):
             }
             x, scalars, ref = x[~is_tail], scalars[~is_tail], ref[~is_tail]
             self._ntokens = events["ntokens"] - n_tail
-        # truth: the leading non-b subjet is the down quark (evaluation only)
+        # truth: the harder non-b subjet is the down quark (evaluation only)
         self.extras["down_hard"] = torch.from_numpy(np.isin(events["tags"][:, 1], DOWN_TAGS)).long()
         self.x, self.scalars, self.ref = x, scalars, ref
         self.labels = torch.from_numpy(self._labels(events)).to(torch.long)
 
 
 class DownTaggingDataset(TopTaggingDataset):
-    """Label 1 if the leading non-b subjet has one of the parton tags `tag` (down quarks)."""
+    """Label 1 if the harder non-b subjet (in the top rest frame) has one of the parton tags
+    `tag` (down quarks)."""
 
     def __init__(self, tag=DOWN_TAGS, length=-1, pid=False, use_ditop=False):
         super().__init__(length=length, pid=pid, use_ditop=use_ditop)
@@ -440,7 +442,8 @@ class TTSmeftDataset(TokenDataset):
     """CP-even vs CP-odd SMEFT ttbar events.
 
     With tag_down the down subjet takes the first non-b slot, otherwise the non-b subjets keep
-    their pt order and the pseudoscalars use the leading one in place of the down subjet.
+    their top rest frame energy order and the pseudoscalars use the harder one in place of the down
+    subjet.
     """
 
     BALANCE = True
@@ -533,7 +536,7 @@ def _ttsmeft_role_masks(scalars):
 
 def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype):
     """Rebuild a tt_smeft graph in the format the down-tagger was trained on:
-    non-b subjets ordered by pt, no leptonic side."""
+    non-b subjets ordered by energy in the top rest frame, no leptonic side."""
     if pid and not layout.pid:
         raise ValueError(
             "Down-tagger expects PID features, but the tt_smeft graph was built "
@@ -545,9 +548,9 @@ def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype):
 
     down_row = torch.nonzero(is_subjet & is_down, as_tuple=True)[0].item()
     other_row = torch.nonzero(is_subjet & is_other, as_tuple=True)[0].item()
-    down_is_leading = (
-        torch.linalg.norm(x[down_row, 1:3]) >= torch.linalg.norm(x[other_row, 1:3])
-    ).item()
+    hadtop = x[torch.nonzero(scalars[:, 0] == 1, as_tuple=True)[0]]
+    e_down, e_other = rest_frame_energy(x[[down_row, other_row]][None], hadtop)[0]
+    down_is_leading = (e_down >= e_other).item()
 
     new_category = torch.zeros(scalars.shape[0], 5, dtype=network_dtype)
     new_category[:, :3] = scalars[:, :3]

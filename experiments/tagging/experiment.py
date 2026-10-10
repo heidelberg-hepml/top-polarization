@@ -33,6 +33,7 @@ from experiments.tagging.embedding import (
 )
 from experiments.tagging.likelihood import get_polarization, probe_report
 from experiments.tagging.plots import plot_mixer
+from experiments.tagging.top_events import rest_frame_energy
 
 PSEUDOSCALAR_MODELS = ("LGATr", "LGATrSlimPseudo")
 
@@ -1061,7 +1062,7 @@ class TTSmeftExperiment(TaggingExperiment):
         data = self.data
         start, end = data.ptr[idx], data.ptr[idx + 1]
         down, other = data.x[start + 2], data.x[start + 3]  # tag_down slots
-        harder = torch.linalg.norm(down[:, 1:3], dim=-1) >= torch.linalg.norm(other[:, 1:3], dim=-1)
+        harder = rest_frame_energy(down, data.x[start]) >= rest_frame_energy(other, data.x[start])
         hard, soft = (torch.where(harder[:, None], a, b) for a, b in [(down, other), (other, down)])
         jets = torch.stack(
             [data.x[start], data.x[start + 1], hard, soft, data.x[end - 2], data.x[end - 1]], dim=-1
