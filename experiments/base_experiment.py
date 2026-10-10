@@ -120,6 +120,8 @@ class BaseExperiment:
     def init_model(self):
         # initialize model
         self.model = instantiate(self.cfg.model)
+        # only the backbone, the wrapper builds data-dependent attention masks
+        self.model.net.compile()
         num_parameters = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         if self.cfg.use_mlflow:
             log_mlflow("num_parameters", float(num_parameters), step=0)
