@@ -27,11 +27,14 @@ L-GATr-slim:
 python run.py -cp config -cn downtagging run_name=slim
 ```
 
-L-GATr
+L-GATr (same training settings as L-GATr-slim):
 ```bash
 python run.py -cp config -cn downtagging run_name=lgatr \
-    model=tag_lgatr training=tag_lgatr
+    model=tag_lgatr training=tag_slim
 ```
+
+Every command in steps 1-3 runs with L-GATr by adding `model=tag_lgatr training=tag_slim`. The paper
+uses seeds 0-4 (`seed=<k>`) for L-GATr-slim and seed 0 for L-GATr.
 
 ## 2. VBF toy
 
