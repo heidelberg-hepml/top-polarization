@@ -33,6 +33,9 @@ GNN_EFFICIENCY = os.path.join(REPO_DIR, "data", "beta_opt_GNN.csv")
 
 COLORS = ["black", "blue", "red", "orange"]
 
+# network name in the axis and legend labels, set with --model
+MODEL = "L-GATr-slim"
+
 # Uncertainties: "seed" is the std over the training seeds (all evaluated on the same test set),
 # "stat" the test-set statistical error (bootstrap, Poisson or binomial, from the first seed).
 # Bands show both added in quadrature.
@@ -641,7 +644,7 @@ def plot_polarization_extra(outdir, preds_dirs, label_0=None, label_1=None, titl
             FRACTIONS,
             mean,
             color=color,
-            label=rf"$P_{{t_{{\text{{had}}}}}} = {label}$ (L-GATr-slim)",
+            label=rf"$P_{{t_{{\text{{had}}}}}} = {label}$ ({MODEL})",
             lw=2,
         )
     if os.path.exists(GNN_EFFICIENCY):
@@ -698,6 +701,7 @@ EXTRA_PLOTTERS = {
 
 
 def main():
+    global MODEL
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--exp",
@@ -722,7 +726,12 @@ def main():
     parser.add_argument("--run-idx", type=int, default=0, help="Index N of the preds_N directory.")
     parser.add_argument("--outdir", default=OUTPATH, help="Output directory for the plots.")
     parser.add_argument("--title", default=None, help="Override the plot title.")
+    parser.add_argument("--model", default=MODEL, help="Network name in the plot labels.")
     args = parser.parse_args()
+
+    for exp, xlabel in SCORE_XLABELS.items():
+        SCORE_XLABELS[exp] = xlabel.replace(MODEL, args.model)
+    MODEL = args.model
 
     preds_dir = find_run_dir(args.run, args.run_idx)
     print(f"Reading predictions from {preds_dir}")
