@@ -38,7 +38,7 @@ MODEL = "L-GATr-slim"
 
 # Uncertainties: "seed" is the std over the training seeds (all evaluated on the same test set),
 # "stat" the test-set statistical error (bootstrap, Poisson or binomial, from the first seed).
-# Bands show both added in quadrature.
+# Bands and legend values show both added in quadrature.
 N_BOOTSTRAP = 50
 
 SCORE_LABELS = {
@@ -139,11 +139,8 @@ def mean_seed_std(values):
     return values.mean(axis=0), std
 
 
-def pm_text(mean, seed, stat, n_seeds, fmt=".4f"):
-    text = rf"{mean:{fmt}}"
-    if n_seeds > 1:
-        text += rf" \pm {seed:{fmt}}_\text{{seed}}"
-    return text + rf" \pm {stat:{fmt}}_\text{{stat}}"
+def pm_text(mean, seed, stat, fmt=".4f"):
+    return rf"{mean:{fmt}} \pm {np.hypot(seed, stat):{fmt}}"
 
 
 def guess_model_name(preds_dir):
@@ -354,7 +351,7 @@ def plot_roc(outdir, rocs, scores, title=None, exp=None):
         print(
             f"  AUC ({name}) over {len(aucs)} runs: {mean:.4f} +- {seed:.4f} (seed) +- {stat:.4f} (stat)"
         )
-        auc_label = f"AUC $= {pm_text(mean, seed, stat, len(aucs))}$"
+        auc_label = f"AUC $= {pm_text(mean, seed, stat)}$"
         roc = rocs[0]
         _plot_roc_single(
             outdir,
@@ -553,7 +550,7 @@ def plot_calibration(outdir, scores, xlabel, label_1, title=None):
     ax.text(
         0.05,
         0.95,
-        s=f"ECE $= {pm_text(ece, ece_seed, ece_stat, len(scores))}$",
+        s=f"ECE $= {pm_text(ece, ece_seed, ece_stat)}$",
         ha="left",
         va="top",
         transform=ax.transAxes,
