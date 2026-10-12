@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from experiments.tagging.asymmetry import asymmetry, fit_linear, o1
+from experiments.tagging.asymmetry import asymmetry, o1
 from experiments.tagging.likelihood import kinematic_p, lr_slope
 
 
@@ -16,12 +16,6 @@ def _jets(n=64, seed=0):
 def test_asymmetry_error():
     a, sigma = asymmetry(np.r_[np.ones(300), -np.ones(100)])
     assert np.isclose(a, 0.5) and np.isclose(sigma, np.sqrt((1 - a**2) / 400))
-
-
-def test_fit_linear_recovers_line():
-    c = np.array([-2.6, -0.1, 0, 0.1, 2.6])
-    (slope, offset), _, chi2, ndf = fit_linear(c, 0.02 * c + 0.001, np.full(5, 1e-3))
-    assert np.allclose([slope, offset], [0.02, 0.001]) and chi2 < 1e-12 and ndf == 3
 
 
 def test_lr_slope_linear_densities():

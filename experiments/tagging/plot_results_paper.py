@@ -9,6 +9,8 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
+from experiments.tagging.asymmetry import asymmetry
+
 plt.rcParams.update(
     {
         "font.size": 16,
@@ -81,7 +83,7 @@ SCORE_TRANSFORMS = {
 }
 
 ROC_AXIS_LABELS = {
-    "downtagging": (r"\epsilon_d^{j_\text{hard}}", r"\epsilon_u^{j_\text{hard}}"),
+    "downtagging": (r"\epsilon_d^{q_\text{hard}}", r"\epsilon_u^{q_\text{hard}}"),
 }
 
 SCORE_PROCESS_LABELS = {
@@ -370,25 +372,6 @@ def plot_roc(outdir, rocs, scores, title=None, exp=None):
 # ------------------------------------------------------------------
 
 
-def asym(counts):
-    assert len(counts) % 2 == 0, "Number of bins must be even to compute asymmetry"
-    n_pos = np.sum(counts[len(counts) // 2 :])
-    n_neg = np.sum(counts[: len(counts) // 2])
-    return (n_pos - n_neg) / (n_pos + n_neg)
-
-
-def err_asym(counts):
-    assert len(counts) % 2 == 0, "Number of bins must be even to compute asymmetry"
-    n_pos = np.sum(counts[len(counts) // 2 :])
-    n_neg = np.sum(counts[: len(counts) // 2])
-    return 1 / (n_pos + n_neg) ** 2 * np.sqrt(4 * n_pos**2 * n_neg + 4 * n_pos * n_neg**2)
-
-
-def score_asymmetry(scores, center=0.5):
-    counts = np.array([np.sum(scores < center), np.sum(scores >= center)])
-    return asym(counts), err_asym(counts)
-
-
 def hist_band(ax, samples, bins, color, label=None):
     """Mean over seeds of the histograms normalized to the number of events, band: seed std
     and Poisson error in quadrature."""
@@ -488,8 +471,8 @@ def plot_scores(outdir, scores, label_0, label_1, title=None, exp=None, downtag=
         if exp in ASYMMETRY_EXPS:
             for label, samples in [(label_0, scores_0), (label_1, scores_1)]:
                 center = 0.5 if exp not in SCORE_TRANSFORMS else 0.0
-                asyms = [score_asymmetry(x, center=center)[0] for x in samples]
-                stat = score_asymmetry(samples[0], center=center)[1]
+                asyms = [asymmetry(x - center)[0] for x in samples]
+                stat = asymmetry(samples[0] - center)[1]
                 mean, seed = mean_seed_std(asyms)
                 print(
                     f"  asymmetry ({name}{suffix}{', downtag' if downtag else ''}) {label}: "

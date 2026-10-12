@@ -15,49 +15,51 @@ python data/data_scripts/fetch_data.py --process tt_smeft
 python data/data_scripts/fetch_data.py --process vbf
 ```
 
-Every setting not given on the command line comes from `config/` (e.g. `training=tag_slim`:
-Lion, lr 3e-5, weight decay 2, batch size 128, cosine schedule, 200k iterations; tt_smeft:
-`bsm=im`, `c_value=2.6`, `tag_down=true`). The frozen config of each run is written to
-`runs/<exp_name>/<run_name>/config.yaml`.
+Every setting not given on the command line comes from `config/`.
+The frozen config of each run is written to `runs/<exp_name>/<run_name>/config.yaml`.
+
+For reproducibility, set the seed at the start of your script (and change it for each run) with:
+
+```bash
+SEED=0
+```
+
+Every command in steps 1-3 can be done with `L-GATr` instead of `L-GATr-slim` by adding `model=tag_lgatr training=tag_lgatr`.
 
 ## 1. Down tagger
 
 L-GATr-slim:
 ```bash
-python run.py -cp config -cn downtagging run_name=slim
+python run.py -cp config -cn downtagging \
+    seed=${SEED} run_name=down_slim_s${SEED}
 ```
-
-L-GATr (same training settings as L-GATr-slim):
-```bash
-python run.py -cp config -cn downtagging run_name=lgatr \
-    model=tag_lgatr training=tag_slim
-```
-
-Every command in steps 1-3 runs with L-GATr by adding `model=tag_lgatr training=tag_slim`. The paper
-uses seeds 0-4 (`seed=<k>`) for L-GATr-slim and seed 0 for L-GATr.
 
 ## 2. VBF toy
 
 Neg. vs Pos.
 ```bash
-python run.py -cp config -cn vbf run_name=pseudoscalar data.exp_type=pseudoscalar
+python run.py -cp config -cn vbf data.exp_type=pseudoscalar \
+    seed=${SEED} run_name=pseudoscalar_slim_s${SEED}
 ```
 
 SM vs Pos.
 ```bash
-python run.py -cp config -cn vbf run_name=cp data.exp_type=cp
+python run.py -cp config -cn vbf data.exp_type=cp \
+    seed=${SEED} run_name=cp_slim_s${SEED}
 ```
 
 ## 3. tt_smeft
 
 Neg. vs Pos.
 ```bash
-python run.py -cp config -cn tt_smeft run_name=neg data.lbl_0=neg
+python run.py -cp config -cn tt_smeft data.lbl_0=neg \
+    seed=${SEED} run_name=neg_slim_s${SEED}
 ```
 
 SM vs Pos.
 ```bash
-python run.py -cp config -cn tt_smeft run_name=sm data.lbl_0=sm
+python run.py -cp config -cn tt_smeft data.lbl_0=sm \
+    seed=${SEED} run_name=sm_slim_s${SEED}
 ```
 
 ## 4. tt_smeft evaluated with the predicted down tag
@@ -65,9 +67,9 @@ python run.py -cp config -cn tt_smeft run_name=sm data.lbl_0=sm
 This needs the slim down tagger from step 1 and both tt_smeft runs from step 3.
 
 ```bash
-DOWNTAGGING_RUN_DIR=runs/downtagging/slim # change to the path to the run
-TTSMEFT_NEG_RUN_DIR=runs/tt_smeft/neg
-TTSMEFT_SM_RUN_DIR=runs/tt_smeft/sm
+DOWNTAGGING_RUN_DIR=runs/downtagging/slim_s${SEED} # change to the path to the run
+TTSMEFT_NEG_RUN_DIR=runs/tt_smeft/neg_slim_s${SEED}
+TTSMEFT_SM_RUN_DIR=runs/tt_smeft/sm_slim_s${SEED}
 ```
 
 **Step 1: saving the predicted labels.**
