@@ -28,6 +28,9 @@ TAGGING_FEATURES_PREPROCESSING = {
     "dphi": (0, 1),
     "deta": (0, 1),
     "dr": (0.2, 4),
+    "abs_dphi": (0, 1),
+    "abs_deta": (0, 1),
+    "dphi_deta": (0, 1),
 }
 
 # Subsets selectable through cfg.data.tagging_features
@@ -35,11 +38,21 @@ TAGGING_FEATURE_SUBSETS = {
     "all": TAGGING_FEATURES,
     "zinvariant": ("log_pt", "log_pt_rel", "dphi", "deta", "dr"),
     "so3invariant": ("log_energy", "log_energy_rel"),
+    "beamsym": (
+        "log_pt",
+        "log_energy",
+        "log_pt_rel",
+        "log_energy_rel",
+        "abs_dphi",
+        "abs_deta",
+        "dr",
+        "dphi_deta",
+    ),
     None: (),
 }
 
-# `deta` is the only parity-odd tagging feature
-TAGGING_FEATURES_PARITY_ODD = ("deta",)
+# the only true pseudoscalar of the spurion symmetry group
+TAGGING_FEATURES_PARITY_ODD = ("dphi_deta",)
 
 
 def get_tagging_feature_names(tagging_features="all"):
@@ -370,6 +383,9 @@ def get_tagging_features(fourmomenta, jet, tagging_features="all", eps=1e-10):
         "dphi": dphi,
         "deta": deta,
         "dr": dr,
+        "abs_dphi": dphi.abs(),
+        "abs_deta": deta.abs(),
+        "dphi_deta": dphi * deta,
     }
 
     features = []
