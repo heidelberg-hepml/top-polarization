@@ -213,6 +213,20 @@ def _plot_output_single(
     std_0=None,
     std_1=None,
 ):
+    # centered running mean like the loss curve; the window shrinks at the edges so every
+    # validation point is kept (only 11 to 101 points per run); the step-0 point (untrained
+    # network) is left out so its offset does not leak into the trained curve
+    window = max(3, len(its) // 10) | 1
+
+    def smooth(x):
+        kernel = np.ones(window)
+        y = np.convolve(x[1:], kernel, "same") / np.convolve(np.ones(len(x) - 1), kernel, "same")
+        return np.concatenate([x[:1], y])
+
+    output_0, output_1 = smooth(output_0), smooth(output_1)
+    std_0 = None if std_0 is None else smooth(std_0)
+    std_1 = None if std_1 is None else smooth(std_1)
+
     fig, ax = plt.subplots(figsize=(5.5, 4.5))
     ax.axhline(0, color="gray", ls="--", lw=1)
     if std_0 is not None:
