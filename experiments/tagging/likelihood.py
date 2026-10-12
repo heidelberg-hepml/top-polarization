@@ -159,7 +159,7 @@ def probe_frame(jets, charge):
 
 
 def kinematic_p(jets):
-    """Tweedie's p(d = hard jet) from the W helicity angle (V-A, no right-handed W)."""
+    """p(d = hard jet) from the W helicity angle."""
     w = jets[:, :, 2] + jets[:, :, 3]
     b, hard = (_unit(lorentz_boost(jets[:, :, i], w)[:, 1:4]) for i in (1, 2))
     c = -(b * hard).sum(-1)  # cos of the hard jet to -b in the W frame
@@ -171,31 +171,12 @@ def kinematic_p(jets):
     return rho(c) / (rho(c) + rho(-c))
 
 
-def lr_slope(x, y, bins=20):
-    """Slope through the origin of g(x) = (f_R - f_L) / (f_R + f_L), with y = 1 for R and 0 for L.
-
-    f are the binned densities of x in [-1, 1]. The error comes from the Poisson counts per bin.
-    """
-    idx = np.clip(np.digitize(x, np.linspace(-1, 1, bins + 1)) - 1, 0, bins - 1)
-    n_l, n_r = (np.bincount(idx[y == i], minlength=bins).astype(float) for i in (0, 1))
-    mean_x = np.bincount(idx, weights=x, minlength=bins) / np.maximum(n_l + n_r, 1)
-    f_l, f_r = n_l / n_l.sum(), n_r / n_r.sum()
-    ok = (n_l > 0) & (n_r > 0)
-    g = (f_r - f_l)[ok] / (f_r + f_l)[ok]
-    var = 4 * (f_l**2 * f_r / n_r.sum() + f_r**2 * f_l / n_l.sum())[ok] / (f_r + f_l)[ok] ** 4
-    w = 1 / var
-    xm = mean_x[ok]
-    return (w * xm * g).sum() / (w * xm**2).sum(), 1 / np.sqrt((w * xm**2).sum())
-
-
 def probe_report(results, polarized, efficiencies=EFFICIENCIES):
     """Spin analyzing power of the down tagger and of baselines on the same events.
 
     beta_abs = <|k|> is the draft's beta_d, valid only for a calibrated p. beta_truth =
-    <d_true . k / |k|> and beta_truth_raw = <d_true . k> use the true down direction. With
-    `polarized` (labels_true = L/R) the slopes of the L-R asymmetry in cos(theta) = n . k / |k|
-    and in u = n . k are added; u has slope 1 for a calibrated probe at P = 1.
-    Probes: net (labels_predict), kinematic (Tweedie c_W), soft (d = softer jet), truth.
+    <d_true . k / |k|> and beta_truth_raw = <d_true . k> use the true down direction.
+    Probes: net (labels_predict), kinematic (c_W), soft (d = softer jet), truth.
     """
     jets, charge = stack_jets(results).double(), results["charge"].double()
     q_hard, q_soft, n_hat = probe_frame(jets, charge)
@@ -207,9 +188,8 @@ def probe_report(results, polarized, efficiencies=EFFICIENCIES):
         "soft": torch.zeros_like(d_hard),
         "truth": d_hard,
     }
-    y = results["labels_true"].numpy() if polarized else None
 
-    keys = PROBE_KEYS + (SLOPE_KEYS if polarized else [])
+    keys = PROBE_KEYS
     report = {"efficiencies": [float(e) for e in efficiencies]}
     for name, p in probes.items():
         report[name] = {key: [] for key in keys}
@@ -230,12 +210,6 @@ def probe_report(results, polarized, efficiencies=EFFICIENCIES):
                 "beta_truth_err": (dot / norm).std().item() / mask.sum().double().sqrt().item(),
                 "beta_truth_raw": dot.mean().item(),
             }
-            if polarized:
-                u = (n_hat[mask] * k).sum(-1)
-                for tag, x in [("cos", u / norm), ("u", u)]:
-                    row[f"slope_{tag}"], row[f"slope_{tag}_err"] = lr_slope(
-                        x.numpy(), y[mask.numpy()]
-                    )
             for key in keys:
                 report[name][key].append(float(row[key]))
     return report
