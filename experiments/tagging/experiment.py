@@ -185,7 +185,7 @@ class TaggingExperiment(BaseExperiment):
                 self.cfg.data,
                 n_ps=self.n_ps_data,
                 split_parity=self.split_parity,
-                ref=batch.get("ref"),
+                ref=self._batch_ref(batch),
             )
             self.model.init_standardization(embedding["fourmomenta"], embedding["ptr"])
 
@@ -508,6 +508,9 @@ class TaggingExperiment(BaseExperiment):
         label = batch.label.to(self.dtype)
         return fourmomenta, scalars, ptr, label
 
+    def _batch_ref(self, batch):
+        return batch.get("ref")
+
     def _get_ypred_and_label(self, batch, val=False):
         fourmomenta, scalars, ptr, label, *_ = self._extract_batch(batch)
         embedding = embed_tagging_data(
@@ -517,7 +520,7 @@ class TaggingExperiment(BaseExperiment):
             self.cfg.data,
             n_ps=self.n_ps_data,
             split_parity=self.split_parity,
-            ref=batch.get("ref"),
+            ref=self._batch_ref(batch),
         )
         embedding["num_graphs"] = label.shape[0]
         embedding["label"] = label
@@ -1119,6 +1122,13 @@ class TTSmeftExperiment(TaggingExperiment):
         if self.cfg.data.cpflip_batch and self.model.training:
             return self._cpflip_batch(fourmomenta, scalars, ptr, label)
         return fourmomenta, scalars, ptr, label
+
+    def _batch_ref(self, batch):
+        ref = batch.get("ref")
+        if self.cfg.data.cpflip_batch and self.model.training:
+            # the CP-conjugate copy keeps the reference tokens of the original
+            ref = torch.cat([ref, ref])
+        return ref
 
 
 class PseudoscalarExperiment(TaggingExperiment):
