@@ -32,6 +32,7 @@ def get_polarization(results, exp):
             axis=-1,
         )
         charge = results["charge"]
+        d_hard = results["down_hard"]
 
     efficiencies = np.linspace(0.2, 1.0, num=1001)
     for eff in efficiencies:
@@ -39,7 +40,9 @@ def get_polarization(results, exp):
         if exp == "polarization":
             beta_l, beta_r, score_l, score_r = polarized(labels, efficiency=eff)
         elif exp == "downtagging":
-            beta_l, beta_r, score_l, score_r = unpolarized(labels, jets, charge, efficiency=eff)
+            beta_l, beta_r, score_l, score_r = unpolarized(
+                labels, jets, charge, d_hard, efficiency=eff
+            )
         else:
             raise ValueError(f"Experiment type {exp} not implemented")
         # like_ratio = get_likelihood(score_l, score_r)
@@ -64,20 +67,23 @@ def polarized(labels, efficiency=1):
     return beta_l, beta_r, score_l, score_r
 
 
-def unpolarized(labels, jets, charge, efficiency=1):
+def unpolarized(labels, jets, charge, d_hard, efficiency=1):
     mask = cut_efficiency(labels, efficiency=efficiency)
     labels_cut = labels[mask]
     jets_cut = jets[mask]
     charge_cut = charge[mask]
+    d_hard_cut = d_hard[mask]
     beta_l, costheta_l = pol_opt(
         labels_cut[labels_cut[:, 0] == 0][:, -1],
         jets_cut[labels_cut[:, 0] == 0],
         charge_cut[labels_cut[:, 0] == 0],
+        d_hard_cut[labels_cut[:, 0] == 0],
     )
     beta_r, costheta_r = pol_opt(
         labels_cut[labels_cut[:, 0] == 1][:, -1],
         jets_cut[labels_cut[:, 0] == 1],
         charge_cut[labels_cut[:, 0] == 1],
+        d_hard_cut[labels_cut[:, 0] == 1],
     )
 
     return beta_l, beta_r, costheta_l, costheta_r
@@ -92,7 +98,8 @@ def cut_efficiency(labels, efficiency=1):
     return conf >= torch.quantile(conf, 1 - efficiency)
 
 
-def pol_opt(p, mom, sign):
+def pol_opt(p, mom, sign, d_hard):
+    """Per-event beta_probe = d_true . k / |k| and cos(theta) of k to the spin axis."""
     (
         hadtop,
         q_hard,
@@ -128,7 +135,9 @@ def pol_opt(p, mom, sign):
         / (torch.linalg.norm(spin_ax, axis=1) * torch.linalg.norm(pol_vec, axis=1))
     )
 
-    return torch.linalg.norm(pol_vec, axis=1), costheta
+    d_true = torch.where(d_hard[:, None] == 1, qhat_hard, qhat_soft)
+    beta = torch.einsum("ij,ij->i", d_true, pol_vec) / torch.linalg.norm(pol_vec, axis=1)
+    return beta, costheta
 
 
 M_TOP, M_W = 172.5, 80.4

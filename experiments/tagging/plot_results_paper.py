@@ -661,10 +661,13 @@ def plot_polarization_extra(outdir, preds_dirs, label_0=None, label_1=None, titl
         )
     else:
         print(f"  {GNN_EFFICIENCY} not found, skipping GNN curves")
+    # W helicity angle probe at full efficiency
+    ax.plot([0.93, 1.0], [0.64, 0.64], color="gray", lw=2)
+    ax.text(0.92, 0.64, r"$c_{W\text{hel}}$", ha="right", va="center", color="gray", fontsize=13)
     ax.set_xlim(0.2, 1.0)
     ax.set_ylim(0.6, 1.0)
     ax.set_xlabel("Fraction of most confident events")
-    ax.set_ylabel(r"$\beta_{d}$")
+    ax.set_ylabel(rf"$\beta_\text{{{MODEL}}}$")
     ax.legend(frameon=False, loc="upper right", fontsize=14)
     if title is not None:
         ax.text(0.95, 0.95, s=title, ha="right", va="top", transform=ax.transAxes)
