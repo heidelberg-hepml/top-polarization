@@ -109,3 +109,24 @@ python run.py -cp ${TTSMEFT_SM_RUN_DIR} -cn config \
 ```
 
 Results go to `{preds,plots}_0_downtag/` in each tt_smeft run directory.
+
+## 5. tt_smeft Neg. vs Pos. at Im(d_tG) = 0.1
+
+The Neg. vs Pos. network trained at Im(d_tG) = 2.6 (step 3), evaluated on the Im(d_tG) = +-0.1
+samples with the truth and the predicted down tag.
+
+```bash
+python run.py -cp ${DOWNTAGGING_RUN_DIR} -cn config \
+    train=false model_load_idx=0 evaluation.eval_set=[test] \
+    data.dataset_eval=ttsmeft data.ttsmeft.lbl_0=neg data.ttsmeft.c_value=0.1
+
+python run.py -cp ${TTSMEFT_NEG_RUN_DIR} -cn config \
+    train=false model_load_idx=0 evaluation.eval_set=[test] data.c_value=0.1
+
+python run.py -cp ${TTSMEFT_NEG_RUN_DIR} -cn config \
+    train=false model_load_idx=0 evaluation.eval_set=[test] data.c_value=0.1 \
+    data.dataset_eval=downtag \
+    data.downtag_labels=${DOWNTAGGING_RUN_DIR}/preds_0_ttsmeft_neg_c0p1/labels.txt
+```
+
+Results go to `{preds,plots}_0_c0p1/` and `{preds,plots}_0_downtag_c0p1/` in the tt_smeft run directory.

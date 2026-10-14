@@ -1049,7 +1049,7 @@ class TTSmeftExperiment(TaggingExperiment):
 
     def _eval_output_suffix(self):
         suffix = super()._eval_output_suffix()
-        if suffix == "_downtag" and self.cfg.data.c_value != 2.6:
+        if not self.cfg.train and self.cfg.data.c_value != 2.6:  # e.g. 0.1 -> _c0p1
             suffix += f"_c{self.cfg.data.c_value}".replace(".", "p")
         return suffix
 

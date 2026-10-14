@@ -667,7 +667,7 @@ def plot_polarization_extra(outdir, preds_dirs, label_0=None, label_1=None, titl
     ax.set_xlim(0.2, 1.0)
     ax.set_ylim(0.6, 1.0)
     ax.set_xlabel("Fraction of most confident events")
-    ax.set_ylabel(rf"$\beta_\text{{{MODEL}}}$")
+    ax.set_ylabel(r"$\beta_\text{probe}$")
     ax.legend(frameon=False, loc="upper right", fontsize=14)
     if title is not None:
         ax.text(0.95, 0.95, s=title, ha="right", va="top", transform=ax.transAxes)
