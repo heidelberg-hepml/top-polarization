@@ -63,7 +63,8 @@ def objective(base_cfg, trial=None):
             cfg.model.net.num_blocks = trial.suggest_categorical("num_blocks", [6, 12])
             cfg.model.net.dropout_prob = trial.suggest_categorical("dropout_prob", [None, 0.1, 0.2])
 
-    world_size = torch.cuda.device_count() if torch.cuda.is_available() else 1
+    n_avail = torch.cuda.device_count() if torch.cuda.is_available() else 1
+    world_size = n_avail if cfg.gpus < 0 else max(1, min(cfg.gpus, n_avail))
 
     try:
         if world_size > 1:
