@@ -34,6 +34,18 @@ python run.py -cp config -cn downtagging \
     seed=${SEED} run_name=down_slim_s${SEED}
 ```
 
+Evaluate on polarized data:
+
+```bash
+DOWNTAGGING_RUN_DIR=runs/downtagging/down_slim_s${SEED}
+```
+
+```bash
+python run.py -cp ${DOWNTAGGING_RUN_DIR} -cn config \
+    train=false model_load_idx=0 evaluation.eval_set=[test] \
+    data.dataset_eval=polarized
+```
+
 ## 2. VBF toy
 
 Neg. vs Pos.
@@ -67,7 +79,6 @@ python run.py -cp config -cn tt_smeft data.lbl_0=sm \
 This needs the slim down tagger from step 1 and both tt_smeft runs from step 3.
 
 ```bash
-DOWNTAGGING_RUN_DIR=runs/downtagging/slim_s${SEED} # change to the path to the run
 TTSMEFT_NEG_RUN_DIR=runs/tt_smeft/neg_slim_s${SEED}
 TTSMEFT_SM_RUN_DIR=runs/tt_smeft/sm_slim_s${SEED}
 ```
