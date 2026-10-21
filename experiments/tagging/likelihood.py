@@ -53,6 +53,12 @@ def get_polarization(results, exp):
         # pol["like_ratio"].append(like_ratio)
     # per-event beta at efficiency 1, aligned with labels_predict, for the statistical error
     pol["beta_l"], pol["beta_r"] = beta_l, beta_r
+    if exp == "downtagging":
+        # cos(theta) of the true down jet, the reference for score_l / score_r
+        q_hard, q_soft, n_hat = probe_frame(jets.double(), charge.double())
+        cos_true = (torch.where(d_hard[:, None] == 1, q_hard, q_soft) * n_hat).sum(-1)
+        pol["cos_true_l"] = cos_true[labels[:, 0] == 0]
+        pol["cos_true_r"] = cos_true[labels[:, 0] == 1]
     return pol
 
 

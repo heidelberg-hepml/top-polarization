@@ -286,6 +286,10 @@ class TaggingExperiment(BaseExperiment):
         labels_true, labels_predict = [], []
         trackers = defaultdict(list)
         self.model.eval()
+        # a summed head is evaluated split so that the CP-odd channel p is available on its own
+        split_sum = mode == "eval" and self.model.output == "sum"
+        if split_sum:
+            self.model.output = "split"
         for batch in loader:
             y_pred, label, tracker, _ = self._get_ypred_and_label(batch, val=(mode == "val"))
             labels_true.append(label)
@@ -296,6 +300,10 @@ class TaggingExperiment(BaseExperiment):
             torch.cat(labels_true).cpu().float(),
             torch.cat(labels_predict).cpu().float(),
         )
+        if split_sum:
+            self.model.output = "sum"
+            logits_split = labels_predict
+            labels_predict = labels_predict.sum(dim=-1)
 
         # tracked model outputs: mean and std over the full dataset
         for key, values in trackers.items():
@@ -329,6 +337,9 @@ class TaggingExperiment(BaseExperiment):
             if self.model.output == "split":
                 metrics["labels_predict_scalar"] = labels_predict_scalar
                 metrics["labels_predict_pseudo"] = labels_predict_pseudo
+            elif split_sum:
+                metrics["labels_predict_scalar"] = torch.sigmoid(logits_split[:, 0])
+                metrics["labels_predict_pseudo"] = torch.sigmoid(logits_split[:, 1])
 
         labels_true, labels_predict = labels_true.numpy(), labels_predict.numpy()
         if self.model.output == "split":
@@ -692,6 +703,8 @@ class DownTaggingExperiment(TaggingExperiment):
             self.results[set_label]["score_r"] = pol["score_r"][-1]
             self.results[set_label]["beta_l"] = pol["beta_l"]
             self.results[set_label]["beta_r"] = pol["beta_r"]
+            self.results[set_label]["cos_true_l"] = pol["cos_true_l"]
+            self.results[set_label]["cos_true_r"] = pol["cos_true_r"]
 
             polarized = self.cfg.data.dataset_eval == "polarized"
             probe = probe_report(self.results[set_label], polarized)
@@ -1079,6 +1092,7 @@ class TTSmeftExperiment(TaggingExperiment):
         jets, charge, harder = self._event_jets(self.data.get_subset("test"))
         arrays = {
             "labels": res["labels_true"].numpy(),
+            # sign of the CP-odd channel p only; the scalar channel would shift the sign cut
             "omega": (2 * res.get("labels_predict_pseudo", res["labels_predict"]) - 1).numpy(),
             "o1_truth": o1(jets, charge, harder).numpy(),
             "c0": 0.0 if cfg.lbl_0 == "sm" else -float(cfg.c_value),

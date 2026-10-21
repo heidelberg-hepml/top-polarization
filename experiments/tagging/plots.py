@@ -157,6 +157,9 @@ def plot_mixer(cfg, plot_path, preds_path, title, plot_dict):
             "beta_l": np.asarray(plot_dict["results_test"]["beta_l"]),
             "beta_r": np.asarray(plot_dict["results_test"]["beta_r"]),
         }
+        for key in ("cos_true_l", "cos_true_r"):  # downtagging only
+            if key in plot_dict["results_test"]:
+                preds_data[key] = np.asarray(plot_dict["results_test"][key])
         np.savez(f"{preds_path}/polarization.npz", **preds_data)
 
         file = f"{plot_path}/polarization.pdf"
