@@ -11,7 +11,12 @@ import numpy as np
 from experiments.tagging.asymmetry import asymmetry
 from paper_plots.common import (
     COLORS,
+    FIGSIZE,
+    FONTSIZE,
+    FONTSIZE_TICK,
+    corner_text,
     hist_band,
+    legend,
     load_all,
     load_npz,
     logit,
@@ -32,18 +37,18 @@ def plot_score(outdir, scores, model, name, process_label):
     ]
     bins = np.linspace(-0.5, 0.5, 31)
 
-    fig, ax = plt.subplots(figsize=(5.5, 4.5))
+    fig, ax = plt.subplots(figsize=FIGSIZE)
     top = max(
         hist_band(ax, x, bins, color).max() for x, color in zip(samples, COLORS[1:3], strict=True)
     )
     ax.set_xlim(bins[0], bins[-1])
-    ax.set_ylim(0, 1.35 * top)
-    ax.set_xlabel(rf"$\mathcal{{O}}_{{\text{{{model}}}}}$")
-    ax.set_ylabel("Normalized")
+    ax.set_ylim(0, 1.6 * top)
+    ax.set_xlabel(rf"$\mathcal{{O}}_{{\text{{{model}}}}}$", fontsize=FONTSIZE)
+    ax.set_ylabel("Normalized", fontsize=FONTSIZE)
     proxy = [mlines.Line2D([], [], ls="-", color=c) for c in COLORS[1:3]]
-    ax.legend(proxy, LABELS, frameon=False, loc="upper left", fontsize=13)
-    ax.text(0.95, 0.95, s=process_label, ha="right", va="top", transform=ax.transAxes)
-    save(fig, outdir, name)
+    legend(ax, proxy, LABELS, loc="upper right")
+    corner_text(ax, 0.05, 0.95, process_label)
+    save(fig, ax, outdir, name)
 
     for label, x in zip(LABELS, samples, strict=True):
         mean, seed = mean_seed_std([asymmetry(xi)[0] for xi in x])
@@ -54,8 +59,11 @@ def plot_score(outdir, scores, model, name, process_label):
 if __name__ == "__main__":
     preds_dirs, model, outdir = parse_runs("tt_smeft_posneg", MATCH)
     training = load_npz(preds_dirs[0], "training.npz")
-    plot_output(outdir, training, "s", *LABELS, ylim=(-0.25, 0.25))
-    plot_output(outdir, training, "p", *LABELS, ylim=(-0.25, 0.25))
+    # the two labels do not fit in one row at the default legend size
+    for channel in ("s", "p"):
+        plot_output(
+            outdir, training, channel, *LABELS, ylim=(-0.27, 0.27), legend_fontsize=FONTSIZE_TICK
+        )
     plot_score(
         outdir, load_all(preds_dirs, "score.npz"), model, "score", r"$t\bar{t} \to \ell\ell$"
     )

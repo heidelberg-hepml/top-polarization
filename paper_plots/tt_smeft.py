@@ -11,5 +11,5 @@ MATCH = {"exp_type": "tt_smeft", "data.lbl_0": "sm", "data.bsm": "im", "data.c_v
 if __name__ == "__main__":
     preds_dirs, model, outdir = parse_runs("tt_smeft", MATCH)
     training = load_npz(preds_dirs[0], "training.npz")
-    plot_output(outdir, training, "s", *LABELS, ylim=(-0.4, 0.4))
-    plot_output(outdir, training, "p", *LABELS, ylim=(-0.1, 0.1))
+    plot_output(outdir, training, "s", *LABELS, ylim=(-0.45, 0.45))
+    plot_output(outdir, training, "p", *LABELS, ylim=(-0.15, 0.15), yticks=[-0.1, 0, 0.1])

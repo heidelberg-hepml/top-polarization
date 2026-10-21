@@ -1227,11 +1227,11 @@ class VBFExperiment(TaggingExperiment):
             filenames = {
                 0: os.path.join(
                     self.cfg.data.data_dir,
-                    "cHWtil_pos.npy",
+                    "cHWtil_neg.npy",
                 ),
                 1: os.path.join(
                     self.cfg.data.data_dir,
-                    "cHWtil_neg.npy",
+                    "cHWtil_pos.npy",
                 ),
             }
         elif self.cfg.data.exp_type == "cp":

@@ -3,23 +3,40 @@ import os
 
 import matplotlib.lines as mlines
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 from omegaconf import OmegaConf
 
 plt.rcParams.update(
     {
-        "font.size": 16,
+        "font.size": 20,
         "text.usetex": True,
         "font.family": "serif",
+        "font.serif": "Charter",
         "ytick.right": True,
         "xtick.top": True,
         "xtick.direction": "in",
         "ytick.direction": "in",
         "xtick.minor.visible": True,
         "ytick.minor.visible": True,
-        "text.latex.preamble": r"\usepackage{amsmath}",
+        "xtick.major.pad": 8,
+        "ytick.major.pad": 6,
     }
 )
+plt.rcParams["text.latex.preamble"] = (
+    r"\usepackage[bitstream-charter]{mathdesign} \usepackage{amsmath}"
+    r"\DeclareSymbolFont{usualmathcal}{OMS}{cmsy}{m}{n}"
+    r"\DeclareSymbolFontAlphabet{\mathcal}{usualmathcal}"
+)
+
+FONTSIZE = 20
+FONTSIZE_LEGEND = 20
+FONTSIZE_TICK = 18
+LINE_WIDTH = 1.8
+FIGSIZE = (5.5, 4.5)
+MARGINS = {"left": 0.99, "bottom": 0.84, "right": 0.25, "top": 0.14}
+LEFT, BOTTOM = MARGINS["left"] / FIGSIZE[0], MARGINS["bottom"] / FIGSIZE[1]
+RIGHT, TOP = 1 - MARGINS["right"] / FIGSIZE[0], 1 - MARGINS["top"] / FIGSIZE[1]
 
 REPO_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 OUTPATH = os.path.join(REPO_DIR, "paper_plots")
@@ -27,8 +44,8 @@ OUTPATH = os.path.join(REPO_DIR, "paper_plots")
 COLORS = ["black", "blue", "red", "orange"]
 
 MODEL_NAMES = {
-    "LGATrSlimPseudoWrapper": "L-GATr-slim",
-    "LGATrSlimWrapper": "L-GATr-slim",
+    "LGATrSlimPseudoWrapper": "L-GATr",
+    "LGATrSlimWrapper": "L-GATr",
     "LGATrWrapper": "L-GATr",
     "TransformerWrapper": "Transformer",
 }
@@ -65,11 +82,23 @@ def pm_text(mean, seed, stat, fmt=".4f"):
     return rf"{mean:{fmt}} \pm {np.hypot(seed, stat):{fmt}}"
 
 
-def save(fig, outdir, name):
+def save(fig, ax, outdir, name):
+    # fixed margins instead of bbox_inches, so that figures in a row have identical axes boxes
+    ax.tick_params(axis="both", labelsize=FONTSIZE_TICK)
+    fig.subplots_adjust(LEFT, BOTTOM, RIGHT, TOP)
     file = os.path.join(outdir, f"{name}.pdf")
-    fig.savefig(file, format="pdf", bbox_inches="tight")
+    fig.savefig(file, format="pdf")
     plt.close(fig)
     print(f"  wrote {file}")
+
+
+def legend(ax, *args, **kwargs):
+    kwargs = {"frameon": False, "fontsize": FONTSIZE_LEGEND, "handlelength": 1.0} | kwargs
+    ax.legend(*args, **kwargs)
+
+
+def corner_text(ax, x, y, s, ha="left", **kwargs):
+    ax.text(x, y, s, fontsize=FONTSIZE, ha=ha, va="top", transform=ax.transAxes, **kwargs)
 
 
 def check_configs(run_dirs, match):
@@ -122,17 +151,41 @@ def hist_band(ax, samples, bins, color):
         stats.append(np.sqrt(counts) / len(x))
     mean, seed = mean_seed_std(hists)
     err = np.hypot(seed, stats[0])
-    ax.stairs(mean, bins, color=color, lw=2)
-    ax.stairs(mean + err, bins, baseline=mean - err, fill=True, color=color, alpha=0.3, lw=0)
+    step(ax, bins, mean, color)
+    for y in (mean - err, mean + err):
+        ax.step(bins, dup_last(y), color=color, alpha=0.5, lw=0.5, where="post")
+    ax.fill_between(
+        bins, dup_last(mean - err), dup_last(mean + err), facecolor=color, alpha=0.3, step="post"
+    )
     return mean + err
 
 
-def plot_output(outdir, training, channel, label_0, label_1, ylim=None):
+def dup_last(a):
+    return np.append(a, a[-1])
+
+
+def step(ax, bins, y, color, **kwargs):
+    """Histogram line as in high-dim-unfolding: step on the bin edges, closed at both ends."""
+    ax.step(bins, dup_last(y), color=color, lw=LINE_WIDTH, where="post", **kwargs)
+    ax.vlines([bins[0], bins[-1]], 0, [y[0], y[-1]], colors=color, lw=1.0, **kwargs)
+
+
+def plot_output(
+    outdir,
+    training,
+    channel,
+    label_0,
+    label_1,
+    ylim=None,
+    yticks=None,
+    legend_fontsize=FONTSIZE_LEGEND,
+    order=(0, 1),
+):
     """Validation mean of the scalar (s) or pseudoscalar (p) output per class vs. iterations,
-    band: its spread over the validation events. First seed only."""
+    band: its spread over the validation events. First seed only. `order` gives the classes in
+    plotting and legend order (blue, then red)."""
     key = {"s": "scalar", "p": "pseudoscalar"}[channel]
-    output_0, output_1 = training[f"{key}_output_0"], training[f"{key}_output_1"]
-    std_0, std_1 = training[f"{key}_output_0_std"], training[f"{key}_output_1_std"]
+    labels = {0: label_0, 1: label_1}
     # first validation runs before training (step 0), then every n_train / (n_val - 1) steps
     n_train, n_val = len(training["train_loss"]), len(training["val_loss"])
     its = np.arange(n_val) * n_train / max(n_val - 1, 1)
@@ -148,24 +201,38 @@ def plot_output(outdir, training, channel, label_0, label_1, ylim=None):
         return np.concatenate([x[:1], y])
 
     curves = [
-        (smooth(output_0), smooth(std_0), COLORS[1]),
-        (smooth(output_1), smooth(std_1), COLORS[2]),
+        (
+            smooth(training[f"{key}_output_{c}"]),
+            smooth(training[f"{key}_output_{c}_std"]),
+            color,
+        )
+        for c, color in zip(order, COLORS[1:3], strict=True)
     ]
-    fig, ax = plt.subplots(figsize=(5.5, 4.5))
+    fig, ax = plt.subplots(figsize=FIGSIZE)
     ax.axhline(0, color="gray", ls="--", lw=1)
     for out, std, color in curves:
         ax.fill_between(its, out - std, out + std, color=color, alpha=0.2, lw=0)
     for out, _, color in curves:
-        ax.plot(its, out, color=color, lw=2)
-    ax.set_xlabel("Iterations")
-    ax.set_ylabel(f"${channel}(x)$")
+        ax.plot(its, out, color=color, lw=LINE_WIDTH)
+    ax.set_xlabel(r"Iterations $[10^3]$", fontsize=FONTSIZE)
+    ax.set_ylabel(f"${channel}(x)$", fontsize=FONTSIZE)
     ax.margins(x=0)
     ax.set_xlim(left=0)
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x / 1000:g}"))
     if ylim is not None:
         ax.set_ylim(ylim)
-    proxy = [
-        mlines.Line2D([], [], ls="-", color=COLORS[2]),
-        mlines.Line2D([], [], ls="-", color=COLORS[1]),
-    ]
-    ax.legend(proxy, [label_1, label_0], frameon=False, loc="best")
-    save(fig, outdir, {"s": "output_scalar", "p": "output_pseudo"}[channel])
+    if yticks is not None:
+        ax.set_yticks(yticks)
+    proxy = [mlines.Line2D([], [], ls="-", color=c) for _, _, c in curves]
+    legend(
+        ax,
+        proxy,
+        [labels[c] for c in order],
+        loc="upper center",
+        ncol=2,
+        columnspacing=0.4,
+        handletextpad=0.3,
+        borderaxespad=0.2,
+        fontsize=legend_fontsize,
+    )
+    save(fig, ax, outdir, {"s": "output_scalar", "p": "output_pseudo"}[channel])

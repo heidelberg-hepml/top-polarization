@@ -8,20 +8,27 @@ import os
 
 import matplotlib.lines as mlines
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 from paper_plots.common import (
     COLORS,
+    FIGSIZE,
+    FONTSIZE,
+    LINE_WIDTH,
     N_BOOTSTRAP,
     REPO_DIR,
+    corner_text,
     hist_band,
+    legend,
     load_all,
     mean_seed_std,
     parse_runs,
     pm_text,
     save,
+    step,
 )
 
 LABEL_1 = r"$d = q_{\text{hard}}$"
@@ -56,9 +63,9 @@ def plot_roc(outdir, rocs, scores, model):
     fpr_err = np.hypot(fpr_seed, np.sqrt(fprs[0] * (1 - fprs[0]) / n_0))
 
     rnd = np.linspace(1e-3, 1, 100)
-    fig, ax = plt.subplots(figsize=(5, 4.5))
+    fig, ax = plt.subplots(figsize=FIGSIZE)
     ax.set_yscale("log")
-    (rnd_line,) = ax.plot(rnd, 1 / rnd, "k--", lw=2)
+    (rnd_line,) = ax.plot(rnd, 1 / rnd, "k--", lw=LINE_WIDTH)
     mask = fpr >= 1 / n_0
     lo, hi = fpr - fpr_err, fpr + fpr_err
     ax.fill_between(
@@ -69,28 +76,13 @@ def plot_roc(outdir, rocs, scores, model):
         alpha=0.3,
         lw=0,
     )
-    (line,) = ax.plot(ROC_GRID[mask], 1 / fpr[mask], color="red", lw=2)
-    ax.set_xlabel(f"${TPR_LABEL}$")
-    ax.set_ylabel(f"$1 / {FPR_LABEL}$")
+    (line,) = ax.plot(ROC_GRID[mask], 1 / fpr[mask], color="red", lw=LINE_WIDTH)
+    ax.set_xlabel(f"${TPR_LABEL}$", fontsize=FONTSIZE)
+    ax.set_ylabel(f"$1 / {FPR_LABEL}$", fontsize=FONTSIZE)
     ax.set_xlim(0, 1)
-    ax.text(
-        0.95,
-        0.95,
-        s=f"AUC $= {pm_text(auc, seed, stat)}$",
-        ha="right",
-        va="top",
-        transform=ax.transAxes,
-        fontsize=13,
-    )
-    ax.legend(
-        [line, rnd_line],
-        [model, "Random"],
-        frameon=False,
-        loc="upper right",
-        bbox_to_anchor=(1, 0.89),
-        fontsize=13,
-    )
-    save(fig, outdir, "roc")
+    corner_text(ax, 0.95, 0.95, f"AUC $= {pm_text(auc, seed, stat)}$", ha="right")
+    legend(ax, [line, rnd_line], [model, "Random"], loc="upper right", bbox_to_anchor=(1, 0.87))
+    save(fig, ax, outdir, "roc")
 
 
 def calibration(labels_true, labels_predict, idx=None, bins=20):
@@ -130,58 +122,45 @@ def plot_calibration(outdir, scores, model):
     )
     x, y, dy = score_mean[mask], frac[mask], np.hypot(frac_seed, frac_stat)[mask]
 
-    fig, ax = plt.subplots(figsize=(5.5, 4.5))
-    (diag,) = ax.plot([0, 1], [0, 1], "k--", lw=2)
+    fig, ax = plt.subplots(figsize=FIGSIZE)
+    (diag,) = ax.plot([0, 1], [0, 1], "k--", lw=LINE_WIDTH)
     ax.fill_between(x, y - dy, y + dy, color=COLORS[2], alpha=0.3, lw=0)
-    (line,) = ax.plot(x, y, color=COLORS[2], lw=2, ms=3)
+    (line,) = ax.plot(x, y, color=COLORS[2], lw=LINE_WIDTH)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
-    ax.set_xlabel(r"$p(d = q_{\text{hard}})$")
-    ax.set_ylabel(f"Fraction of {LABEL_1}")
-    ax.legend(
-        [line, diag],
-        [model, "Perfect calibration"],
-        frameon=False,
-        loc="lower right",
-        fontsize=13,
-    )
-    ax.text(
-        0.05,
-        0.95,
-        s=f"ECE $= {pm_text(ece, ece_seed, ece_stat)}$",
-        ha="left",
-        va="top",
-        transform=ax.transAxes,
-        fontsize=13,
-    )
-    save(fig, outdir, "calibration")
+    ax.set_xlabel(r"$p(d = q_{\text{hard}})$", fontsize=FONTSIZE)
+    ax.set_ylabel(f"Fraction of {LABEL_1}", fontsize=FONTSIZE)
+    legend(ax, [line, diag], [model, "Perfect calibration"], loc="lower right")
+    corner_text(ax, 0.05, 0.95, f"ECE $= {pm_text(ece, ece_seed, ece_stat)}$")
+    save(fig, ax, outdir, "calibration")
 
 
 def plot_polarization(outdir, polarizations):
     """cos(theta) of the network's down direction to the spin axis, dashed: of the true down jet
     (the same events for every seed, so first seed only)."""
     bins = np.linspace(-1, 1, 21)
-    fig, ax = plt.subplots(figsize=(5.5, 4.5))
+    fig, ax = plt.subplots(figsize=FIGSIZE)
     top_l = hist_band(ax, [p["score_l"] for p in polarizations], bins, COLORS[1])
     top_r = hist_band(ax, [p["score_r"] for p in polarizations], bins, COLORS[2])
     top = max(top_l.max(), top_r.max())
     for key, color in [("cos_true_l", COLORS[1]), ("cos_true_r", COLORS[2])]:
         counts, _ = np.histogram(polarizations[0][key], bins=bins)
         hist = counts / len(polarizations[0][key])
-        ax.stairs(hist, bins, color=color, ls="--", lw=2, alpha=0.5)
+        step(ax, bins, hist, color, ls="--", alpha=0.5)
         top = max(top, hist.max())
-    proxy = [
-        mlines.Line2D([], [], ls="-", color=COLORS[1]),
-        mlines.Line2D([], [], ls="-", color=COLORS[2]),
-        mlines.Line2D([], [], ls="--", color="gray"),
-    ]
-    labels = [r"$P_{t_{\text{had}}} = L$", r"$P_{t_{\text{had}}} = R$", r"$\cos \theta_d$"]
     ax.set_xlim(-1, 1)
-    ax.set_ylim(0, 1.15 * top)
-    ax.set_xlabel(r"$\cos \theta$")
-    ax.set_ylabel("Normalized")
-    ax.legend(proxy, labels, frameon=False, loc="lower center")
-    save(fig, outdir, "polarization")
+    ax.set_ylim(0, 1.6 * top)
+    # wide tick labels such as 0.025 push the y label out of the figure
+    ax.set_yticks([0, 0.05, 0.1])
+    ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%g"))
+    ax.set_xlabel(r"$\cos \theta$", fontsize=FONTSIZE)
+    ax.set_ylabel("Normalized", fontsize=FONTSIZE)
+    pols = [mlines.Line2D([], [], color=c) for c in COLORS[1:3]]
+    legend(ax, pols, [r"$P_{t_{\text{had}}} = L$", r"$P_{t_{\text{had}}} = R$"], loc="upper left")
+    ax.add_artist(ax.get_legend())
+    angles = [mlines.Line2D([], [], color="gray", ls=ls) for ls in ("-", "--")]
+    legend(ax, angles, [r"$\cos \theta_\text{probe}$", r"$\cos \theta_d$"], loc="upper right")
+    save(fig, ax, outdir, "polarization")
 
 
 def beta_vs_fraction(polarization, score):
@@ -206,7 +185,7 @@ def plot_polarization_efficiency(outdir, polarizations, scores, model):
     """beta_probe vs. the fraction of most confident events, with the GNN of 2407.01663 and the
     W helicity angle probe at full efficiency."""
     curves = [beta_vs_fraction(p, s) for p, s in zip(polarizations, scores, strict=True)]
-    fig, ax = plt.subplots(figsize=(5.5, 4.5))
+    fig, ax = plt.subplots(figsize=FIGSIZE)
     for key, color, label in [("beta_l", COLORS[1], "L"), ("beta_r", COLORS[2], "R")]:
         mean, seed = mean_seed_std([c[key] for c in curves])
         err = np.hypot(seed, curves[0][f"{key}_err"])
@@ -218,31 +197,29 @@ def plot_polarization_efficiency(outdir, polarizations, scores, model):
             )
         )
         ax.fill_between(FRACTIONS, mean - err, mean + err, color=color, alpha=0.3, lw=0)
-        ax.plot(
-            FRACTIONS,
-            mean,
-            color=color,
-            label=rf"$P_{{t_{{\text{{had}}}}}} = {label}$ ({model})",
-            lw=2,
-        )
+        ax.plot(FRACTIONS, mean, color=color, lw=LINE_WIDTH)
     gnn = pd.read_csv(GNN_EFFICIENCY)
-    for key, color, label in [("beta_opt_tL", COLORS[1], "L"), ("beta_opt_tR", COLORS[2], "R")]:
-        ax.plot(
-            gnn["efficiency"],
-            gnn[key],
-            color=color,
-            ls="--",
-            label=rf"$P_{{t_{{\text{{had}}}}}} = {label}$ (GNN)",
-            lw=2,
-        )
-    ax.plot([0.93, 1.0], [0.64, 0.64], color="gray", lw=2)
-    ax.text(0.92, 0.64, r"$c_{W\text{hel}}$", ha="right", va="center", color="gray", fontsize=13)
+    for key, color in [("beta_opt_tL", COLORS[1]), ("beta_opt_tR", COLORS[2])]:
+        ax.plot(gnn["efficiency"], gnn[key], color=color, ls="--", lw=LINE_WIDTH)
+    ax.plot([0.93, 1.0], [0.64, 0.64], color="gray", lw=LINE_WIDTH)
+    ax.text(
+        0.92, 0.64, r"$c_{W\text{hel}}$", ha="right", va="center", color="gray", fontsize=FONTSIZE
+    )
     ax.set_xlim(0.2, 1.0)
+    # headroom above beta = 1 for the legends
     ax.set_ylim(0.6, 1.0)
-    ax.set_xlabel("Fraction of most confident events")
-    ax.set_ylabel(r"$\beta_\text{probe}$")
-    ax.legend(frameon=False, loc="upper right", fontsize=14)
-    save(fig, outdir, "polarization_efficiency")
+    ax.set_yticks([0.6, 0.7, 0.8, 0.9, 1.0])
+    ax.set_xlabel("Efficiency", fontsize=FONTSIZE)
+    ax.set_ylabel(r"$\beta_\text{probe}$", fontsize=FONTSIZE)
+    pols = [mlines.Line2D([], [], color=c) for c in COLORS[1:3]]
+    models = [mlines.Line2D([], [], color="black", ls=ls) for ls in ("-", "--")]
+    legend(
+        ax,
+        pols + models,
+        [r"$P_{t_{\text{had}}} = L$", r"$P_{t_{\text{had}}} = R$", model, "GNN"],
+        loc="upper right",
+    )
+    save(fig, ax, outdir, "polarization_efficiency")
 
 
 if __name__ == "__main__":

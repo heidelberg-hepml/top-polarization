@@ -280,7 +280,7 @@ def plot_score(
     elif cfg.exp_type == "downtagging":
         label_0, label_1 = "Up-type", "Down-type"
     elif cfg.exp_type in ["pseudoscalar", "vbf_pseudoscalar"]:
-        label_0, label_1 = "Pos", "Neg"
+        label_0, label_1 = "Neg", "Pos"
     elif cfg.exp_type == "vbf_cp":
         label_0, label_1 = "SM", "Pos"
     elif cfg.exp_type == "tt_smeft":
