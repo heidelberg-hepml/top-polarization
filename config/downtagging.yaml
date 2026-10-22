@@ -17,6 +17,7 @@ data:
     pid: true
     pseudoscalars: false
     tag_down: true
+    split: test # test, or all (tt_smeft data.eval_all, paper_plots/tt_smeft_o1.py)
 
 plotting:
   polarization: true

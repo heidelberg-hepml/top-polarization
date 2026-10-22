@@ -28,3 +28,9 @@ def asymmetry(x):
     n_pos, n_neg = float((x > 0).sum()), float((x < 0).sum())
     n = n_pos + n_neg
     return (n_pos - n_neg) / n, 2 * np.sqrt(n_pos * n_neg / n**3)
+
+
+def pooled_asymmetry(x, labels):
+    """Asymmetry of the +c (label 1) and -c (label 0) samples together: x of the -c sample, the
+    CP image of the +c one, enters with flipped sign."""
+    return asymmetry(np.where(np.asarray(labels) == 1, x, -np.asarray(x)))

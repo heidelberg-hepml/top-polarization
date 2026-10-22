@@ -78,9 +78,7 @@ class TokenDataset(torch.utils.data.Dataset):
         events["label"] = np.array(source_group)[source_ids]
         offsets = np.concatenate([[0], np.cumsum(events["ntokens"])])
         position = np.arange(offsets[-1]) - offsets[:-1].repeat(events["ntokens"])
-        tokens = _gather_tokens(
-            sources, source_ids, event_ids, events["ntokens"], self._reorder(events, position)
-        )
+        tokens = _gather_tokens(sources, source_ids, event_ids, events["ntokens"], position)
         tokens["position"], tokens["offsets"] = position, offsets
         del sources
 
@@ -115,10 +113,6 @@ class TokenDataset(torch.utils.data.Dataset):
 
     def _read(self, path):
         raise NotImplementedError
-
-    def _reorder(self, events, position):
-        """Return the position in its file of every token, after reordering `events` in place."""
-        return position
 
     def _build(self, events, tokens, network_dtype, momentum_dtype):
         """Set x, scalars, labels and _ntokens (tokens per event) from the gathered arrays."""
@@ -186,9 +180,8 @@ def _gather_events(sources, source_ids, event_ids):
     return events
 
 
-def _gather_tokens(sources, source_ids, event_ids, ntokens, source_position):
-    """Collect the per-token arrays of the selected events, taking every token from
-    `source_position` within its event in the file."""
+def _gather_tokens(sources, source_ids, event_ids, ntokens, position):
+    """Collect the per-token arrays of the selected events."""
     num_tokens = ntokens.sum()
     tokens = {
         name: np.empty((num_tokens,) + sources[0][name].shape[1:], dtype=sources[0][name].dtype)
@@ -199,7 +192,7 @@ def _gather_tokens(sources, source_ids, event_ids, ntokens, source_position):
         selected = source_ids == i
         source_offsets = np.concatenate([[0], np.cumsum(source["ntokens"])])
         idx = np.nonzero(selected.repeat(ntokens))[0]
-        src = source_offsets[event_ids[selected]].repeat(ntokens[selected]) + source_position[idx]
+        src = source_offsets[event_ids[selected]].repeat(ntokens[selected]) + position[idx]
         for name, value in tokens.items():
             value[idx] = source[name][src]
     return tokens
@@ -403,7 +396,8 @@ class VBFDataset(TokenDataset):
 
 
 # tt_smeft scalars: [category(7), pid(5), charge, eps, nr], with the CP-odd columns last.
-# category = [is_hadtop, is_subjet, sub0, sub1, sub2, is_toplep, is_lepton]
+# category = [is_hadtop, is_subjet, is_b, is_down, is_other, is_toplep, is_lepton], with
+# tag_down=false is_down/is_other mark the harder/softer non-b subjet
 # pid = [is_electron, is_muon, is_photon, is_charged_hadron, is_neutral_hadron]
 TTSMEFT_N_CATEGORY = 7
 TTSMEFT_N_PID = 5
@@ -439,11 +433,13 @@ class TTSmeftLayout(NamedTuple):
 
 
 class TTSmeftDataset(TokenDataset):
-    """CP-even vs CP-odd SMEFT ttbar events.
+    """CP-even vs CP-odd SMEFT ttbar events, with the non-b subjets ordered by pt.
 
-    With tag_down the down subjet takes the first non-b slot, otherwise the non-b subjets keep
-    their top rest frame energy order and the pseudoscalars use the harder one in place of the down
-    subjet.
+    With tag_down the category columns (down, other) of the non-b subjets and their constituents
+    hold the probability that the subjet is the down quark: one-hot for the true tag, or a
+    down-tagger output set with `set_down_prob`. The pseudoscalars are the expectation over the
+    two down candidates. Without tag_down the columns mark the pt order and the pseudoscalars use
+    the harder subjet as the down quark.
     """
 
     BALANCE = True
@@ -456,16 +452,23 @@ class TTSmeftDataset(TokenDataset):
         self.layout = TTSmeftLayout(pid=pid, include_ps=include_ps)
 
     def _read(self, path):
-        return read_events(path)
+        return read_events(path, pt_order=True)
 
-    def _reorder(self, events, position):
-        if not self.tag_down:
-            return position
-        swap = ~np.isin(events["tags"][:, 1], DOWN_TAGS)
-        source = _swapped_positions(position, events["nconst"], events["ntokens"], swap)
-        for name in ["nconst", "tags"]:
-            events[name][swap] = events[name][swap][:, [0, 2, 1]]
-        return source
+    def nonb_subjets(self, idx):
+        """Fourmomenta of the hadronic top and the harder and softer non-b subjet of events idx."""
+        start = self.ptr[idx]
+        return self.x[start], self.x[start + 2], self.x[start + 3]
+
+    def set_down_prob(self, p):
+        """Set the probability per event that the harder non-b subjet is the down quark."""
+        p = p.to(self.scalars.dtype)
+        p_token = p.repeat_interleave(self._ntokens_t)
+        down = torch.where(self._harder, p_token, torch.where(self._softer, 1 - p_token, 0))
+        self.scalars[:, 3] = down
+        self.scalars[:, 4] = (self._harder | self._softer).to(down.dtype) - down
+        if self.include_ps:
+            ps = p[:, None] * self._ps[0] + (1 - p[:, None]) * self._ps[1]
+            self.scalars[:, -TTSMEFT_N_GLOBAL_PS:] = ps.repeat_interleave(self._ntokens_t, dim=0)
 
     def _build(self, events, tokens, network_dtype, momentum_dtype):
         layout, offsets, n_tail = self.layout, tokens["offsets"], len(TAIL)
@@ -483,44 +486,29 @@ class TTSmeftDataset(TokenDataset):
 
         x = torch.from_numpy(tokens["x"]).to(momentum_dtype)
         if layout.include_ps:
-            down_slot = (
-                np.where(np.isin(events["tags"][:, 1], DOWN_TAGS), 2, 3) if self.tag_down else 2
-            )
-            args = (x[offsets[:-1]], x[toplep], x[offsets[:-1] + down_slot], x[lepton])
-            pseudoscalars = torch.stack(
-                [
-                    eps_tensor(*args, dtype=momentum_dtype),
-                    spin_correlation_nr(*args, lep_charge.to(momentum_dtype), dtype=momentum_dtype),
-                ],
-                dim=-1,
-            ).to(network_dtype)
-            # jet-level, so the same value on every token of an event
-            scalars[:, -TTSMEFT_N_GLOBAL_PS:] = pseudoscalars.repeat_interleave(
-                torch.from_numpy(events["ntokens"]), dim=0
-            )
+            # jet-level, so the same value on every token of an event; (down harder, down softer)
+            self._ps = []
+            for slot in (2, 3):
+                args = (x[offsets[:-1]], x[toplep], x[offsets[:-1] + slot], x[lepton])
+                charge = lep_charge.to(momentum_dtype)
+                self._ps.append(
+                    torch.stack(
+                        [
+                            eps_tensor(*args, dtype=momentum_dtype),
+                            spin_correlation_nr(*args, charge, dtype=momentum_dtype),
+                        ],
+                        dim=-1,
+                    ).to(network_dtype)
+                )
 
         self.x, self.scalars = x, scalars
         self.ref = _top_ref(tokens, events, n_tail)
         self.labels = torch.from_numpy(events["label"]).to(torch.long)
         self._ntokens = events["ntokens"]
-
-
-def _swapped_positions(position, nconst, ntokens, swap):
-    """Position in the file of every token, when the events in `swap` exchange their two non-b
-    subjets (and their constituent blocks) with respect to the file."""
-    if not swap.any():
-        return position
-    swapped = swap.repeat(ntokens)
-    n_b, n_first, n_second = (nconst[:, i].repeat(ntokens) for i in range(N_SUBJETS))
-    const = position - N_HEAD
-    is_const = (position >= N_HEAD) & (const < n_b + n_first + n_second)
-
-    source = np.where(swapped & (position == 2), 3, position)
-    source = np.where(swapped & (position == 3), 2, source)
-    shifted = np.where(
-        const < n_b, const, np.where(const < n_b + n_second, const + n_first, const - n_second)
-    )
-    return np.where(swapped & is_const, N_HEAD + shifted, source)
+        self._ntokens_t = torch.from_numpy(events["ntokens"])
+        self._harder, self._softer = scalars[:, 3] == 1, scalars[:, 4] == 1
+        self.down_harder = torch.from_numpy(np.isin(events["tags"][:, 1], DOWN_TAGS))
+        self.set_down_prob(self.down_harder if self.tag_down else torch.ones(len(self.labels)))
 
 
 def _ttsmeft_role_masks(scalars):
@@ -581,32 +569,3 @@ def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype):
         lep_charge=scalars[is_lep, layout.charge_col].to(network_dtype),
     )
     return downtag_graph, down_is_leading
-
-
-def relabel_ttsmeft_graph(graph, swap, layout, network_dtype, momentum_dtype):
-    """Swap the down/other subjet labels of a tt_smeft graph and refresh its pseudoscalars."""
-    # the graphs are views into the dataset tensors, so they are cloned before being stored
-    if not swap:
-        return graph.clone()
-
-    x, scalars = graph.x, graph.scalars
-    is_jet, is_subjet, _, _, is_other, is_toplep, is_lep = _ttsmeft_role_masks(scalars)
-
-    new_scalars = scalars.clone()
-    new_scalars[:, 3] = scalars[:, 4]
-    new_scalars[:, 4] = scalars[:, 3]
-
-    if layout.include_ps:
-        # the jet-level pseudoscalars depend on which subjet is the down quark
-        new_down_four = x[is_subjet & is_other]
-        args = (x[is_jet], x[is_toplep], new_down_four, x[is_lep])
-        new_scalars[:, -TTSMEFT_N_GLOBAL_PS:] = torch.cat(
-            [
-                eps_tensor(*args, dtype=momentum_dtype),
-                spin_correlation_nr(
-                    *args, scalars[is_lep, layout.charge_col], dtype=momentum_dtype
-                ),
-            ]
-        ).to(network_dtype)
-
-    return Data(x=x.clone(), ref=graph.ref.clone(), scalars=new_scalars, label=graph.label)

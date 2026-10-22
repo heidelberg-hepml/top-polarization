@@ -14,7 +14,7 @@ from torch_geometric.loader import DataLoader
 from experiments.base_experiment import BaseExperiment
 from experiments.logger import LOGGER
 from experiments.mlflow import log_mlflow
-from experiments.tagging.asymmetry import asymmetry, o1
+from experiments.tagging.asymmetry import asymmetry, pooled_asymmetry
 from experiments.tagging.dataset import (
     DownTaggingDataset,
     PolarizationDataset,
@@ -23,7 +23,6 @@ from experiments.tagging.dataset import (
     TTSmeftDataset,
     TTSmeftLayout,
     VBFDataset,
-    relabel_ttsmeft_graph,
     ttsmeft_graph_to_downtag_input,
 )
 from experiments.tagging.embedding import (
@@ -587,6 +586,8 @@ class DownTaggingExperiment(TaggingExperiment):
             suffix += f"_{self.cfg.data.ttsmeft.lbl_0}"
             if self.cfg.data.ttsmeft.c_value != 2.6:  # e.g. 0.1 -> _c0p1
                 suffix += f"_c{self.cfg.data.ttsmeft.c_value}".replace(".", "p")
+            if self.cfg.data.ttsmeft.get("split", "test") != "test":
+                suffix += f"_{self.cfg.data.ttsmeft.split}"
         return suffix
 
     def _extract_batch(self, batch):
@@ -666,11 +667,16 @@ class DownTaggingExperiment(TaggingExperiment):
         )
 
         network_dtype = torch.float64 if self.cfg.use_float64 else torch.float32
+        split = ttsmeft_cfg.get("split", "test")  # old run configs lack the key
+        if split == "all":
+            idx = torch.arange(len(ttsmeft_dataset))
+        else:
+            idx = ttsmeft_dataset.get_subset(split)
         downtag_graphs = [
             ttsmeft_graph_to_downtag_input(
                 ttsmeft_dataset[i], ttsmeft_dataset.layout, self.cfg.data.pid, network_dtype
             )[0]
-            for i in ttsmeft_dataset.get_subset("test").tolist()
+            for i in idx.tolist()
         ]
 
         downtag_dataset = TaggingDataset(downtag_graphs)
@@ -682,7 +688,7 @@ class DownTaggingExperiment(TaggingExperiment):
 
         LOGGER.info(
             f"Built {len(downtag_graphs)} down-tagger-compatible events from the fixed tt_smeft "
-            f"test split ({data_dir}) for evaluation with data.dataset_eval='ttsmeft'"
+            f"{split} split ({data_dir}) for evaluation with data.dataset_eval='ttsmeft'"
         )
 
     def evaluate(self):
@@ -1023,47 +1029,60 @@ class TTSmeftExperiment(TaggingExperiment):
 
         dataset_kwargs = self._dataset_kwargs(self.cfg.data)
         self._init_data(TTSmeftDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
+        if self._eval_all():
+            self.data_test = Subset(self.data, self._eval_idx())
 
-        if not self.cfg.train and self.cfg.data.dataset_eval == "downtag":
-            self._relabel_test_data()
+        if self.cfg.data.downtag_labels:
+            self._set_downtag_labels()
 
-    def _relabel_test_data(self):
-        """Replace the true down tag of the test split by the down-tagger prediction."""
-        # labels.txt of a downtagging run with data.dataset_eval='ttsmeft': one row per test
-        # event, (down subjet is the leading one, predicted probability of that)
-        assert self.cfg.data.tag_down, "data.dataset_eval=downtag requires data.tag_down=true"
-        path = self.cfg.data.downtag_labels
-        labels = np.loadtxt(path)
-        true_leading, pred_leading = labels[:, 0] == 1, labels[:, 1].round() == 1
+    def _eval_all(self):
+        return not self.cfg.train and self.cfg.data.get("eval_all", False)  # old configs lack it
 
-        network_dtype = torch.float64 if self.cfg.use_float64 else torch.float32
-        test_graphs = [self.data[i] for i in self.data.get_subset("test").tolist()]
-        # guards against labels from a differently built test split
-        own_leading = [
-            ttsmeft_graph_to_downtag_input(graph, self.layout, False, network_dtype)[1]
-            for graph in test_graphs
-        ]
-        if not np.array_equal(own_leading, true_leading):
+    def _eval_idx(self):
+        return torch.arange(len(self.data)) if self._eval_all() else self.data.get_subset("test")
+
+    def _set_downtag_labels(self):
+        """Replace the true down tag by the down-tagger prediction, rounded or, with
+        data.downtag_soft, as a probability."""
+        # labels.txt of a downtagging run with data.dataset_eval='ttsmeft': (down subjet is the
+        # leading one in the top rest frame, predicted probability of that), one row per test
+        # event, or per event with data.ttsmeft.split=all (needed to train and for data.eval_all)
+        assert self.cfg.data.tag_down, "data.downtag_labels requires data.tag_down=true"
+        path, soft = self.cfg.data.downtag_labels, self.cfg.data.get("downtag_soft", False)
+        labels = torch.from_numpy(np.loadtxt(path))
+        all_events = len(labels) == len(self.data)
+        assert all_events or not (self.cfg.train or self._eval_all()), (
+            f"{path} only labels the test events, use data.ttsmeft.split=all in the downtagging run"
+        )
+        idx = torch.arange(len(self.data)) if all_events else self.data.get_subset("test")
+
+        top, harder, softer = self.data.nonb_subjets(idx)
+        first_leading = rest_frame_energy(harder, top) >= rest_frame_energy(softer, top)
+        down_harder = self.data.down_harder[idx]
+        # as in ttsmeft_graph_to_downtag_input, guards against labels of other events
+        true_leading = torch.where(down_harder, first_leading, ~first_leading)
+        if not torch.equal(true_leading, labels[:, 0] == 1):
             raise ValueError(
-                f"Down tags in {path} do not match the tt_smeft test split. Run the downtagging "
+                f"Down tags in {path} do not match the tt_smeft events. Run the downtagging "
                 "experiment with data.dataset_eval='ttsmeft' and the same tt_smeft settings."
             )
 
-        self.data_test = TaggingDataset(
-            relabel_ttsmeft_graph(graph, swap, self.layout, network_dtype, self.momentum_dtype)
-            for graph, swap in zip(test_graphs, true_leading != pred_leading, strict=True)
-        )
-        self.downtag_labels = labels
-        self.downtag_accuracy = float((true_leading == pred_leading).mean())
+        p_leading = labels[:, 1] if soft else labels[:, 1].round()
+        p = self.data.down_harder.double()
+        p[idx] = torch.where(first_leading, p_leading, 1 - p_leading)
+        self.data.set_down_prob(p)
+        self.downtag_accuracy = float(((labels[:, 1] > 0.5) == true_leading).double().mean())
         LOGGER.info(
-            f"Relabeled the down tag of {(true_leading != pred_leading).sum()}/{len(test_graphs)} "
-            f"tt_smeft test events with the down-tagger predictions from {path}"
+            f"Set the {'soft' if soft else 'hard'} down tags of {len(idx)} tt_smeft events from "
+            f"{path}, accuracy {self.downtag_accuracy:.4f}"
         )
 
     def _eval_output_suffix(self):
         suffix = super()._eval_output_suffix()
         if not self.cfg.train and self.cfg.data.c_value != 2.6:  # e.g. 0.1 -> _c0p1
             suffix += f"_c{self.cfg.data.c_value}".replace(".", "p")
+        if self._eval_all():
+            suffix += "_all"
         return suffix
 
     def evaluate(self):
@@ -1073,51 +1092,35 @@ class TTSmeftExperiment(TaggingExperiment):
         if self.cfg.save:
             self._save_results()
 
-    def _event_jets(self, idx):
-        """Momenta (n, 4, 6) as in `stack_jets`, lepton charge and the truth down-is-harder flag."""
-        data = self.data
-        start, end = data.ptr[idx], data.ptr[idx + 1]
-        down, other = data.x[start + 2], data.x[start + 3]  # tag_down slots
-        harder = rest_frame_energy(down, data.x[start]) >= rest_frame_energy(other, data.x[start])
-        hard, soft = (torch.where(harder[:, None], a, b) for a, b in [(down, other), (other, down)])
-        jets = torch.stack(
-            [data.x[start], data.x[start + 1], hard, soft, data.x[end - 2], data.x[end - 1]], dim=-1
-        )
-        return jets, data.scalars[end - 1, self.layout.charge_col].double(), harder.double()
-
     def _evaluate_asymmetry(self):
-        """Sign asymmetries of O1 and of the network output on the test events, per coupling."""
-        assert self.cfg.data.tag_down, "O1 with the truth down quark needs data.tag_down=true"
+        """Sign asymmetry of the network output p on the evaluated events: per coupling, and for
+        lbl_0=neg pooled over +c and -c. O1 is in paper_plots/tt_smeft_o1.py."""
         cfg, res = self.cfg.data, self.results["test"]
-        jets, charge, harder = self._event_jets(self.data.get_subset("test"))
         arrays = {
             "labels": res["labels_true"].numpy(),
             # sign of the CP-odd channel p only; the scalar channel would shift the sign cut
-            "omega": (2 * res.get("labels_predict_pseudo", res["labels_predict"]) - 1).numpy(),
-            "o1_truth": o1(jets, charge, harder).numpy(),
+            "omega": (2 * res["labels_predict_pseudo"] - 1).numpy(),
             "c0": 0.0 if cfg.lbl_0 == "sm" else -float(cfg.c_value),
             "c1": float(cfg.c_value),
         }
-        if cfg.dataset_eval == "downtag":
-            labels = self.downtag_labels
-            assert np.array_equal(labels[:, 0], harder.numpy()), "labels.txt misaligned with test"
-            arrays["o1_tagger"] = o1(jets, charge, torch.from_numpy(labels[:, 1])).numpy()
+        if cfg.get("downtag_labels"):
             res.setdefault("extra", {})["downtag_label_accuracy"] = self.downtag_accuracy
         asym = {}
-        for key in [k for k in arrays if k.startswith(("o1_", "omega"))]:
-            for label in (0, 1):
-                a, sigma = asymmetry(arrays[key][arrays["labels"] == label])
-                asym[f"{key}_c={arrays[f'c{label}']:g}"] = {"A": a, "sigma": sigma}
-                LOGGER.info(
-                    f"Asymmetry of {key} at c = {arrays[f'c{label}']:g}: {a:+.5f} +- {sigma:.5f}"
-                )
+        for label in (0, 1):
+            a, sigma = asymmetry(arrays["omega"][arrays["labels"] == label])
+            asym[f"omega_c={arrays[f'c{label}']:g}"] = {"A": a, "sigma": sigma}
+            LOGGER.info(f"Asymmetry of p at c = {arrays[f'c{label}']:g}: {a:+.5f} +- {sigma:.5f}")
+        if cfg.lbl_0 == "neg":
+            a, sigma = pooled_asymmetry(arrays["omega"], arrays["labels"])
+            asym["omega_pooled"] = {"A": a, "sigma": sigma}
+            LOGGER.info(f"Pooled asymmetry of p at |c| = {cfg.c_value:g}: {a:+.5f} +- {sigma:.5f}")
         res.setdefault("extra", {})["asymmetry"] = asym
         if self.cfg.save:
             path = os.path.join(
                 self.cfg.run_dir, f"preds_{self.cfg.run_idx}{self._eval_output_suffix()}"
             )
             os.makedirs(path, exist_ok=True)
-            np.savez(os.path.join(path, "o1.npz"), **arrays)
+            np.savez(os.path.join(path, "asymmetry.npz"), **arrays)
 
     def _cpflip_batch(self, fourmomenta, scalars, ptr, label):
         new_fourmomenta = torch.cat(
