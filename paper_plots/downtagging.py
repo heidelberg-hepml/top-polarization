@@ -201,9 +201,15 @@ def plot_polarization_efficiency(outdir, polarizations, scores, model):
     gnn = pd.read_csv(GNN_EFFICIENCY)
     for key, color in [("beta_opt_tL", COLORS[1]), ("beta_opt_tR", COLORS[2])]:
         ax.plot(gnn["efficiency"], gnn[key], color=color, ls="--", lw=LINE_WIDTH)
-    ax.plot([0.93, 1.0], [0.64, 0.64], color="gray", lw=LINE_WIDTH)
+    ax.plot([0.93, 1.0], [0.64, 0.64], color="#D95F02", lw=LINE_WIDTH)
     ax.text(
-        0.92, 0.64, r"$c_{W\text{hel}}$", ha="right", va="center", color="gray", fontsize=FONTSIZE
+        0.92,
+        0.64,
+        r"$c_{W\text{hel}}$",
+        ha="right",
+        va="center",
+        color="#F18500F1",
+        fontsize=FONTSIZE,
     )
     ax.set_xlim(0.2, 1.0)
     # headroom above beta = 1 for the legends
@@ -212,7 +218,7 @@ def plot_polarization_efficiency(outdir, polarizations, scores, model):
     ax.set_xlabel("Efficiency", fontsize=FONTSIZE)
     ax.set_ylabel(r"$\beta_\text{probe}$", fontsize=FONTSIZE)
     pols = [mlines.Line2D([], [], color=c) for c in COLORS[1:3]]
-    models = [mlines.Line2D([], [], color="black", ls=ls) for ls in ("-", "--")]
+    models = [mlines.Line2D([], [], color="gray", ls=ls) for ls in ("-", "--")]
     legend(
         ax,
         pols + models,

@@ -6,7 +6,7 @@ usage: python paper_plots/vbf_pseudoscalar.py runs/FINAL/vbf_pseudoscalar_s* [--
 import os
 import zipfile
 
-from paper_plots.common import load_npz, parse_runs, plot_output
+from paper_plots.common import best_run, load_npz, parse_runs, plot_output
 
 NEG, POS = r"$c_{H\tilde{W}} = -1$", r"$c_{H\tilde{W}} = +1$"
 
@@ -22,8 +22,9 @@ def pos_class(run_dir):
 
 if __name__ == "__main__":
     preds_dirs, model, outdir = parse_runs("vbf_pseudoscalar", {"data.exp_type": "pseudoscalar"})
-    training = load_npz(preds_dirs[0], "training.npz")
-    pos = pos_class(os.path.dirname(preds_dirs[0]))
+    best = best_run(preds_dirs)
+    training = load_npz(best, "training.npz")
+    pos = pos_class(os.path.dirname(best))
     labels = (POS, NEG) if pos == 0 else (NEG, POS)
     # the sign of a pseudoscalar is a convention: orient p(x) so that the +1 sample is positive
     if training[f"pseudoscalar_output_{pos}"][-1] < 0:

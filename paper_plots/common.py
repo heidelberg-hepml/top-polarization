@@ -119,8 +119,8 @@ def check_configs(run_dirs, match):
 def parse_runs(name, match):
     """Command line of every task script: run dirs (one per seed) -> (preds dirs, model, outdir).
 
-    The first run gives the training curves and the statistical errors, the spread over all runs
-    the seed errors.
+    The first run gives the statistical errors and the spread over all runs the seed errors; the
+    training curves and asymmetries use `best_run`.
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("runs", nargs="+", help="Run directories (runs/FINAL/<run>), one per seed.")
@@ -139,6 +139,15 @@ def parse_runs(name, match):
     os.makedirs(outdir, exist_ok=True)
     print(f"Saving plots to {outdir}")
     return [os.path.join(d, f"preds_{args.run_idx}") for d in run_dirs], model, outdir
+
+
+def best_run(preds_dirs):
+    """Preds dir of the run with the smallest validation loss; with es_load_best_model its
+    evaluated checkpoint is the one at that loss."""
+    losses = [load_npz(d, "training.npz")["val_loss"].min() for d in preds_dirs]
+    best = preds_dirs[int(np.argmin(losses))]
+    print(f"Best run (val loss {min(losses):.6f}): {best}")
+    return best
 
 
 def hist_band(ax, samples, bins, color):
