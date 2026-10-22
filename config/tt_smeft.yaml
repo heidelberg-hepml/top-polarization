@@ -11,9 +11,8 @@ data:
   pid: true
   tagging_features: beamsym # beam-swap symmetric dphi/deta features
   pseudoscalars: false # jet-level pseudoscalars (eps, spin correlation)
-  tag_down: true # one-hot down quark on the non-b subjets (ordered by pt)
-  downtag_labels: null # labels.txt of a downtagging run, replaces the true down tag (train or eval)
-  downtag_soft: false # use the down-tagger probability instead of its rounded tag
+  down_tag: truth # truth | hard | soft: one-hot true down quark, rounded or raw down-tagger probability
+  downtag_labels: null # labels.txt of a downtagging run, for down_tag=hard|soft (train or eval)
   eval_all: false # evaluate on all events, only for samples never trained on (c_value=0.1)
 
 defaults:

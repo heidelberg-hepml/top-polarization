@@ -31,6 +31,5 @@ net:
  primitives:
   subgroup: false
 
-
 defaults:
  - framesnet: identity

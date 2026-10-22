@@ -4,7 +4,7 @@ pseudoscalar output p on the test set with the truth (score) and the predicted d
 2.6 and on all events at 0.1). Curves and asymmetries: run with the smallest validation loss.
 O1: paper_plots/tt_smeft_o1.py.
 
-usage: python paper_plots/tt_smeft_posneg.py runs/FINAL/ttsmeft_neg_s* [--outdir DIR]
+usage: python -m paper_plots.tt_smeft_posneg runs/FINAL/ttsmeft_neg_s* [--outdir DIR]
 """
 
 import matplotlib.lines as mlines

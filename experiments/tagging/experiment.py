@@ -250,11 +250,15 @@ class TaggingExperiment(BaseExperiment):
                 self.results[set_label] = self._evaluate_single(
                     loader_dict[set_label], set_label, mode="eval"
                 )
+        self._evaluate_physics()
 
         if self.cfg.evaluation.save_labels:
             self._save_metrics()
         if self.cfg.save:
             self._save_results()
+
+    def _evaluate_physics(self):
+        """Task-specific evaluation of self.results, before they are saved."""
 
     def _save_results(self):
         """Write the scalar metrics and event counts of the evaluated sets to results_<idx>.json."""
@@ -586,7 +590,7 @@ class DownTaggingExperiment(TaggingExperiment):
             suffix += f"_{self.cfg.data.ttsmeft.lbl_0}"
             if self.cfg.data.ttsmeft.c_value != 2.6:  # e.g. 0.1 -> _c0p1
                 suffix += f"_c{self.cfg.data.ttsmeft.c_value}".replace(".", "p")
-            if self.cfg.data.ttsmeft.get("split", "test") != "test":
+            if self.cfg.data.ttsmeft.split != "test":
                 suffix += f"_{self.cfg.data.ttsmeft.split}"
         return suffix
 
@@ -646,7 +650,6 @@ class DownTaggingExperiment(TaggingExperiment):
             )
 
         ttsmeft_cfg = self.cfg.data.ttsmeft
-        assert ttsmeft_cfg.tag_down, "data.ttsmeft.tag_down=false leaves no true down tag"
         data_dir = ttsmeft_cfg.data_dir
 
         filenames = TTSmeftExperiment._select_filenames(
@@ -667,7 +670,7 @@ class DownTaggingExperiment(TaggingExperiment):
         )
 
         network_dtype = torch.float64 if self.cfg.use_float64 else torch.float32
-        split = ttsmeft_cfg.get("split", "test")  # old run configs lack the key
+        split = ttsmeft_cfg.split
         if split == "all":
             idx = torch.arange(len(ttsmeft_dataset))
         else:
@@ -691,9 +694,7 @@ class DownTaggingExperiment(TaggingExperiment):
             f"{split} split ({data_dir}) for evaluation with data.dataset_eval='ttsmeft'"
         )
 
-    def evaluate(self):
-        super().evaluate()
-
+    def _evaluate_physics(self):
         for set_label in self.cfg.evaluation.eval_set:
             pol = get_polarization(self.results[set_label], exp="downtagging")
             LOGGER.info(
@@ -712,9 +713,7 @@ class DownTaggingExperiment(TaggingExperiment):
             self.results[set_label]["cos_true_l"] = pol["cos_true_l"]
             self.results[set_label]["cos_true_r"] = pol["cos_true_r"]
 
-            polarized = self.cfg.data.dataset_eval == "polarized"
-            probe = probe_report(self.results[set_label], polarized)
-            self.results[set_label]["probe"] = probe
+            probe = probe_report(self.results[set_label])
             at = [
                 int(np.argmin(np.abs(np.array(probe["efficiencies"]) - e))) for e in (0.2, 0.5, 1)
             ]
@@ -736,8 +735,6 @@ class DownTaggingExperiment(TaggingExperiment):
                         if not key.endswith("_err") and key != "beta_truth_raw"
                     )
                 )
-        if self.cfg.save:
-            self._save_results()
 
         # labels.txt holds the down tags that the tt_smeft evaluation reads (data.downtag_labels)
         if self.cfg.data.dataset_eval == "ttsmeft" and not self.cfg.evaluation.save_labels:
@@ -888,9 +885,7 @@ class PolarizationExperiment(TaggingExperiment):
         }
         self._init_data(PolarizationDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
-    def evaluate(self):
-        super().evaluate()
-
+    def _evaluate_physics(self):
         for set_label in self.cfg.evaluation.eval_set:
             pol = get_polarization(self.results[set_label], exp="polarization")
             LOGGER.info(
@@ -917,6 +912,12 @@ class TTSmeftExperiment(TaggingExperiment):
         assert self.cfg.data.max_particles is None, (
             "data.max_particles crops the leptonic top and the lepton, set it to null"
         )
+        assert self.cfg.data.down_tag in ("truth", "hard", "soft"), (
+            f"Unknown data.down_tag '{self.cfg.data.down_tag}' (expected truth, hard or soft)"
+        )
+        assert (self.cfg.data.down_tag == "truth") == (self.cfg.data.downtag_labels is None), (
+            "data.down_tag=hard|soft needs data.downtag_labels, data.down_tag=truth none"
+        )
 
         # `_cpflip_batch` relabels the CP-conjugate copy as the opposite class
         if self.cfg.data.cpflip_batch and (
@@ -935,7 +936,6 @@ class TTSmeftExperiment(TaggingExperiment):
             "length": cfg_data.length,
             "pid": cfg_data.pid,
             "include_ps": cfg_data.pseudoscalars,
-            "tag_down": cfg_data.tag_down,
         }
 
     def _init_experiment(self, run_name_add=None):
@@ -1032,23 +1032,22 @@ class TTSmeftExperiment(TaggingExperiment):
         if self._eval_all():
             self.data_test = Subset(self.data, self._eval_idx())
 
-        if self.cfg.data.downtag_labels:
+        if self.cfg.data.down_tag != "truth":
             self._set_downtag_labels()
 
     def _eval_all(self):
-        return not self.cfg.train and self.cfg.data.get("eval_all", False)  # old configs lack it
+        return not self.cfg.train and self.cfg.data.eval_all
 
     def _eval_idx(self):
         return torch.arange(len(self.data)) if self._eval_all() else self.data.get_subset("test")
 
     def _set_downtag_labels(self):
-        """Replace the true down tag by the down-tagger prediction, rounded or, with
-        data.downtag_soft, as a probability."""
+        """Replace the true down tag by the down-tagger prediction, rounded (data.down_tag=hard)
+        or as a probability (data.down_tag=soft)."""
         # labels.txt of a downtagging run with data.dataset_eval='ttsmeft': (down subjet is the
         # leading one in the top rest frame, predicted probability of that), one row per test
         # event, or per event with data.ttsmeft.split=all (needed to train and for data.eval_all)
-        assert self.cfg.data.tag_down, "data.downtag_labels requires data.tag_down=true"
-        path, soft = self.cfg.data.downtag_labels, self.cfg.data.get("downtag_soft", False)
+        path, soft = self.cfg.data.downtag_labels, self.cfg.data.down_tag == "soft"
         labels = torch.from_numpy(np.loadtxt(path))
         all_events = len(labels) == len(self.data)
         assert all_events or not (self.cfg.train or self._eval_all()), (
@@ -1078,19 +1077,18 @@ class TTSmeftExperiment(TaggingExperiment):
         )
 
     def _eval_output_suffix(self):
-        suffix = super()._eval_output_suffix()
-        if not self.cfg.train and self.cfg.data.c_value != 2.6:  # e.g. 0.1 -> _c0p1
+        if self.cfg.train:
+            return ""
+        suffix = {"truth": "", "hard": "_downtag", "soft": "_softdown"}[self.cfg.data.down_tag]
+        if self.cfg.data.c_value != 2.6:  # e.g. 0.1 -> _c0p1
             suffix += f"_c{self.cfg.data.c_value}".replace(".", "p")
         if self._eval_all():
             suffix += "_all"
         return suffix
 
-    def evaluate(self):
-        super().evaluate()
+    def _evaluate_physics(self):
         if "test" in self.cfg.evaluation.eval_set and self.cfg.data.bsm == "im":
             self._evaluate_asymmetry()
-        if self.cfg.save:
-            self._save_results()
 
     def _evaluate_asymmetry(self):
         """Sign asymmetry of the network output p on the evaluated events: per coupling, and for
@@ -1098,12 +1096,13 @@ class TTSmeftExperiment(TaggingExperiment):
         cfg, res = self.cfg.data, self.results["test"]
         arrays = {
             "labels": res["labels_true"].numpy(),
-            # sign of the CP-odd channel p only; the scalar channel would shift the sign cut
-            "omega": (2 * res["labels_predict_pseudo"] - 1).numpy(),
+            # sign of the CP-odd channel p only, the scalar channel would shift the sign cut;
+            # the full output for models without a pseudoscalar stream
+            "omega": (2 * res.get("labels_predict_pseudo", res["labels_predict"]) - 1).numpy(),
             "c0": 0.0 if cfg.lbl_0 == "sm" else -float(cfg.c_value),
             "c1": float(cfg.c_value),
         }
-        if cfg.get("downtag_labels"):
+        if cfg.down_tag != "truth":
             res.setdefault("extra", {})["downtag_label_accuracy"] = self.downtag_accuracy
         asym = {}
         for label in (0, 1):

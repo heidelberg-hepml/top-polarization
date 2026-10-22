@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 from experiments.tagging.asymmetry import asymmetry, o1
-from experiments.tagging.likelihood import kinematic_p, lr_slope
+from experiments.tagging.likelihood import kinematic_p
 
 
 def _jets(n=64, seed=0):
@@ -16,14 +16,6 @@ def _jets(n=64, seed=0):
 def test_asymmetry_error():
     a, sigma = asymmetry(np.r_[np.ones(300), -np.ones(100)])
     assert np.isclose(a, 0.5) and np.isclose(sigma, np.sqrt((1 - a**2) / 400))
-
-
-def test_lr_slope_linear_densities():
-    rng = np.random.default_rng(0)
-    x = rng.uniform(-1, 1, 400000)
-    y = (rng.uniform(size=x.size) < (1 + 0.6 * x) / 2).astype(int)  # R: 1 + s x, L: 1 - s x
-    slope, err = lr_slope(x, y)
-    assert abs(slope - 0.6) < 5 * err
 
 
 def test_kinematic_p_in_unit_interval():

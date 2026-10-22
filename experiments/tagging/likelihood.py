@@ -149,7 +149,6 @@ def pol_opt(p, mom, sign, d_hard):
 M_TOP, M_W = 172.5, 80.4
 EFFICIENCIES = np.linspace(0.2, 1.0, 33)  # contains 0.2, 0.5 and 1.0
 PROBE_KEYS = ["fraction", "beta_abs", "beta_truth", "beta_truth_err", "beta_truth_raw"]
-SLOPE_KEYS = ["slope_cos", "slope_cos_err", "slope_u", "slope_u_err"]
 
 
 def _unit(v):
@@ -186,15 +185,15 @@ def kinematic_p(jets):
     return rho(c) / (rho(c) + rho(-c))
 
 
-def probe_report(results, polarized, efficiencies=EFFICIENCIES):
+def probe_report(results, efficiencies=EFFICIENCIES):
     """Spin analyzing power of the down tagger and of baselines on the same events.
 
-    beta_abs = <|k|> is the draft's beta_d, valid only for a calibrated p. beta_truth =
+    beta_abs = <|k|> equals beta_d only for a calibrated p. beta_truth =
     <d_true . k / |k|> and beta_truth_raw = <d_true . k> use the true down direction.
     Probes: net (labels_predict), kinematic (c_W), soft (d = softer jet), truth.
     """
     jets, charge = stack_jets(results).double(), results["charge"].double()
-    q_hard, q_soft, n_hat = probe_frame(jets, charge)
+    q_hard, q_soft, _ = probe_frame(jets, charge)
     d_hard = results["down_hard"].double()
     d_true = torch.where(d_hard[:, None] == 1, q_hard, q_soft)
     probes = {
@@ -204,14 +203,13 @@ def probe_report(results, polarized, efficiencies=EFFICIENCIES):
         "truth": d_hard,
     }
 
-    keys = PROBE_KEYS
     report = {"efficiencies": [float(e) for e in efficiencies]}
     for name, p in probes.items():
-        report[name] = {key: [] for key in keys}
+        report[name] = {key: [] for key in PROBE_KEYS}
         for eff in efficiencies:
             mask = cut_efficiency(p[:, None], efficiency=eff)
-            if mask.sum() < 2:  # an untrained network can leave the cut empty
-                for key in keys:
+            if mask.sum() < 2:  # the std needs two events
+                for key in PROBE_KEYS:
                     report[name][key].append(float("nan"))
                 continue
             pm = p[mask, None]
@@ -225,7 +223,7 @@ def probe_report(results, polarized, efficiencies=EFFICIENCIES):
                 "beta_truth_err": (dot / norm).std().item() / mask.sum().double().sqrt().item(),
                 "beta_truth_raw": dot.mean().item(),
             }
-            for key in keys:
+            for key in PROBE_KEYS:
                 report[name][key].append(float(row[key]))
     return report
 

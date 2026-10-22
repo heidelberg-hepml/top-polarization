@@ -5,13 +5,12 @@ lbl_0=neg, pooled over +c and -c (N+ counts O1 > 0 at +c and O1 < 0 at -c), and 
 o1_<lbl_0>_c<c>.npz to outdir.
 
 --plot draws O1 for Im(d_tG) = 0, -2.6, 2.6 from o1_neg_c2p6.npz and o1_sm_c2p6.npz in outdir.
-Each sample is normalized to the 172 085 selected dileptonic tt events of CMS at 35.9 fb^-1
-(arXiv:2205.07434, Table 1, "tt signal" summed over ee, emu, mumu). Band: Poisson error of the
-expected events and, for the tagger, the spread over the down-tagger seeds, in quadrature.
+Each sample is normalized to N_EVENTS expected events. Band: Poisson error of the expected events
+and, for the tagger, the spread over the down-tagger seeds, in quadrature.
 
-usage: python paper_plots/tt_smeft_o1.py --lbl_0 neg --c_value 2.6 \
+usage: python -m paper_plots.tt_smeft_o1 --lbl_0 neg --c_value 2.6 \
            --labels runs/FINAL/down_slim_s*/preds_0_ttsmeft_neg_all/labels.txt
-       python paper_plots/tt_smeft_o1.py --plot
+       python -m paper_plots.tt_smeft_o1 --plot
 """
 
 import argparse
@@ -40,7 +39,8 @@ from paper_plots.common import (
     step,
 )
 
-N_CMS = 22216 + 104051 + 45818
+# selected dileptonic ttbar events (ee + emu + mumu) at 35.9 fb^-1
+N_EVENTS = 22216 + 104051 + 45818
 BINS = np.linspace(-0.03, 0.03, 25)
 CHANNELS = {
     "o1_truth": ("tt_smeft_2p6_O1_delphes", r"$t\bar{t} \to \ell\ell$"),
@@ -50,7 +50,7 @@ CHANNELS = {
 
 def compute_o1(data_dir, lbl_0, c_value, label_files):
     files = TTSmeftExperiment._select_filenames(data_dir, "loose", lbl_0, "im", c_value)
-    data = TTSmeftDataset(tag_down=True)
+    data = TTSmeftDataset()
     data.load_data(data_dir, files)
 
     # momenta (n, 4, 6) as in `stack_jets`, lepton charge and the truth down-is-harder flag
@@ -106,7 +106,7 @@ def plot(outdir, data, key):
     handles, labels = [], []
     for c, color in zip((0.0, -2.6, 2.6), COLORS[:3], strict=True):
         # in units of 10^3 events
-        hists = [np.histogram(x, BINS)[0] / len(x) * N_CMS / 1e3 for x in data[c]]
+        hists = [np.histogram(x, BINS)[0] / len(x) * N_EVENTS / 1e3 for x in data[c]]
         mean, seed = mean_seed_std(hists)
         err = np.hypot(np.sqrt(mean / 1e3), seed)
         step(ax, BINS * 100, mean, color)

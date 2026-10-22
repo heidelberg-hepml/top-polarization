@@ -6,10 +6,10 @@ data:
   exp_type: cp # cp | pseudoscalar
   tagging_features: beamsym
 
+training:
+  iterations: 50000
+
 defaults:
  - tagging
  - override model: tag_slim_pseudo
  - _self_
-
-training:
-  iterations: 50000

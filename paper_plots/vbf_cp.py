@@ -1,6 +1,6 @@
 """Paper plots for the VBF toy, SM vs. Pos: s(x) and p(x) vs. iterations.
 
-usage: python paper_plots/vbf_cp.py runs/FINAL/vbf_cp_s* [--outdir DIR]
+usage: python -m paper_plots.vbf_cp runs/FINAL/vbf_cp_s* [--outdir DIR]
 """
 
 from paper_plots.common import best_run, load_npz, parse_runs, plot_output

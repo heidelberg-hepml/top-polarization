@@ -16,15 +16,14 @@ data:
     length: -1
     pid: true
     pseudoscalars: false
-    tag_down: true
-    split: test # test, or all (tt_smeft data.eval_all, paper_plots/tt_smeft_o1.py)
+    split: test # test | all, the tt_smeft events to label
 
 plotting:
   polarization: true
 
+training:
+  iterations: 500000
+
 defaults:
  - tagging
  - _self_
-
-training:
-  iterations: 500000

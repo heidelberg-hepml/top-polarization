@@ -1,7 +1,7 @@
 """Paper plots for the down tagger (d = hard vs. soft light jet): ROC (eps vs. 1/eps), calibration,
 and on the polarized evaluation the cos(theta) histogram and beta_probe vs. selected fraction.
 
-usage: python paper_plots/downtagging.py runs/FINAL/down_slim_s* [--outdir DIR]
+usage: python -m paper_plots.downtagging runs/FINAL/down_slim_s* [--outdir DIR]
 """
 
 import os
@@ -34,7 +34,7 @@ from paper_plots.common import (
 LABEL_1 = r"$d = q_{\text{hard}}$"
 TPR_LABEL, FPR_LABEL = r"\epsilon_d^{q_\text{hard}}", r"\epsilon_u^{q_\text{hard}}"
 
-# reference beta vs. efficiency extracted from https://arxiv.org/abs/2407.01663
+# beta vs. efficiency of a GNN down tagger, for comparison
 GNN_EFFICIENCY = os.path.join(REPO_DIR, "data", "beta_opt_GNN.csv")
 
 ROC_GRID = np.linspace(0, 1, 401)
@@ -182,7 +182,7 @@ def beta_vs_fraction(polarization, score):
 
 
 def plot_polarization_efficiency(outdir, polarizations, scores, model):
-    """beta_probe vs. the fraction of most confident events, with the GNN of 2407.01663 and the
+    """beta_probe vs. the fraction of most confident events, with the GNN down tagger and the
     W helicity angle probe at full efficiency."""
     curves = [beta_vs_fraction(p, s) for p, s in zip(polarizations, scores, strict=True)]
     fig, ax = plt.subplots(figsize=FIGSIZE)
@@ -208,7 +208,7 @@ def plot_polarization_efficiency(outdir, polarizations, scores, model):
         r"$c_{W\text{hel}}$",
         ha="right",
         va="center",
-        color="#F18500F1",
+        color="#D95F02",
         fontsize=FONTSIZE,
     )
     ax.set_xlim(0.2, 1.0)

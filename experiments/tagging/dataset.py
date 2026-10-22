@@ -396,8 +396,7 @@ class VBFDataset(TokenDataset):
 
 
 # tt_smeft scalars: [category(7), pid(5), charge, eps, nr], with the CP-odd columns last.
-# category = [is_hadtop, is_subjet, is_b, is_down, is_other, is_toplep, is_lepton], with
-# tag_down=false is_down/is_other mark the harder/softer non-b subjet
+# category = [is_hadtop, is_subjet, is_b, is_down, is_other, is_toplep, is_lepton]
 # pid = [is_electron, is_muon, is_photon, is_charged_hadron, is_neutral_hadron]
 TTSMEFT_N_CATEGORY = 7
 TTSMEFT_N_PID = 5
@@ -435,20 +434,18 @@ class TTSmeftLayout(NamedTuple):
 class TTSmeftDataset(TokenDataset):
     """CP-even vs CP-odd SMEFT ttbar events, with the non-b subjets ordered by pt.
 
-    With tag_down the category columns (down, other) of the non-b subjets and their constituents
-    hold the probability that the subjet is the down quark: one-hot for the true tag, or a
-    down-tagger output set with `set_down_prob`. The pseudoscalars are the expectation over the
-    two down candidates. Without tag_down the columns mark the pt order and the pseudoscalars use
-    the harder subjet as the down quark.
+    The category columns (down, other) of the non-b subjets and their constituents hold the
+    probability that the subjet is the down quark: one-hot for the true tag, or a down-tagger
+    output set with `set_down_prob`. The pseudoscalars are the expectation over the two down
+    candidates.
     """
 
     BALANCE = True
 
-    def __init__(self, length=-1, pid=False, include_ps=False, tag_down=True):
+    def __init__(self, length=-1, pid=False, include_ps=False):
         super().__init__(length=length)
         self.include_pid = pid
         self.include_ps = include_ps
-        self.tag_down = tag_down
         self.layout = TTSmeftLayout(pid=pid, include_ps=include_ps)
 
     def _read(self, path):
@@ -508,7 +505,7 @@ class TTSmeftDataset(TokenDataset):
         self._ntokens_t = torch.from_numpy(events["ntokens"])
         self._harder, self._softer = scalars[:, 3] == 1, scalars[:, 4] == 1
         self.down_harder = torch.from_numpy(np.isin(events["tags"][:, 1], DOWN_TAGS))
-        self.set_down_prob(self.down_harder if self.tag_down else torch.ones(len(self.labels)))
+        self.set_down_prob(self.down_harder)
 
 
 def _ttsmeft_role_masks(scalars):

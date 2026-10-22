@@ -1,6 +1,6 @@
 """Paper plots for the VBF toy, Neg vs. Pos (pseudoscalar): s(x) and p(x) vs. iterations.
 
-usage: python paper_plots/vbf_pseudoscalar.py runs/FINAL/vbf_pseudoscalar_s* [--outdir DIR]
+usage: python -m paper_plots.vbf_pseudoscalar runs/FINAL/vbf_pseudoscalar_s* [--outdir DIR]
 """
 
 import os

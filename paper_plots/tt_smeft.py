@@ -1,6 +1,6 @@
 """Paper plots for tt_smeft, SM vs. Im(d_tG) = 2.6: s(x) and p(x) vs. iterations.
 
-usage: python paper_plots/tt_smeft.py runs/FINAL/ttsmeft_sm_s* [--outdir DIR]
+usage: python -m paper_plots.tt_smeft runs/FINAL/ttsmeft_sm_s* [--outdir DIR]
 """
 
 from paper_plots.common import best_run, load_npz, parse_runs, plot_output

@@ -6,10 +6,9 @@ import torch
 
 from experiments.hep import PtPhiEtaM_to_EPPP, lorentz_boost
 
-# tokens of an event: [tophad, b subjet, harder subjet, softer subjet, constituents, tail]
-# with the non-b subjets in decreasing energy in the hadronic top rest frame (or pt), the constituents
-# grouped by subjet in that order
-# and pt-sorted within a group, and the tail holding the objects outside the hadronic top
+# tokens of an event: [tophad, b subjet, harder subjet, softer subjet, constituents, tail], the
+# constituents grouped by subjet in that order and pt-sorted within a group, the tail holding the
+# objects outside the hadronic top
 N_HEAD = 4
 N_SUBJETS = 3
 TAIL = ("TopLep", "Lepton")

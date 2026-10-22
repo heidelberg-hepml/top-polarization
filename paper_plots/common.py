@@ -174,7 +174,7 @@ def dup_last(a):
 
 
 def step(ax, bins, y, color, **kwargs):
-    """Histogram line as in high-dim-unfolding: step on the bin edges, closed at both ends."""
+    """Histogram line: step on the bin edges, closed at both ends."""
     ax.step(bins, dup_last(y), color=color, lw=LINE_WIDTH, where="post", **kwargs)
     ax.vlines([bins[0], bins[-1]], 0, [y[0], y[-1]], colors=color, lw=1.0, **kwargs)
 
@@ -191,7 +191,7 @@ def plot_output(
     order=(0, 1),
 ):
     """Validation mean of the scalar (s) or pseudoscalar (p) output per class vs. iterations,
-    band: its spread over the validation events. First seed only. `order` gives the classes in
+    band: its spread over the validation events. One run only. `order` gives the classes in
     plotting and legend order (blue, then red)."""
     key = {"s": "scalar", "p": "pseudoscalar"}[channel]
     labels = {0: label_0, 1: label_1}
@@ -199,9 +199,8 @@ def plot_output(
     n_train, n_val = len(training["train_loss"]), len(training["val_loss"])
     its = np.arange(n_val) * n_train / max(n_val - 1, 1)
 
-    # centered running mean; the window shrinks at the edges so every validation point is kept
-    # (only 11 to 101 points per run); the step-0 point (untrained network) is left out so its
-    # offset does not leak into the trained curve
+    # centered running mean, the window shrinks at the edges so every validation point is kept;
+    # the step-0 point (untrained network) is left out so its offset does not leak into the curve
     window = max(3, n_val // 10) | 1
 
     def smooth(x):
