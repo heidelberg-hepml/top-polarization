@@ -160,6 +160,13 @@ class BaseExperiment:
                     self.ema.load_state_dict(state_dict)
             except FileNotFoundError as err:
                 raise ValueError(f"Cannot load model from {model_path}") from err
+        elif self.cfg.get("init_from"):
+            # fine-tuning: weights only, fresh optimizer and scheduler
+            checkpoint = torch.load(self.cfg.init_from, map_location="cpu", weights_only=False)
+            LOGGER.info(f"Initializing model from {self.cfg.init_from}")
+            self.model.load_state_dict(checkpoint["model"])
+            if self.ema is not None:
+                self.ema.load_state_dict(checkpoint["ema"])
 
         self.model.to(self.device, dtype=self.dtype)
         if self.ema is not None:
