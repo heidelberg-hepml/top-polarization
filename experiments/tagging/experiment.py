@@ -32,7 +32,6 @@ from experiments.tagging.embedding import (
 )
 from experiments.tagging.likelihood import get_polarization, probe_report
 from experiments.tagging.plots import plot_mixer
-from experiments.tagging.top_events import rest_frame_energy
 
 PSEUDOSCALAR_MODELS = ("LGATr", "LGATrSlimPseudo")
 
@@ -1045,7 +1044,7 @@ class TTSmeftExperiment(TaggingExperiment):
         """Replace the true down tag by the down-tagger prediction, rounded (data.down_tag=hard)
         or as a probability (data.down_tag=soft)."""
         # labels.txt of a downtagging run with data.dataset_eval='ttsmeft': (down subjet is the
-        # leading one in the top rest frame, predicted probability of that), one row per test
+        # harder one, predicted probability of that), one row per test
         # event, or per event with data.ttsmeft.split=all (needed to train and for data.eval_all)
         path, soft = self.cfg.data.downtag_labels, self.cfg.data.down_tag == "soft"
         labels = torch.from_numpy(np.loadtxt(path))
@@ -1055,11 +1054,8 @@ class TTSmeftExperiment(TaggingExperiment):
         )
         idx = torch.arange(len(self.data)) if all_events else self.data.get_subset("test")
 
-        top, harder, softer = self.data.nonb_subjets(idx)
-        first_leading = rest_frame_energy(harder, top) >= rest_frame_energy(softer, top)
-        down_harder = self.data.down_harder[idx]
-        # as in ttsmeft_graph_to_downtag_input, guards against labels of other events
-        true_leading = torch.where(down_harder, first_leading, ~first_leading)
+        # guards against labels of other events
+        true_leading = self.data.down_harder[idx]
         if not torch.equal(true_leading, labels[:, 0] == 1):
             raise ValueError(
                 f"Down tags in {path} do not match the tt_smeft events. Run the downtagging "
@@ -1068,7 +1064,7 @@ class TTSmeftExperiment(TaggingExperiment):
 
         p_leading = labels[:, 1] if soft else labels[:, 1].round()
         p = self.data.down_harder.double()
-        p[idx] = torch.where(first_leading, p_leading, 1 - p_leading)
+        p[idx] = p_leading
         self.data.set_down_prob(p)
         self.downtag_accuracy = float(((labels[:, 1] > 0.5) == true_leading).double().mean())
         LOGGER.info(

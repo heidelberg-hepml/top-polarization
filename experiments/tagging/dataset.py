@@ -14,7 +14,6 @@ from experiments.tagging.top_events import (
     PID_FEATURES,
     TAIL,
     read_events,
-    rest_frame_energy,
 )
 
 # arrays of a file with one entry per token, all others have one entry per event
@@ -432,7 +431,7 @@ class TTSmeftLayout(NamedTuple):
 
 
 class TTSmeftDataset(TokenDataset):
-    """CP-even vs CP-odd SMEFT ttbar events, with the non-b subjets ordered by pt.
+    """CP-even vs CP-odd SMEFT ttbar events.
 
     The category columns (down, other) of the non-b subjets and their constituents hold the
     probability that the subjet is the down quark: one-hot for the true tag, or a down-tagger
@@ -449,12 +448,7 @@ class TTSmeftDataset(TokenDataset):
         self.layout = TTSmeftLayout(pid=pid, include_ps=include_ps)
 
     def _read(self, path):
-        return read_events(path, pt_order=True)
-
-    def nonb_subjets(self, idx):
-        """Fourmomenta of the hadronic top and the harder and softer non-b subjet of events idx."""
-        start = self.ptr[idx]
-        return self.x[start], self.x[start + 2], self.x[start + 3]
+        return read_events(path)
 
     def set_down_prob(self, p):
         """Set the probability per event that the harder non-b subjet is the down quark."""
@@ -520,8 +514,8 @@ def _ttsmeft_role_masks(scalars):
 
 
 def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype):
-    """Rebuild a tt_smeft graph in the format the down-tagger was trained on:
-    non-b subjets ordered by energy in the top rest frame, no leptonic side."""
+    """Rebuild a tt_smeft graph in the format the down-tagger was trained on: is_down/is_other
+    replaced by harder/softer non-b subjet, no leptonic side."""
     if pid and not layout.pid:
         raise ValueError(
             "Down-tagger expects PID features, but the tt_smeft graph was built "
@@ -529,13 +523,10 @@ def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype):
         )
 
     x, scalars = graph.x, graph.scalars
-    _, is_subjet, _, is_down, is_other, is_toplep, is_lep = _ttsmeft_role_masks(scalars)
+    _, _, _, is_down, _, is_toplep, is_lep = _ttsmeft_role_masks(scalars)
 
-    down_row = torch.nonzero(is_subjet & is_down, as_tuple=True)[0].item()
-    other_row = torch.nonzero(is_subjet & is_other, as_tuple=True)[0].item()
-    hadtop = x[torch.nonzero(scalars[:, 0] == 1, as_tuple=True)[0]]
-    e_down, e_other = rest_frame_energy(x[[down_row, other_row]][None], hadtop)[0]
-    down_is_leading = (e_down >= e_other).item()
+    # token 2 is the harder non-b subjet
+    down_is_leading = bool(is_down[2])
 
     new_category = torch.zeros(scalars.shape[0], 5, dtype=network_dtype)
     new_category[:, :3] = scalars[:, :3]

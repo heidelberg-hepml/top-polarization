@@ -6,9 +6,10 @@ import torch
 
 from experiments.hep import PtPhiEtaM_to_EPPP, lorentz_boost
 
-# tokens of an event: [tophad, b subjet, harder subjet, softer subjet, constituents, tail], the
-# constituents grouped by subjet in that order and pt-sorted within a group, the tail holding the
-# objects outside the hadronic top
+# tokens of an event: [tophad, b subjet, harder subjet, softer subjet, constituents, tail], with
+# the non-b subjets in decreasing energy in the hadronic top rest frame, the constituents grouped
+# by subjet in that order and pt-sorted within a group, and the tail holding the objects outside
+# the hadronic top
 N_HEAD = 4
 N_SUBJETS = 3
 TAIL = ("TopLep", "Lepton")
@@ -71,9 +72,8 @@ def _subjet_order(tags, hardness):
     return np.concatenate([np.argmax(is_b, axis=1)[:, None], non_b], axis=1)
 
 
-def read_events(parquet_path, tail=TAIL, pt_order=False):
-    """Return the tokens of all events of one parquet file as flat arrays, the non-b subjets
-    ordered by rest frame energy, or by pt with pt_order.
+def read_events(parquet_path, tail=TAIL):
+    """Return the tokens of all events of one parquet file as flat arrays.
 
     x: fourmomenta (E, px, py, pz) of all tokens of all events, concatenated
     pid: row of PID_FEATURES per token, -1 for tokens without a PID
@@ -89,12 +89,9 @@ def read_events(parquet_path, tail=TAIL, pt_order=False):
     )
 
     tophad = _fourmomenta(events["TopHad"])
-    if pt_order:
-        hardness = np.asarray(ak.to_numpy(subjets["pt"]), dtype=np.float64)
-    else:
-        hardness = rest_frame_energy(
-            torch.from_numpy(_fourmomenta(subjets)), torch.from_numpy(tophad)
-        ).numpy()
+    hardness = rest_frame_energy(
+        torch.from_numpy(_fourmomenta(subjets)), torch.from_numpy(tophad)
+    ).numpy()
     order = _subjet_order(ak.to_numpy(subjets["tag"]), hardness)
     subjets = subjets[np.arange(len(events))[:, None], ak.Array(order)]
 

@@ -24,7 +24,6 @@ import torch
 from experiments.tagging.asymmetry import asymmetry, o1, pooled_asymmetry
 from experiments.tagging.dataset import TTSmeftDataset
 from experiments.tagging.experiment import TTSmeftExperiment
-from experiments.tagging.top_events import rest_frame_energy
 from paper_plots.common import (
     COLORS,
     FIGSIZE,
@@ -55,14 +54,10 @@ def compute_o1(data_dir, lbl_0, c_value, label_files):
 
     # momenta (n, 4, 6) as in `stack_jets`, lepton charge and the truth down-is-harder flag
     start, end = data.ptr[:-1], data.ptr[1:]
-    _, first, second = data.nonb_subjets(torch.arange(len(data)))
-    down_first = data.down_harder[:, None]
-    down, other = torch.where(down_first, first, second), torch.where(down_first, second, first)
-    harder = rest_frame_energy(down, data.x[start]) >= rest_frame_energy(other, data.x[start])
-    hard, soft = (torch.where(harder[:, None], a, b) for a, b in [(down, other), (other, down)])
     jets = torch.stack(
-        [data.x[start], data.x[start + 1], hard, soft, data.x[end - 2], data.x[end - 1]], dim=-1
+        [data.x[i] for i in (start, start + 1, start + 2, start + 3, end - 2, end - 1)], dim=-1
     )
+    harder = data.down_harder
     charge = data.scalars[end - 1, data.layout.charge_col].double()
 
     out = {
