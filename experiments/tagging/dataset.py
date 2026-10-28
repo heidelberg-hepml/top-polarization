@@ -243,14 +243,20 @@ class TopTaggingDataset(TokenDataset):
     """Semileptonic ttbar events with the hadronic top resolved into subjets and constituents.
 
     Scalars: [is_hadtop, is_subjet, sub0, sub1, sub2] (+ [is_toplep, lepton charge] with
-    use_ditop) (+ 6 PID features with pid). Without use_ditop the leptonic top and the lepton
-    are no tokens but attached to every graph as lep_vec and lep_charge.
+    use_ditop) (+ 6 PID features with pid, 5 without the charge). Without use_ditop the leptonic
+    top and the lepton are no tokens but attached to every graph as lep_vec and lep_charge.
+    With charge_last the C-odd charges (lepton charge with use_ditop, PID charge with pid) move
+    into one trailing charge column, and the lepton gets an is_lepton flag.
     """
 
-    def __init__(self, length=-1, pid=False, use_ditop=False):
+    def __init__(self, length=-1, pid=False, use_ditop=False, charge=True, charge_last=False):
         super().__init__(length=length)
+        assert charge or not use_ditop, "use_ditop passes the lepton charge"
+        assert charge or not charge_last, "charge_last moves the charges, charge=false drops them"
         self.include_pid = pid
         self.use_ditop = use_ditop
+        self.charge = charge
+        self.charge_last = charge_last
 
     def _read(self, path):
         return read_events(path)
@@ -266,7 +272,8 @@ class TopTaggingDataset(TokenDataset):
             scalars[_tail_tokens(tokens, n_tail, 0), 5] = 1
             scalars[_tail_tokens(tokens, n_tail, 1), 6] = lep_charge.to(network_dtype)
         if self.include_pid:
-            scalars = torch.cat([scalars, _pid_features(tokens["pid"], network_dtype)], dim=-1)
+            rows = _pid_features(tokens["pid"], network_dtype)
+            scalars = torch.cat([scalars, rows if self.charge else rows[:, 1:]], dim=-1)
 
         x = torch.from_numpy(tokens["x"]).to(momentum_dtype)
         ref = _top_ref(tokens, events, n_tail)
@@ -283,36 +290,10 @@ class TopTaggingDataset(TokenDataset):
         self.extras["down_hard"] = torch.from_numpy(np.isin(events["tags"][:, 1], DOWN_TAGS)).long()
         self.x, self.scalars, self.ref = x, scalars, ref
         self.labels = torch.from_numpy(self._labels(events)).to(torch.long)
+        if self.charge_last and (self.use_ditop or self.include_pid):
+            self._move_charge_last()
 
-
-class DownTaggingDataset(TopTaggingDataset):
-    """Label 1 if the harder non-b subjet (in the top rest frame) has one of the parton tags
-    `tag` (down quarks)."""
-
-    def __init__(self, tag=DOWN_TAGS, length=-1, pid=False, use_ditop=False):
-        super().__init__(length=length, pid=pid, use_ditop=use_ditop)
-        self.tag = tag
-
-    def _labels(self, events):
-        return np.isin(events["tags"][:, 1], self.tag)
-
-
-class PolarizationDataset(TopTaggingDataset):
-    """Left- (label 0) against right-handed (label 1) hadronic tops.
-
-    Scalars as in TopTaggingDataset, but the C-odd charges (lepton charge with use_ditop, PID
-    charge with pid) move into one trailing charge column, and the lepton gets an is_lepton flag.
-    charge_last=False keeps the TopTaggingDataset layout, as the down tagger expects.
-    """
-
-    def __init__(self, length=-1, pid=False, use_ditop=False, charge_last=True):
-        super().__init__(length=length, pid=pid, use_ditop=use_ditop)
-        self.charge_last = charge_last
-
-    def _build(self, events, tokens, network_dtype, momentum_dtype):
-        super()._build(events, tokens, network_dtype, momentum_dtype)
-        if not self.charge_last or not (self.use_ditop or self.include_pid):
-            return
+    def _move_charge_last(self):
         s = self.scalars
         charge = s.new_zeros(len(s))
         if self.include_pid:
@@ -324,6 +305,32 @@ class PolarizationDataset(TopTaggingDataset):
             charge[is_lepton] = s[is_lepton, 6]
             s[:, 6] = is_lepton.to(s.dtype)
         self.scalars = torch.cat([s, charge[:, None]], dim=-1)
+
+
+class DownTaggingDataset(TopTaggingDataset):
+    """Label 1 if the harder non-b subjet (in the top rest frame) has one of the parton tags
+    `tag` (down quarks)."""
+
+    def __init__(
+        self, tag=DOWN_TAGS, length=-1, pid=False, use_ditop=False, charge=True, charge_last=False
+    ):
+        super().__init__(
+            length=length, pid=pid, use_ditop=use_ditop, charge=charge, charge_last=charge_last
+        )
+        self.tag = tag
+
+    def _labels(self, events):
+        return np.isin(events["tags"][:, 1], self.tag)
+
+
+class PolarizationDataset(TopTaggingDataset):
+    """Left- (label 0) against right-handed (label 1) hadronic tops, by default with the charges
+    last. charge_last=False keeps the layout of a down tagger without pseudoscalar stream."""
+
+    def __init__(self, length=-1, pid=False, use_ditop=False, charge_last=True, charge=True):
+        super().__init__(
+            length=length, pid=pid, use_ditop=use_ditop, charge=charge, charge_last=charge_last
+        )
 
 
 class PseudoscalarDataset(TokenDataset):
@@ -513,7 +520,7 @@ def _ttsmeft_role_masks(scalars):
     return is_jet, is_subjet, is_b, is_down, is_other, is_toplep, is_lep
 
 
-def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype):
+def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype, charge=True):
     """Rebuild a tt_smeft graph in the format the down-tagger was trained on: is_down/is_other
     replaced by harder/softer non-b subjet, no leptonic side."""
     if pid and not layout.pid:
@@ -540,11 +547,9 @@ def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype):
         pid_lo = TTSMEFT_N_CATEGORY
         # the down-tagger's pid encoding leads with the charge
         new_scalars = torch.cat(
-            [
-                new_scalars,
-                scalars[keep, layout.charge_col, None].to(network_dtype),
-                scalars[keep, pid_lo : pid_lo + TTSMEFT_N_PID].to(network_dtype),
-            ],
+            [new_scalars]
+            + ([scalars[keep, layout.charge_col, None].to(network_dtype)] if charge else [])
+            + [scalars[keep, pid_lo : pid_lo + TTSMEFT_N_PID].to(network_dtype)],
             dim=-1,
         )
 

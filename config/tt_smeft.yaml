@@ -9,7 +9,6 @@ data:
   cpflip_batch: false # only used with lbl_0=neg and bsm=im
   mass_window: loose
   pid: true
-  tagging_features: beamsym # beam-swap symmetric dphi/deta features
   pseudoscalars: false # jet-level pseudoscalars (eps, spin correlation)
   down_tag: truth # truth | hard | soft: one-hot true down quark, rounded or raw down-tagger probability
   downtag_labels: null # labels.txt of a downtagging run, for down_tag=hard|soft (train or eval)

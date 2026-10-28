@@ -48,6 +48,16 @@ TAGGING_FEATURE_SUBSETS = {
         "dr",
         "dphi_deta",
     ),
+    # beamsym without the parity-odd dphi_deta
+    "beamsym_even": (
+        "log_pt",
+        "log_energy",
+        "log_pt_rel",
+        "log_energy_rel",
+        "abs_dphi",
+        "abs_deta",
+        "dr",
+    ),
     None: (),
 }
 

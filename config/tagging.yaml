@@ -4,7 +4,7 @@ exp_name: tagging
 data:
   dataset_eval: null
   length: -1
-  tagging_features: all
+  tagging_features: beamsym
   boost_jet: false
   beam_reference: lightlike
   two_beams: true

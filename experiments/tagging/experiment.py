@@ -566,9 +566,16 @@ class DownTaggingExperiment(TaggingExperiment):
         self.num_outputs = 1
         self.extra_scalars = 5  # Differentiate between fatjet, subjets, and constituents
         if self.cfg.data.pid:
-            self.extra_scalars += 6
+            self.extra_scalars += 5 + int(self.cfg.data.charge)
         if self.cfg.data.use_ditop:
             self.extra_scalars += 2
+        # with LGATrSlimPseudo the C-odd charge and the P-odd tagging features go to the
+        # pseudoscalar stream, to test for CP-odd information in the down tag
+        if self.cfg.model.net._target_.endswith("LGATrSlimPseudo"):
+            assert not self.cfg.data.use_ditop, "the evaluation reads the lepton charge from col 6"
+            self.ps_task = True
+            self.n_ps_data = int(self.cfg.data.pid and self.cfg.data.charge)
+            self.extra_scalars -= self.n_ps_data
 
     def _init_experiment(self, run_name_add=None):
         run_name_add = [
@@ -636,6 +643,8 @@ class DownTaggingExperiment(TaggingExperiment):
                 "tag": self.cfg.data.tag,
                 "pid": self.cfg.data.pid,
                 "use_ditop": self.cfg.data.use_ditop,
+                "charge": self.cfg.data.charge,
+                "charge_last": self.ps_task,
             }
             self._init_data(DownTaggingDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
@@ -649,6 +658,7 @@ class DownTaggingExperiment(TaggingExperiment):
             )
 
         ttsmeft_cfg = self.cfg.data.ttsmeft
+        assert not self.ps_task, "the tt_smeft conversion builds the charge-first layout"
         data_dir = ttsmeft_cfg.data_dir
 
         filenames = TTSmeftExperiment._select_filenames(
@@ -676,7 +686,11 @@ class DownTaggingExperiment(TaggingExperiment):
             idx = ttsmeft_dataset.get_subset(split)
         downtag_graphs = [
             ttsmeft_graph_to_downtag_input(
-                ttsmeft_dataset[i], ttsmeft_dataset.layout, self.cfg.data.pid, network_dtype
+                ttsmeft_dataset[i],
+                ttsmeft_dataset.layout,
+                self.cfg.data.pid,
+                network_dtype,
+                charge=self.cfg.data.charge,
             )[0]
             for i in idx.tolist()
         ]
@@ -882,6 +896,8 @@ class PolarizationExperiment(TaggingExperiment):
             # the down tagger also evaluates on this data (dataset_eval=polarized), in its own layout
             "charge_last": self.ps_task,
         }
+        if isinstance(self, DownTaggingExperiment):
+            dataset_kwargs["charge"] = self.cfg.data.charge
         self._init_data(PolarizationDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
     def _evaluate_physics(self):
