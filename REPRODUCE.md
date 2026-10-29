@@ -4,8 +4,8 @@ Commands to train and evaluate the networks behind the paper figures: the down t
 the VBF toy (`vbf_pseudoscalar`, `vbf_cp`) and tt_smeft (`lbl_0=sm`, `lbl_0=neg`), evaluated on
 both the truth-labelled test split and the test split relabelled by the down tagger.
 
-L-GATr-slim runs use seeds 0-4, L-GATr runs seed 0. tt_smeft takes the down tag as a one-hot
-encoding on the non-b subjets: `data.down_tag=truth` (default) is the true down quark,
+L-GATr-slim runs use seeds 0-4, L-GATr runs seed 0. tt_smeft takes the down tag as one scalar on the non-b subjets and their constituents, the
+probability that the subjet is the down quark: `data.down_tag=truth` (default) is the true one,
 `hard` / `soft` the rounded / raw probability of a down tagger, read from `data.downtag_labels`.
 
 ## Setup
@@ -153,7 +153,7 @@ N+ counts O > 0 at +c and O < 0 at -c.
 
 ## 6. tt_smeft Neg. vs Pos. trained on the soft down tag
 
-The down-tagger probability replaces the one-hot down tag in training and evaluation, so the
+The down-tagger probability replaces the true down tag in training and evaluation, so the
 down tagger first labels all events.
 
 ```bash

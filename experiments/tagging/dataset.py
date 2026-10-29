@@ -401,10 +401,11 @@ class VBFDataset(TokenDataset):
         self._ntokens = events["ntokens"]
 
 
-# tt_smeft scalars: [category(7), pid(5), charge, eps, nr], with the CP-odd columns last.
-# category = [is_hadtop, is_subjet, is_b, is_down, is_other, is_toplep, is_lepton]
+# tt_smeft scalars: [category(6), pid(5), charge, eps, nr], with the CP-odd columns last.
+# category = [is_hadtop, is_subjet, is_b, down, is_toplep, is_lepton], down = probability that
+# the token's non-b subjet is the down quark
 # pid = [is_electron, is_muon, is_photon, is_charged_hadron, is_neutral_hadron]
-TTSMEFT_N_CATEGORY = 7
+TTSMEFT_N_CATEGORY = 6
 TTSMEFT_N_PID = 5
 TTSMEFT_N_GLOBAL_PS = 2  # eps_tensor, spin_correlation_nr
 
@@ -440,10 +441,9 @@ class TTSmeftLayout(NamedTuple):
 class TTSmeftDataset(TokenDataset):
     """CP-even vs CP-odd SMEFT ttbar events.
 
-    The category columns (down, other) of the non-b subjets and their constituents hold the
-    probability that the subjet is the down quark: one-hot for the true tag, or a down-tagger
-    output set with `set_down_prob`. The pseudoscalars are the expectation over the two down
-    candidates.
+    The down column of the non-b subjets and their constituents holds the probability that the
+    subjet is the down quark: 1/0 for the true tag, or a down-tagger output set with
+    `set_down_prob`. The pseudoscalars are the expectation over the two down candidates.
     """
 
     BALANCE = True
@@ -461,9 +461,9 @@ class TTSmeftDataset(TokenDataset):
         """Set the probability per event that the harder non-b subjet is the down quark."""
         p = p.to(self.scalars.dtype)
         p_token = p.repeat_interleave(self._ntokens_t)
-        down = torch.where(self._harder, p_token, torch.where(self._softer, 1 - p_token, 0))
-        self.scalars[:, 3] = down
-        self.scalars[:, 4] = (self._harder | self._softer).to(down.dtype) - down
+        self.scalars[:, 3] = torch.where(
+            self._harder, p_token, torch.where(self._softer, 1 - p_token, 0)
+        )
         if self.include_ps:
             ps = p[:, None] * self._ps[0] + (1 - p[:, None]) * self._ps[1]
             self.scalars[:, -TTSMEFT_N_GLOBAL_PS:] = ps.repeat_interleave(self._ntokens_t, dim=0)
@@ -472,8 +472,11 @@ class TTSmeftDataset(TokenDataset):
         layout, offsets, n_tail = self.layout, tokens["offsets"], len(TAIL)
         toplep, lepton = _tail_tokens(tokens, n_tail, 0), _tail_tokens(tokens, n_tail, 1)
         scalars = _top_category(tokens, events, n_tail, layout.n_cols, network_dtype)
-        scalars[toplep, 5] = 1
-        scalars[lepton, 6] = 1
+        # columns 3, 4 of _top_category mark the harder and softer non-b subjet
+        self._harder, self._softer = scalars[:, 3] == 1, scalars[:, 4] == 1
+        scalars[:, 4] = 0
+        scalars[toplep, 4] = 1
+        scalars[lepton, 5] = 1
 
         if layout.pid:
             rows = _pid_features(tokens["pid"], network_dtype)
@@ -504,25 +507,13 @@ class TTSmeftDataset(TokenDataset):
         self.labels = torch.from_numpy(events["label"]).to(torch.long)
         self._ntokens = events["ntokens"]
         self._ntokens_t = torch.from_numpy(events["ntokens"])
-        self._harder, self._softer = scalars[:, 3] == 1, scalars[:, 4] == 1
         self.down_harder = torch.from_numpy(np.isin(events["tags"][:, 1], DOWN_TAGS))
         self.set_down_prob(self.down_harder)
 
 
-def _ttsmeft_role_masks(scalars):
-    is_jet = scalars[:, 0] == 1
-    is_subjet = scalars[:, 1] == 1
-    is_b = scalars[:, 2] == 1
-    is_down = scalars[:, 3] == 1
-    is_other = scalars[:, 4] == 1
-    is_toplep = scalars[:, 5] == 1
-    is_lep = scalars[:, 6] == 1
-    return is_jet, is_subjet, is_b, is_down, is_other, is_toplep, is_lep
-
-
 def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype, charge=True):
-    """Rebuild a tt_smeft graph in the format the down-tagger was trained on: is_down/is_other
-    replaced by harder/softer non-b subjet, no leptonic side."""
+    """Rebuild a tt_smeft graph with the true down tag in the format the down-tagger was trained
+    on: the down column replaced by harder/softer non-b subjet, no leptonic side."""
     if pid and not layout.pid:
         raise ValueError(
             "Down-tagger expects PID features, but the tt_smeft graph was built "
@@ -530,16 +521,17 @@ def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype, charge=Tru
         )
 
     x, scalars = graph.x, graph.scalars
-    _, _, _, is_down, _, is_toplep, is_lep = _ttsmeft_role_masks(scalars)
+    is_down, is_toplep, is_lep = scalars[:, 3] == 1, scalars[:, 4] == 1, scalars[:, 5] == 1
+    is_light = (scalars[:, [0, 2, 4, 5]] == 0).all(dim=-1)  # non-b subjets and constituents
 
     # token 2 is the harder non-b subjet
     down_is_leading = bool(is_down[2])
+    harder = is_down if down_is_leading else is_light & ~is_down
 
     new_category = torch.zeros(scalars.shape[0], 5, dtype=network_dtype)
     new_category[:, :3] = scalars[:, :3]
-    down_col, other_col = (3, 4) if down_is_leading else (4, 3)
-    new_category[:, 3] = scalars[:, down_col]
-    new_category[:, 4] = scalars[:, other_col]
+    new_category[:, 3] = harder.to(network_dtype)
+    new_category[:, 4] = (is_light & ~harder).to(network_dtype)
 
     keep = ~(is_toplep | is_lep)
     new_scalars = new_category[keep]

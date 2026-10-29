@@ -10,7 +10,7 @@ data:
   mass_window: loose
   pid: true
   pseudoscalars: false # jet-level pseudoscalars (eps, spin correlation)
-  down_tag: truth # truth | hard | soft: one-hot true down quark, rounded or raw down-tagger probability
+  down_tag: truth # truth | hard | soft: true down quark, rounded or raw down-tagger probability
   downtag_labels: null # labels.txt of a downtagging run, for down_tag=hard|soft (train or eval)
   eval_all: false # evaluate on all events, only for samples never trained on (c_value=0.1)
 
