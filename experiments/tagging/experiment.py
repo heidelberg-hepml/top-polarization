@@ -652,11 +652,6 @@ class DownTaggingExperiment(TaggingExperiment):
         if self.data:
             return
 
-        if self.cfg.data.use_ditop:
-            raise NotImplementedError(
-                "data.dataset_eval='ttsmeft' currently only supports use_ditop=False."
-            )
-
         ttsmeft_cfg = self.cfg.data.ttsmeft
         assert not self.ps_task, "the tt_smeft conversion builds the charge-first layout"
         data_dir = ttsmeft_cfg.data_dir
@@ -691,6 +686,7 @@ class DownTaggingExperiment(TaggingExperiment):
                 self.cfg.data.pid,
                 network_dtype,
                 charge=self.cfg.data.charge,
+                use_ditop=self.cfg.data.use_ditop,
             )[0]
             for i in idx.tolist()
         ]

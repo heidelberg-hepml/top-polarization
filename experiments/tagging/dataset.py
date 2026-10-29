@@ -511,9 +511,10 @@ class TTSmeftDataset(TokenDataset):
         self.set_down_prob(self.down_harder)
 
 
-def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype, charge=True):
+def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype, charge=True, use_ditop=False):
     """Rebuild a tt_smeft graph with the true down tag in the format the down-tagger was trained
-    on: the down column replaced by harder/softer non-b subjet, no leptonic side."""
+    on: the down column replaced by harder/softer non-b subjet, the leptonic top and the lepton
+    as tokens with use_ditop and attached as lep_vec / lep_charge otherwise."""
     if pid and not layout.pid:
         raise ValueError(
             "Down-tagger expects PID features, but the tt_smeft graph was built "
@@ -528,19 +529,24 @@ def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype, charge=Tru
     down_is_leading = bool(is_down[2])
     harder = is_down if down_is_leading else is_light & ~is_down
 
-    new_category = torch.zeros(scalars.shape[0], 5, dtype=network_dtype)
+    lep_charge = scalars[is_lep, layout.charge_col].to(network_dtype)
+    new_category = torch.zeros(scalars.shape[0], 7 if use_ditop else 5, dtype=network_dtype)
     new_category[:, :3] = scalars[:, :3]
     new_category[:, 3] = harder.to(network_dtype)
     new_category[:, 4] = (is_light & ~harder).to(network_dtype)
+    if use_ditop:
+        new_category[is_toplep, 5] = 1
+        new_category[is_lep, 6] = lep_charge
 
-    keep = ~(is_toplep | is_lep)
+    keep = torch.ones_like(is_lep) if use_ditop else ~(is_toplep | is_lep)
     new_scalars = new_category[keep]
     if pid:
         pid_lo = TTSMEFT_N_CATEGORY
-        # the down-tagger's pid encoding leads with the charge
+        # the down-tagger's pid encoding leads with the charge, which is 0 on the lepton
+        pid_charge = torch.where(is_lep, 0, scalars[:, layout.charge_col])
         new_scalars = torch.cat(
             [new_scalars]
-            + ([scalars[keep, layout.charge_col, None].to(network_dtype)] if charge else [])
+            + ([pid_charge[keep, None].to(network_dtype)] if charge else [])
             + [scalars[keep, pid_lo : pid_lo + TTSMEFT_N_PID].to(network_dtype)],
             dim=-1,
         )
@@ -551,6 +557,6 @@ def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype, charge=Tru
         scalars=new_scalars,
         label=torch.tensor([float(down_is_leading)], dtype=network_dtype),
         lep_vec=torch.cat([x[is_toplep], x[is_lep]], dim=0),
-        lep_charge=scalars[is_lep, layout.charge_col].to(network_dtype),
+        lep_charge=lep_charge,
     )
     return downtag_graph, down_is_leading
