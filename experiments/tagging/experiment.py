@@ -923,12 +923,15 @@ class TTSmeftExperiment(TaggingExperiment):
         assert self.cfg.data.max_particles is None, (
             "data.max_particles crops the leptonic top and the lepton, set it to null"
         )
-        assert self.cfg.data.down_tag in ("truth", "hard", "soft"), (
-            f"Unknown data.down_tag '{self.cfg.data.down_tag}' (expected truth, hard or soft)"
+        assert self.cfg.data.down_tag in ("truth", "hard", "soft", "mix"), (
+            f"Unknown data.down_tag '{self.cfg.data.down_tag}' (expected truth, hard, soft or mix)"
         )
         assert (self.cfg.data.down_tag == "truth") == (self.cfg.data.downtag_labels is None), (
-            "data.down_tag=hard|soft needs data.downtag_labels, data.down_tag=truth none"
+            "data.down_tag=hard|soft|mix needs data.downtag_labels, data.down_tag=truth none"
         )
+        assert self.cfg.data.down_tag != "mix" or (
+            not self.cfg.train and "test" in self.cfg.evaluation.eval_set
+        ), "data.down_tag=mix only evaluates, with train=false and test in evaluation.eval_set"
 
         # `_cpflip_batch` relabels the CP-conjugate copy as the opposite class
         if self.cfg.data.cpflip_batch and (
@@ -1054,11 +1057,12 @@ class TTSmeftExperiment(TaggingExperiment):
 
     def _set_downtag_labels(self):
         """Replace the true down tag by the down-tagger prediction, rounded (data.down_tag=hard)
-        or as a probability (data.down_tag=soft)."""
+        or as a probability (data.down_tag=soft). data.down_tag=mix sets the wrong tag, whose
+        outputs `_mix_downtag` combines with those of the saved truth evaluation."""
         # labels.txt of a downtagging run with data.dataset_eval='ttsmeft': (down subjet is the
         # harder one, predicted probability of that), one row per test
         # event, or per event with data.ttsmeft.split=all (needed to train and for data.eval_all)
-        path, soft = self.cfg.data.downtag_labels, self.cfg.data.down_tag == "soft"
+        path, mode = self.cfg.data.downtag_labels, self.cfg.data.down_tag
         labels = torch.from_numpy(np.loadtxt(path))
         all_events = len(labels) == len(self.data)
         assert all_events or not (self.cfg.train or self._eval_all()), (
@@ -1074,20 +1078,60 @@ class TTSmeftExperiment(TaggingExperiment):
                 "experiment with data.dataset_eval='ttsmeft' and the same tt_smeft settings."
             )
 
-        p_leading = labels[:, 1] if soft else labels[:, 1].round()
         p = self.data.down_harder.double()
-        p[idx] = p_leading
+        p[idx] = labels[:, 1].round() if mode == "hard" else labels[:, 1]
+        if mode == "mix":
+            self.p_harder = p
+            p = 1 - self.data.down_harder.double()
         self.data.set_down_prob(p)
         self.downtag_accuracy = float(((labels[:, 1] > 0.5) == true_leading).double().mean())
         LOGGER.info(
-            f"Set the {'soft' if soft else 'hard'} down tags of {len(idx)} tt_smeft events from "
+            f"Set the {mode} down tags of {len(idx)} tt_smeft events from "
             f"{path}, accuracy {self.downtag_accuracy:.4f}"
         )
 
-    def _eval_output_suffix(self):
+    def _mix_downtag(self):
+        """O = p O(d = q_hard) + (1 - p) O(d = q_soft) for the scalar and pseudoscalar logits, with
+        p the down-tagger probability of the harder subjet. One assignment is the true one, read
+        from the truth evaluation, the other the wrong one of this evaluation."""
+        assert self.world_size == 1, "events are matched by their order, evaluate on one GPU"
+        res = self.results["test"]
+        path = os.path.join(
+            self.cfg.run_dir, f"preds_{self.cfg.run_idx}{self._eval_output_suffix('truth')}"
+        )
+        assert os.path.exists(f"{path}/score.npz"), f"data.down_tag=mix needs {path}/score.npz"
+        truth = np.load(f"{path}/score.npz")
+        assert np.array_equal(truth["labels_true"], res["labels_true"].numpy()), (
+            f"{path} holds other events"
+        )
+        idx = self._eval_idx()
+        harder, p = self.data.down_harder[idx], self.p_harder[idx]
+        logits = {}
+        for output in ("scalar", "pseudo"):
+            key = f"labels_predict_{output}"
+            right = torch.logit(torch.from_numpy(truth[key]).double())
+            wrong = torch.logit(res[key].double())
+            o_hard, o_soft = torch.where(harder, right, wrong), torch.where(harder, wrong, right)
+            logits[output] = p * o_hard + (1 - p) * o_soft
+            res[key] = torch.sigmoid(logits[output]).float()
+
+        logit = (logits["scalar"] + logits["pseudo"]).float()
+        res["labels_predict"] = torch.sigmoid(logit)
+        res["loss"] = self.loss(logit, res["labels_true"]).item()
+        y, pred = res["labels_true"].numpy(), res["labels_predict"].numpy()
+        res["accuracy"] = accuracy_score(y, pred.round())
+        res["fpr"], res["tpr"], _ = roc_curve(y, pred)
+        res["auc"] = roc_auc_score(y, pred)
+        for key in ("rej03", "rej05", "rej08"):  # of the wrong tag
+            res.pop(key)
+        LOGGER.info(f"AUC with the mixed down tag: {res['auc']:.4f}")
+
+    def _eval_output_suffix(self, down_tag=None):
         if self.cfg.train:
             return ""
-        suffix = {"truth": "", "hard": "_downtag", "soft": "_softdown"}[self.cfg.data.down_tag]
+        suffix = {"truth": "", "hard": "_downtag", "soft": "_softdown", "mix": "_mixdown"}[
+            down_tag or self.cfg.data.down_tag
+        ]
         if self.cfg.data.c_value != 2.6:  # e.g. 0.1 -> _c0p1
             suffix += f"_c{self.cfg.data.c_value}".replace(".", "p")
         if self._eval_all():
@@ -1095,6 +1139,8 @@ class TTSmeftExperiment(TaggingExperiment):
         return suffix
 
     def _evaluate_physics(self):
+        if self.cfg.data.down_tag == "mix":
+            self._mix_downtag()
         if "test" in self.cfg.evaluation.eval_set and self.cfg.data.bsm == "im":
             self._evaluate_asymmetry()
 
