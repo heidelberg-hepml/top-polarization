@@ -44,8 +44,8 @@ OUTPATH = os.path.join(REPO_DIR, "paper_plots")
 COLORS = ["black", "blue", "red", "orange"]
 
 MODEL_NAMES = {
-    "LGATrSlimPseudoWrapper": "L-GATr",
-    "LGATrSlimWrapper": "L-GATr",
+    "LGATrSlimPseudoWrapper": "L-GATr-slim",
+    "LGATrSlimWrapper": "L-GATr-slim",
     "LGATrWrapper": "L-GATr",
     "TransformerWrapper": "Transformer",
 }
@@ -105,6 +105,8 @@ def check_configs(run_dirs, match):
     """All runs share one config up to the seed, and the config is the task's."""
     skip = {"seed", "run_name", "run_dir", "hydra"}
     cfgs = [OmegaConf.load(os.path.join(d, "config.yaml")) for d in run_dirs]
+    for cfg in cfgs:
+        cfg.model.pop("attention_backend", None)  # the attention kernel, same network
     for key, value in match.items():
         found = OmegaConf.select(cfgs[0], key)
         assert found == value, f"{run_dirs[0]}: {key} = {found}, this script needs {value}"
@@ -123,7 +125,9 @@ def parse_runs(name, match):
     training curves and asymmetries use `best_run`.
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("runs", nargs="+", help="Run directories (runs/FINAL/<run>), one per seed.")
+    parser.add_argument(
+        "runs", nargs="+", help="Run directories (runs/<exp_name>/<run_name>), one per seed."
+    )
     parser.add_argument("--run-idx", type=int, default=0, help="Index N of the preds_N directory.")
     parser.add_argument(
         "--outdir", default=None, help="Output directory, default paper_plots/<task>."

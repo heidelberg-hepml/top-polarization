@@ -4,22 +4,27 @@ import numpy as np
 import torch
 
 from experiments.hep import lorentz_boost
-from experiments.tagging.likelihood import probe_frame
 from experiments.tagging.pseudoscalars import eps_tensor
 
 
-def o1(jets, charge, p_hard):
-    """eps(t_lep, t_had, l, d) / m_t^4 with the down proxy k = p q_hard + (1 - p) q_soft.
+def o1(jets, p_hard):
+    """eps(t_had, t_lep, d, l) / m_t^4, evaluated in the hadronic top rest frame.
 
-    jets: (n, 4, 6) hadtop, b, hard, soft, leptop, lepton in the lab frame. k is a spatial vector
-    in the hadronic top rest frame, where the contraction is evaluated (it is Lorentz invariant).
+    jets: (n, 4, 6) hadtop, b, hard, soft, leptop, lepton in the lab frame. The down momentum is
+    the probe direction k = p k_hard / |k_hard| + (1 - p) k_soft / |k_soft|, scaled to the length
+    p |k_hard| + (1 - p) |k_soft|: for p = 0 or 1 it is the down subjet momentum, and the sign of O1
+    is that of the probe. The top is at rest, so the energy of d does not enter.
     """
-    q_hard, q_soft, _ = probe_frame(jets, charge)
-    k = p_hard[:, None] * q_hard + (1 - p_hard[:, None]) * q_soft
-    hadtop = jets[:, :, 0]
-    leptop, lepton, top = (lorentz_boost(jets[:, :, i], hadtop) for i in (4, 5, 0))
+    hadtop, hard, soft, leptop, lepton = (
+        lorentz_boost(jets[:, :, i], jets[:, :, 0]) for i in (0, 2, 3, 4, 5)
+    )
+    k_hard, k_soft = hard[:, 1:4], soft[:, 1:4]
+    n_hard, n_soft = k_hard.norm(dim=-1, keepdim=True), k_soft.norm(dim=-1, keepdim=True)
+    p = p_hard[:, None]
+    k = p * k_hard / n_hard + (1 - p) * k_soft / n_soft
+    k = k / k.norm(dim=-1, keepdim=True) * (p * n_hard + (1 - p) * n_soft)
     d = torch.cat([torch.zeros_like(k[:, :1]), k], dim=1)
-    return eps_tensor(leptop, top, lepton, d, dtype=jets.dtype)
+    return eps_tensor(hadtop, leptop, d, lepton, dtype=jets.dtype)
 
 
 def asymmetry(x):

@@ -1,7 +1,7 @@
 """Paper plots for the down tagger (d = hard vs. soft light jet): ROC (eps vs. 1/eps), calibration,
-and on the polarized evaluation the cos(theta) histogram and beta_probe vs. selected fraction.
+and on the polarized evaluation the cos(theta_d) histogram and tilde beta_d vs. selected fraction.
 
-usage: python -m paper_plots.downtagging runs/FINAL/down_slim_s* [--outdir DIR]
+usage: python -m paper_plots.downtagging runs/downtagging/down_slim_s* [--outdir DIR]
 """
 
 import os
@@ -136,7 +136,7 @@ def plot_calibration(outdir, scores, model):
 
 
 def plot_polarization(outdir, polarizations):
-    """cos(theta) of the network's down direction to the spin axis, dashed: of the true down jet
+    """cos(tilde theta_d) of the network's down probe to the spin axis, dashed: of the true down jet
     (the same events for every seed, so first seed only)."""
     bins = np.linspace(-1, 1, 21)
     fig, ax = plt.subplots(figsize=FIGSIZE)
@@ -159,7 +159,7 @@ def plot_polarization(outdir, polarizations):
     legend(ax, pols, [r"$P_{t_{\text{had}}} = L$", r"$P_{t_{\text{had}}} = R$"], loc="upper left")
     ax.add_artist(ax.get_legend())
     angles = [mlines.Line2D([], [], color="gray", ls=ls) for ls in ("-", "--")]
-    legend(ax, angles, [r"$\cos \theta_\text{probe}$", r"$\cos \theta_d$"], loc="upper right")
+    legend(ax, angles, [r"$\cos \tilde\theta_d$", r"$\cos \theta_d$"], loc="upper right")
     save(fig, ax, outdir, "polarization")
 
 
@@ -182,7 +182,7 @@ def beta_vs_fraction(polarization, score):
 
 
 def plot_polarization_efficiency(outdir, polarizations, scores, model):
-    """beta_probe vs. the fraction of most confident events, with the GNN down tagger and the
+    """tilde beta_d vs. the fraction of most confident events, with the GNN down tagger and the
     W helicity angle probe at full efficiency."""
     curves = [beta_vs_fraction(p, s) for p, s in zip(polarizations, scores, strict=True)]
     fig, ax = plt.subplots(figsize=FIGSIZE)
@@ -198,9 +198,15 @@ def plot_polarization_efficiency(outdir, polarizations, scores, model):
         )
         ax.fill_between(FRACTIONS, mean - err, mean + err, color=color, alpha=0.3, lw=0)
         ax.plot(FRACTIONS, mean, color=color, lw=LINE_WIDTH)
-    gnn = pd.read_csv(GNN_EFFICIENCY)
-    for key, color in [("beta_opt_tL", COLORS[1]), ("beta_opt_tR", COLORS[2])]:
-        ax.plot(gnn["efficiency"], gnn[key], color=color, ls="--", lw=LINE_WIDTH)
+    model_labels = [model]
+    # the GNN curve is not distributed with the code
+    if os.path.exists(GNN_EFFICIENCY):
+        gnn = pd.read_csv(GNN_EFFICIENCY)
+        for key, color in [("beta_opt_tL", COLORS[1]), ("beta_opt_tR", COLORS[2])]:
+            ax.plot(gnn["efficiency"], gnn[key], color=color, ls="--", lw=LINE_WIDTH)
+        model_labels.append("GNN")
+    else:
+        print(f"  {GNN_EFFICIENCY} not found, skipping the GNN curve")
     ax.plot([0.93, 1.0], [0.64, 0.64], color="#D95F02", lw=LINE_WIDTH)
     ax.text(
         0.92,
@@ -216,13 +222,13 @@ def plot_polarization_efficiency(outdir, polarizations, scores, model):
     ax.set_ylim(0.6, 1.0)
     ax.set_yticks([0.6, 0.7, 0.8, 0.9, 1.0])
     ax.set_xlabel("Efficiency", fontsize=FONTSIZE)
-    ax.set_ylabel(r"$\beta_\text{probe}$", fontsize=FONTSIZE)
+    ax.set_ylabel(r"$\tilde\beta_d$", fontsize=FONTSIZE)
     pols = [mlines.Line2D([], [], color=c) for c in COLORS[1:3]]
     models = [mlines.Line2D([], [], color="gray", ls=ls) for ls in ("-", "--")]
     legend(
         ax,
-        pols + models,
-        [r"$P_{t_{\text{had}}} = L$", r"$P_{t_{\text{had}}} = R$", model, "GNN"],
+        pols + models[: len(model_labels)],
+        [r"$P_{t_{\text{had}}} = L$", r"$P_{t_{\text{had}}} = R$", *model_labels],
         loc="upper right",
     )
     save(fig, ax, outdir, "polarization_efficiency")

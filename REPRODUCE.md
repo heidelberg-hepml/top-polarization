@@ -1,12 +1,13 @@
 # Reproducing the paper runs
 
 Commands to train and evaluate the networks behind the paper figures: the down tagger (tt_pol),
-the VBF toy (`vbf_pseudoscalar`, `vbf_cp`) and tt_smeft (`lbl_0=sm`, `lbl_0=neg`), evaluated on
-both the truth-labelled test split and the test split relabelled by the down tagger.
+the VBF toy (`vbf_pseudoscalar`, `vbf_cp`) and tt_smeft (`lbl_0=sm`, `lbl_0=neg`), evaluated with
+the true down quark (emulated dileptonic) and with the down-tagger probability (semileptonic).
 
-L-GATr-slim runs use seeds 0-4, L-GATr runs seed 0. tt_smeft takes the down tag as one scalar on the non-b subjets and their constituents, the
-probability that the subjet is the down quark: `data.down_tag=truth` (default) is the true one,
-`hard` / `soft` the rounded / raw probability of a down tagger, read from `data.downtag_labels`.
+L-GATr-slim runs use seeds 0-4, L-GATr runs seed 0. tt_smeft takes the down tag as one scalar on the
+non-b subjets and their constituents, the probability that the subjet is the down quark:
+`data.down_tag=truth` (default) is the true one, `mix` weights the outputs of the two assignments
+with the probability of a down tagger, read from `data.downtag_labels`.
 
 ## Setup
 
@@ -80,38 +81,34 @@ python run.py -cp config -cn tt_smeft data.lbl_0=sm \
 
 ## 4. tt_smeft evaluated with the predicted down tag
 
-This needs the slim down tagger from step 1 and both tt_smeft runs from step 3.
+This needs the slim down tagger from step 1 and the tt_smeft runs from step 3. The semileptonic
+output is O = p O(d = q_hard) + (1 - p) O(d = q_soft) for the scalar and pseudoscalar logits,
+with p the down-tagger probability of the harder subjet. `data.down_tag=mix` evaluates the
+network with the wrong down tag and mixes it with the outputs of the true one, read from the
+truth evaluation of the same events (`preds_0/` of the training run).
 
 ```bash
 TTSMEFT_NEG_RUN_DIR=runs/tt_smeft/neg_slim_s${SEED}
 TTSMEFT_SM_RUN_DIR=runs/tt_smeft/sm_slim_s${SEED}
 ```
 
-**Step 1: saving the predicted labels.**
+The down tagger labels the tt_smeft test events:
 
-Neg. vs Pos.
 ```bash
 python run.py -cp ${DOWNTAGGING_RUN_DIR} -cn config \
     train=false model_load_idx=0 evaluation.eval_set=[test] \
     data.dataset_eval=ttsmeft data.ttsmeft.lbl_0=neg
-```
 
-SM vs Pos.
-```bash
 python run.py -cp ${DOWNTAGGING_RUN_DIR} -cn config \
     train=false model_load_idx=0 evaluation.eval_set=[test] \
     data.dataset_eval=ttsmeft data.ttsmeft.lbl_0=sm
 ```
 
-`${DOWNTAGGING_RUN_DIR}/preds_0_ttsmeft_<TASK>/labels.txt` holds the predicted down tags.
-
-**Step 2: tt_smeft on the relabelled test split.**
-
 Neg. vs Pos.
 ```bash
 python run.py -cp ${TTSMEFT_NEG_RUN_DIR} -cn config \
     train=false model_load_idx=0 evaluation.eval_set=[test] \
-    data.down_tag=hard \
+    data.down_tag=mix \
     data.downtag_labels=${DOWNTAGGING_RUN_DIR}/preds_0_ttsmeft_neg/labels.txt
 ```
 
@@ -119,16 +116,16 @@ SM vs Pos.
 ```bash
 python run.py -cp ${TTSMEFT_SM_RUN_DIR} -cn config \
     train=false model_load_idx=0 evaluation.eval_set=[test] \
-    data.down_tag=hard \
+    data.down_tag=mix \
     data.downtag_labels=${DOWNTAGGING_RUN_DIR}/preds_0_ttsmeft_sm/labels.txt
 ```
 
-Results go to `{preds,plots}_0_downtag/` in each tt_smeft run directory.
+Results go to `{preds,plots}_0_mixdown/` in each tt_smeft run directory.
 
 ## 5. tt_smeft Neg. vs Pos. at Im(d_tG) = 0.1
 
 The Neg. vs Pos. network trained at Im(d_tG) = 2.6 (step 3), evaluated on all Im(d_tG) = +-0.1
-events (none of them is trained on) with the truth and the predicted down tag. The down tagger
+events (none of them is trained on) with the truth and the mixed down tag. The down tagger
 first labels all events (`data.ttsmeft.split=all`).
 
 ```bash
@@ -137,46 +134,34 @@ python run.py -cp ${DOWNTAGGING_RUN_DIR} -cn config \
     data.dataset_eval=ttsmeft data.ttsmeft.lbl_0=neg data.ttsmeft.c_value=0.1 \
     data.ttsmeft.split=all
 
-LABELS=${DOWNTAGGING_RUN_DIR}/preds_0_ttsmeft_neg_c0p1_all/labels.txt
 python run.py -cp ${TTSMEFT_NEG_RUN_DIR} -cn config \
     train=false model_load_idx=0 evaluation.eval_set=[test] data.c_value=0.1 \
     data.eval_all=true
 
 python run.py -cp ${TTSMEFT_NEG_RUN_DIR} -cn config \
     train=false model_load_idx=0 evaluation.eval_set=[test] data.c_value=0.1 \
-    data.eval_all=true data.down_tag=hard data.downtag_labels=${LABELS}
+    data.eval_all=true data.down_tag=mix \
+    data.downtag_labels=${DOWNTAGGING_RUN_DIR}/preds_0_ttsmeft_neg_c0p1_all/labels.txt
 ```
 
-Results go to `{preds,plots}_0_c0p1_all/` and `{preds,plots}_0_downtag_c0p1_all/` in the tt_smeft
-run directory. The asymmetries (`paper_plots/tt_smeft_posneg.py`) pool the +c and -c samples:
-N+ counts O > 0 at +c and O < 0 at -c.
+Results go to `{preds,plots}_0_c0p1_all/` and `{preds,plots}_0_mixdown_c0p1_all/` in the tt_smeft
+run directory.
 
-## 6. tt_smeft Neg. vs Pos. trained on the soft down tag
-
-The down-tagger probability replaces the true down tag in training and evaluation, so the
-down tagger first labels all events.
-
-```bash
-python run.py -cp ${DOWNTAGGING_RUN_DIR} -cn config \
-    train=false model_load_idx=0 evaluation.eval_set=[test] \
-    data.dataset_eval=ttsmeft data.ttsmeft.lbl_0=neg data.ttsmeft.split=all
-
-python run.py -cp config -cn tt_smeft data.lbl_0=neg \
-    seed=${SEED} run_name=neg_slim_softdown_s${SEED} data.down_tag=soft \
-    data.downtag_labels=${DOWNTAGGING_RUN_DIR}/preds_0_ttsmeft_neg_all/labels.txt
-```
-
-## 7. O1 asymmetry
+## 6. O1 asymmetry
 
 O1 on all events of a tt_smeft sample, with the true down quark and with the down-tagger
-probability of every L-GATr-slim down tagger. The down taggers label all events of each sample
-first (steps 5 and 6 cover `neg_c0p1_all` and `neg_all`).
+probability of every L-GATr-slim down tagger. The down taggers first label all events of each
+sample (step 5 covers `neg_c0p1_all`):
 
 ```bash
-python run.py -cp ${DOWNTAGGING_RUN_DIR} -cn config \
-    train=false model_load_idx=0 evaluation.eval_set=[test] \
-    data.dataset_eval=ttsmeft data.ttsmeft.lbl_0=sm data.ttsmeft.split=all
+for TASK in neg sm; do
+    python run.py -cp ${DOWNTAGGING_RUN_DIR} -cn config \
+        train=false model_load_idx=0 evaluation.eval_set=[test] \
+        data.dataset_eval=ttsmeft data.ttsmeft.lbl_0=${TASK} data.ttsmeft.split=all
+done
 ```
+
+Once all seeds are done:
 
 ```bash
 python -m paper_plots.tt_smeft_o1 --lbl_0 neg --c_value 2.6 \
@@ -186,4 +171,17 @@ python -m paper_plots.tt_smeft_o1 --lbl_0 sm --c_value 2.6 \
 python -m paper_plots.tt_smeft_o1 --lbl_0 neg --c_value 0.1 \
     --labels runs/downtagging/down_slim_s*/preds_0_ttsmeft_neg_c0p1_all/labels.txt
 python -m paper_plots.tt_smeft_o1 --plot
+```
+
+## 7. Paper figures
+
+From the runs of all seeds, written to `paper_plots/<task>/`. `tt_smeft_posneg` also prints the
+pooled asymmetries of the pseudoscalar output.
+
+```bash
+python -m paper_plots.downtagging runs/downtagging/down_slim_s*
+python -m paper_plots.vbf_pseudoscalar runs/vbf/pseudoscalar_slim_s*
+python -m paper_plots.vbf_cp runs/vbf/cp_slim_s*
+python -m paper_plots.tt_smeft runs/tt_smeft/sm_slim_s*
+python -m paper_plots.tt_smeft_posneg runs/tt_smeft/neg_slim_s*
 ```

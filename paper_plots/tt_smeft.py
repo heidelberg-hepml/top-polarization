@@ -1,11 +1,11 @@
-"""Paper plots for tt_smeft, SM vs. Im(d_tG) = 2.6: s(x) and p(x) vs. iterations.
+"""Paper plots for tt_smeft, SM vs. Im(c_tG) = 2.6: s(x) and p(x) vs. iterations.
 
-usage: python -m paper_plots.tt_smeft runs/FINAL/ttsmeft_sm_s* [--outdir DIR]
+usage: python -m paper_plots.tt_smeft runs/tt_smeft/sm_slim_s* [--outdir DIR]
 """
 
 from paper_plots.common import best_run, load_npz, parse_runs, plot_output
 
-LABELS = (r"$\mathrm{Im}(d_{tG}) = 0$", r"$\mathrm{Im}(d_{tG}) = 2.6$")
+LABELS = (r"$\mathrm{Im}(c_{tG}) = 0$", r"$\mathrm{Im}(c_{tG}) = +2.6$")
 MATCH = {"exp_type": "tt_smeft", "data.lbl_0": "sm", "data.bsm": "im", "data.c_value": 2.6}
 
 if __name__ == "__main__":
