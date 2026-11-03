@@ -122,9 +122,9 @@ python run.py -cp ${TTSMEFT_SM_RUN_DIR} -cn config \
 
 Results go to `{preds,plots}_0_mixdown/` in each tt_smeft run directory.
 
-## 5. tt_smeft Neg. vs Pos. at Im(d_tG) = 0.1
+## 5. tt_smeft Neg. vs Pos. at Im(c_tG) = 0.1
 
-The Neg. vs Pos. network trained at Im(d_tG) = 2.6 (step 3), evaluated on all Im(d_tG) = +-0.1
+The Neg. vs Pos. network trained at Im(c_tG) = 2.6 (step 3), evaluated on all Im(c_tG) = +-0.1
 events (none of them is trained on) with the truth and the mixed down tag. The down tagger
 first labels all events (`data.ttsmeft.split=all`).
 

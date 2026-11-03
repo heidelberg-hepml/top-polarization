@@ -24,7 +24,6 @@ def test_kinematic_p_in_unit_interval():
 
 
 def test_o1_is_parity_odd():
-    jets, charge = _jets(), torch.ones(64, dtype=torch.float64)
-    p = torch.rand(64, dtype=torch.float64)
+    jets, p = _jets(), torch.rand(64, dtype=torch.float64)
     flip = jets * torch.tensor([1.0, -1, -1, -1], dtype=torch.float64)[None, :, None]
-    assert torch.allclose(o1(jets, charge, p), -o1(flip, charge, p), atol=1e-9)
+    assert torch.allclose(o1(jets, p), -o1(flip, p), atol=1e-9)
