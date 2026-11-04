@@ -4,10 +4,10 @@ Commands to train and evaluate the networks behind the paper figures: the down t
 the VBF toy (`vbf_pseudoscalar`, `vbf_cp`) and tt_smeft (`lbl_0=sm`, `lbl_0=neg`), evaluated with
 the true down quark (emulated dileptonic) and with the down-tagger probability (semileptonic).
 
-L-GATr-slim runs use seeds 0-4, L-GATr runs seed 0. tt_smeft takes the down tag as one scalar on the
-non-b subjets and their constituents, the probability that the subjet is the down quark:
-`data.down_tag=truth` (default) is the true one, `mix` weights the outputs of the two assignments
-with the probability of a down tagger, read from `data.downtag_labels`.
+All networks are L-GATr-slim. Steps 1-5 run once per seed, the paper uses seeds 0-4. tt_smeft takes
+the down tag as one scalar on the non-b subjets and their constituents, the probability that the
+subjet is the down quark: `data.down_tag=truth` (default) is the true one, `mix` weights the outputs
+of the two assignments with the probability of a down tagger, read from `data.downtag_labels`.
 
 ## Setup
 
@@ -23,17 +23,14 @@ python data/data_scripts/fetch_data.py --process vbf
 Every setting not given on the command line comes from `config/`.
 The frozen config of each run is written to `runs/<exp_name>/<run_name>/config.yaml`.
 
-For reproducibility, set the seed at the start of your script (and change it for each run) with:
+Set the seed at the start of your script, and change it for each run:
 
 ```bash
 SEED=0
 ```
 
-Every command in steps 1-3 can be done with `L-GATr` instead of `L-GATr-slim` by adding `model=tag_lgatr training=tag_lgatr`.
-
 ## 1. Down tagger
 
-L-GATr-slim:
 ```bash
 python run.py -cp config -cn downtagging \
     seed=${SEED} run_name=down_slim_s${SEED}
@@ -149,8 +146,8 @@ run directory.
 
 ## 6. O1 asymmetry
 
-O1 on all events of a tt_smeft sample, with the true down quark and with the down-tagger
-probability of every L-GATr-slim down tagger. The down taggers first label all events of each
+O1 on all events of a tt_smeft sample, with the true down quark and with the probability of the
+down tagger with the smallest validation loss. All down taggers first label all events of each
 sample (step 5 covers `neg_c0p1_all`):
 
 ```bash
@@ -161,7 +158,7 @@ for TASK in neg sm; do
 done
 ```
 
-Once all seeds are done:
+Once all seeds are done, this prints the asymmetries and draws Fig. 5:
 
 ```bash
 python -m paper_plots.tt_smeft_o1 --lbl_0 neg --c_value 2.6 \
@@ -175,8 +172,10 @@ python -m paper_plots.tt_smeft_o1 --plot
 
 ## 7. Paper figures
 
-From the runs of all seeds, written to `paper_plots/<task>/`. `tt_smeft_posneg` also prints the
-pooled asymmetries of the pseudoscalar output.
+From the runs of all seeds, written to `paper_plots/<task>/`. The scripts also print the AUCs,
+`downtagging` the spin analyzing powers and `tt_smeft_posneg` the pooled asymmetries of the
+pseudoscalar output. The training curves come from the run with the smallest validation loss, so
+they change with the seeds.
 
 ```bash
 python -m paper_plots.downtagging runs/downtagging/down_slim_s*
@@ -185,3 +184,18 @@ python -m paper_plots.vbf_cp runs/vbf/cp_slim_s*
 python -m paper_plots.tt_smeft runs/tt_smeft/sm_slim_s*
 python -m paper_plots.tt_smeft_posneg runs/tt_smeft/neg_slim_s*
 ```
+
+| Figure | Files |
+| --- | --- |
+| 1 | `downtagging/roc.pdf`, `downtagging/calibration.pdf` |
+| 2 | `downtagging/polarization.pdf`, `downtagging/polarization_efficiency.pdf` |
+| 3 | `vbf_cp/output_scalar.pdf`, `vbf_cp/output_pseudo.pdf` |
+| 4 | `vbf_pseudoscalar/output_scalar.pdf`, `vbf_pseudoscalar/output_pseudo.pdf` |
+| 5 | `tt_smeft/tt_smeft_2p6_O1_delphes.pdf`, `tt_smeft/tt_smeft_2p6_O1_downtag_delphes.pdf` |
+| 6 | `tt_smeft/output_scalar.pdf`, `tt_smeft/output_pseudo.pdf` |
+| 7 | `tt_smeft_posneg/output_scalar.pdf`, `tt_smeft_posneg/output_pseudo.pdf` |
+| 8 | `tt_smeft_posneg/score.pdf`, `tt_smeft_posneg/score_downtag.pdf` |
+
+The GNN curve of `polarization_efficiency.pdf` reads `data/beta_opt_GNN.csv` with the columns
+`efficiency`, `beta_opt_tL` and `beta_opt_tR`, the result of arXiv:2407.01663. The file is not
+distributed, and the curve is skipped without it.

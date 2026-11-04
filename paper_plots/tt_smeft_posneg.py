@@ -1,4 +1,4 @@
-"""Paper plots for tt_smeft, Im(c_tG) = -2.6 vs. 2.6: s(x) and p(x) vs. iterations, and the
+"""Paper plots for tt_smeft, Im(c_tG) = -2.6 vs. 2.6: s(x) and p(x) vs. iterations, the AUC, and the
 pseudoscalar output p on the test set with the truth (score) and the predicted down tag
 (score_downtag), and the sign asymmetry of p pooled over Im(c_tG) = +-c (on the test events at
 2.6 and on all events at 0.1). Curves, scores and asymmetries: run with the smallest validation
@@ -18,6 +18,7 @@ from paper_plots.common import (
     FIGSIZE,
     FONTSIZE,
     FONTSIZE_TICK,
+    auc_errors,
     best_run,
     corner_text,
     hist_band,
@@ -66,6 +67,7 @@ def print_asymmetry(asym, name):
 
 if __name__ == "__main__":
     preds_dirs, model, outdir = parse_runs("tt_smeft_posneg", MATCH)
+    auc_errors(preds_dirs)
     best = best_run(preds_dirs)
     training = load_npz(best, "training.npz")
     # the two labels do not fit in one row at the default legend size

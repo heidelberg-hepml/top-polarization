@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 from omegaconf import OmegaConf
+from sklearn.metrics import roc_auc_score
 
 plt.rcParams.update(
     {
@@ -76,6 +77,23 @@ def mean_seed_std(values):
     values = np.stack(values)
     std = values.std(axis=0, ddof=1) if len(values) > 1 else np.zeros_like(values[0])
     return values.mean(axis=0), std
+
+
+def auc_errors(preds_dirs):
+    """Mean AUC over the seeds, its seed std and the bootstrap error of the first seed."""
+    auc, seed = mean_seed_std([float(r["auc"]) for r in load_all(preds_dirs, "roc.npz")])
+    score = load_npz(preds_dirs[0], "score.npz")
+    labels_true, labels_predict = score["labels_true"], score["labels_predict"]
+    rng = np.random.default_rng(0)
+    n = len(labels_true)
+    stat = np.std(
+        [
+            roc_auc_score(labels_true[i], labels_predict[i])
+            for i in (rng.integers(0, n, n) for _ in range(N_BOOTSTRAP))
+        ]
+    )
+    print(f"  AUC over {len(preds_dirs)} runs: {auc:.4f} +- {seed:.4f} (seed) +- {stat:.4f} (stat)")
+    return auc, seed, stat
 
 
 def pm_text(mean, seed, stat, fmt=".4f"):
@@ -192,13 +210,10 @@ def plot_output(
     ylim=None,
     yticks=None,
     legend_fontsize=FONTSIZE_LEGEND,
-    order=(0, 1),
 ):
     """Validation mean of the scalar (s) or pseudoscalar (p) output per class vs. iterations,
-    band: its spread over the validation events. One run only. `order` gives the classes in
-    plotting and legend order (blue, then red)."""
+    band: its spread over the validation events. One run only."""
     key = {"s": "scalar", "p": "pseudoscalar"}[channel]
-    labels = {0: label_0, 1: label_1}
     # first validation runs before training (step 0), then every n_train / (n_val - 1) steps
     n_train, n_val = len(training["train_loss"]), len(training["val_loss"])
     its = np.arange(n_val) * n_train / max(n_val - 1, 1)
@@ -218,7 +233,7 @@ def plot_output(
             smooth(training[f"{key}_output_{c}_std"]),
             color,
         )
-        for c, color in zip(order, COLORS[1:3], strict=True)
+        for c, color in enumerate(COLORS[1:3])
     ]
     fig, ax = plt.subplots(figsize=FIGSIZE)
     ax.axhline(0, color="gray", ls="--", lw=1)
@@ -239,7 +254,7 @@ def plot_output(
     legend(
         ax,
         proxy,
-        [labels[c] for c in order],
+        [label_0, label_1],
         loc="upper center",
         ncol=2,
         columnspacing=0.4,

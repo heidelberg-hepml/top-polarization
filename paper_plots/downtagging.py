@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
-from sklearn.metrics import roc_auc_score
 
 from paper_plots.common import (
     COLORS,
@@ -20,6 +19,7 @@ from paper_plots.common import (
     LINE_WIDTH,
     N_BOOTSTRAP,
     REPO_DIR,
+    auc_errors,
     corner_text,
     hist_band,
     legend,
@@ -41,22 +41,13 @@ ROC_GRID = np.linspace(0, 1, 401)
 FRACTIONS = np.linspace(0.2, 1.0, 81)
 
 
-def plot_roc(outdir, rocs, scores, model):
+def plot_roc(outdir, preds_dirs, rocs, scores, model):
     """Mean over seeds of 1/fpr at fixed tpr, band: seed std and binomial error of the first seed
     in quadrature; below one background event eps_B is not measured. AUC with seed and bootstrap
     errors."""
-    labels_true, labels_predict = scores[0]["labels_true"], scores[0]["labels_predict"]
+    labels_true = scores[0]["labels_true"]
     n_0 = len(labels_true) - int(labels_true.sum())
-    rng = np.random.default_rng(0)
-    n = len(labels_true)
-    stat = np.std(
-        [
-            roc_auc_score(labels_true[i], labels_predict[i])
-            for i in (rng.integers(0, n, n) for _ in range(N_BOOTSTRAP))
-        ]
-    )
-    auc, seed = mean_seed_std([float(r["auc"]) for r in rocs])
-    print(f"  AUC over {len(rocs)} runs: {auc:.4f} +- {seed:.4f} (seed) +- {stat:.4f} (stat)")
+    auc, seed, stat = auc_errors(preds_dirs)
 
     fprs = [np.interp(ROC_GRID, r["tpr"], r["fpr"]) for r in rocs]
     fpr, fpr_seed = mean_seed_std(fprs)
@@ -237,7 +228,7 @@ def plot_polarization_efficiency(outdir, polarizations, scores, model):
 if __name__ == "__main__":
     preds_dirs, model, outdir = parse_runs("downtagging", {"exp_type": "downtagging"})
     scores = load_all(preds_dirs, "score.npz")
-    plot_roc(outdir, load_all(preds_dirs, "roc.npz"), scores, model)
+    plot_roc(outdir, preds_dirs, load_all(preds_dirs, "roc.npz"), scores, model)
     plot_calibration(outdir, scores, model)
 
     pol_dirs = [d + "_polarized" for d in preds_dirs]
