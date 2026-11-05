@@ -20,7 +20,7 @@ if PROC == "tt_pol":
     LABELS = ["0", ("L", "L"), ("L", "R"), ("R", "L"), ("R", "R")]
 elif PROC == "tt_smeft":
     BASE_URL = "https://tu-dortmund.sciebo.de/public.php/dav/files/SwSxDJeNkTDxKyr"
-    LABELS  = ["0", "0p1", "-0p1", "2p6", "-2p6"]
+    LABELS = ["0", "0p1", "-0p1", "2p6", "-2p6"]
 elif PROC == "tth":
     BASE_URL = "https://tu-dortmund.sciebo.de/public.php/dav/files/3SprM35zsfWgqHs"
     LABELS = ["0", "45", "-45"]
@@ -63,7 +63,7 @@ def main():
             for decay in [1, 2]:
                 if PROC == "tt_pol":
                     if lbl == "0":
-                        for nr in [1,2]:
+                        for nr in [1, 2]:
                             load(
                                 f"top_pol_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet",
                                 OUT,
@@ -75,7 +75,7 @@ def main():
                                 OUT,
                             )
                 elif PROC == "tt_smeft":
-                    for nr in [1,2]:
+                    for nr in [1, 2]:
                         load(
                             f"tt_ctg_re_0_im_{lbl}_semilep_{decay}_{m[0]}_{m[1]}_train_{nr}.parquet",
                             OUT,
