@@ -61,8 +61,8 @@ TAGGING_FEATURE_SUBSETS = {
     None: (),
 }
 
-# the only true pseudoscalar of the spurion symmetry group
-TAGGING_FEATURES_PARITY_ODD = ("dphi_deta",)
+# pseudoscalars
+TAGGING_FEATURES_PARITY_ODD = ("deta", "dphi_deta")
 
 
 def get_tagging_feature_names(tagging_features="all"):

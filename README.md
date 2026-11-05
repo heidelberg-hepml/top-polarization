@@ -1,65 +1,31 @@
-# Top polarization
+<div align="center">
 
-The codebase is forked from the [LloCa repository](https://github.com/heidelberg-hepml/lloca-experiments.git). See their README for more info about the codebase.
+## Top Spin and CP from Equivariant Transformers
 
-## Repository Layout
-- `experiments/`: experiment base classes, data handling, embedding,
-  - `experiments/tagging`: tagging experiment files
-- `config/`: Hydra configuration trees for experiments and models
-- `runs/`: default output location for trained checkpoints, configs, plots,
-  and optional MLflow metadata.
+[![pytorch](https://img.shields.io/badge/PyTorch_2.4+-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/get-started/locally/)
+[![hydra](https://img.shields.io/badge/Config-Hydra_1.3-89b8cd)](https://hydra.cc/)
+[![ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
-## Setup
-```bash
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
+[![paper](http://img.shields.io/badge/paper-arxiv.2611.05463-B31B1B.svg)](https://arxiv.org/abs/2611.05463)
+
+</div>
+
+This repository contains the code for the paper [Top Spin and CP from Equivariant Transformers](https://arxiv.org/abs/2611.05463) by Henning Bahl, Marco Menen, [Antoine Petitjean](mailto:petitjean@thphys.uni-heidelberg.de), and Tilman Plehn. It is forked from the [LLoCa-experiments repository](https://github.com/heidelberg-hepml/lloca-experiments.git).
+
+See [REPRODUCE.md](REPRODUCE.md) for instructions for how to run the code.
+
+## Citation
+
+If you find this code useful in your research, please cite our paper
+
+```bibtex
+@article{Bahl:2026kig,
+    author = "Bahl, Henning and Menen, Marco and Petitjean, Antoine and Plehn, Tilman",
+    title = "{Top Spin and CP from Equivariant Transformers}",
+    eprint = "2611.05463",
+    archivePrefix = "arXiv",
+    primaryClass = "hep-ph",
+    month = "11",
+    year = "2026"
+}
 ```
-### Pre-commit hooks
-We use [pre-commit](https://pre-commit.com/) to run hooks before each commit. To install the hooks, run:
-```
-pre-commit install
-pre-commit run --all-files # Optional, to test that it works
-```
-The only hook that is currently active is [ruff](https://github.com/astral-sh/ruff), which performs linting and formatting. The hook is configured in `.pre-commit-config.yaml` and ruff is configured in `pyproject.toml`.
-When committing, ruff will automatically fix any issues it can and report the rest. You then have to fix the issues and commit again.
-
-### Getting the data
-To automatically download the datasets, run:
-```bash
-python ./data/data_scripts/fetch_data.py --process [tt_pol|tt_smeft|tth|vbf] --mass [strict|loose] --out [OUTPUT_DIR]
-```
-
-## Running Experiments
-
-Runs parameters are set via Hydra configs. There are different configuration files for each experiment type.
-```bash
-python run.py --config-name tagging
-```
-
-### Individual runs
-```bash
-python run.py -cn tagging \
-    exp_name=test_tagging \
-    run_name=lgatr_200k \
-    data.dataset=mini \
-    training.iterations=200000 \
-    model=tag_lgatr \
-    training=tag_lgatr
-```
-The model config is loaded from `config/model/<model_name>.yaml`. It has to correspond to the chosen experiment. The training config is loaded from `config/training/<training_name>.yaml` and should correspond to the chosen experiment and model.
-
-Outputs are stored in `runs/<exp_name>/<run_name>/`, including:
-- `config.yaml`, `config_<run_idx>.yaml`: frozen configs.
-- `models/model_run*.pt`: checkpoints (model, optimizer, EMA, scheduler).
-- `out_<run_idx>.log`: aggregated log.
-- `plots/`: PDFs summarising losses and chosen observables.
-- `source.zip` (optional): zipped source code at the beginning of the run.
-
-### Hyperparameter tuning
-Hyperparameters are scanned with Optuna by setting `optuna=true`. To keep runs within a reasonable time, it is advised that `training.iterations` and `training.validate_every_n_steps` are reduced for the scan. Optuna stores and reads trials to an `optuna.db` file. The Optuna dashboard extension for VSCode allows for a quick visualization of the trials.
-
-## Test dataset
-
-There is an additional test dataset and test experiment that can be started with the test config, for lgatr debugging. It does not work yet for gatr but works with a transformer.

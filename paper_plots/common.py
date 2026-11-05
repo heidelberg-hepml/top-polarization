@@ -124,7 +124,7 @@ def check_configs(run_dirs, match):
     skip = {"seed", "run_name", "run_dir", "hydra"}
     cfgs = [OmegaConf.load(os.path.join(d, "config.yaml")) for d in run_dirs]
     for cfg in cfgs:
-        cfg.model.pop("attention_backend", None)  # the attention kernel, same network
+        cfg.model.pop("attention_backend", None)  # default attention kernel for gpu compatibility
     for key, value in match.items():
         found = OmegaConf.select(cfgs[0], key)
         assert found == value, f"{run_dirs[0]}: {key} = {found}, this script needs {value}"

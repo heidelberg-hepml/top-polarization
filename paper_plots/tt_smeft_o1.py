@@ -45,7 +45,6 @@ from paper_plots.common import (
 
 XS = 826_400  # fb
 LUMI = 35.9  # fb^-1 as used in https://arxiv.org/pdf/2205.07434
-# decay + acceptance efficiencies; their ratio (12) is the event ratio of the channels in the paper
 LEP_DECAY_EFF = 0.0154  # Derived from https://arxiv.org/pdf/2509.15066
 HAD_DECAY_EFF = 0.1877  # Derived from https://arxiv.org/pdf/2006.13076
 BINS = np.linspace(-3, 3, 31)

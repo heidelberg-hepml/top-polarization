@@ -151,11 +151,9 @@ down tagger with the smallest validation loss. All down taggers first label all 
 sample (step 5 covers `neg_c0p1_all`):
 
 ```bash
-for TASK in neg sm; do
-    python run.py -cp ${DOWNTAGGING_RUN_DIR} -cn config \
+python run.py -cp ${DOWNTAGGING_RUN_DIR} -cn config \
         train=false model_load_idx=0 evaluation.eval_set=[test] \
-        data.dataset_eval=ttsmeft data.ttsmeft.lbl_0=${TASK} data.ttsmeft.split=all
-done
+        data.dataset_eval=ttsmeft data.ttsmeft.lbl_0=neg data.ttsmeft.split=all
 ```
 
 Once all seeds are done, this prints the asymmetries and draws Fig. 5:
@@ -163,8 +161,6 @@ Once all seeds are done, this prints the asymmetries and draws Fig. 5:
 ```bash
 python -m paper_plots.tt_smeft_o1 --lbl_0 neg --c_value 2.6 \
     --labels runs/downtagging/down_slim_s*/preds_0_ttsmeft_neg_all/labels.txt
-python -m paper_plots.tt_smeft_o1 --lbl_0 sm --c_value 2.6 \
-    --labels runs/downtagging/down_slim_s*/preds_0_ttsmeft_sm_all/labels.txt
 python -m paper_plots.tt_smeft_o1 --lbl_0 neg --c_value 0.1 \
     --labels runs/downtagging/down_slim_s*/preds_0_ttsmeft_neg_c0p1_all/labels.txt
 python -m paper_plots.tt_smeft_o1 --plot
@@ -181,7 +177,7 @@ they change with the seeds.
 python -m paper_plots.downtagging runs/downtagging/down_slim_s*
 python -m paper_plots.vbf_pseudoscalar runs/vbf/pseudoscalar_slim_s*
 python -m paper_plots.vbf_cp runs/vbf/cp_slim_s*
-python -m paper_plots.tt_smeft runs/tt_smeft/sm_slim_s*
+python -m paper_plots.tt_smeft_sm runs/tt_smeft/sm_slim_s*
 python -m paper_plots.tt_smeft_posneg runs/tt_smeft/neg_slim_s*
 ```
 
