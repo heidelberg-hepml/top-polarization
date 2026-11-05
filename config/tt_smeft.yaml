@@ -1,0 +1,20 @@
+exp_type: tt_smeft
+exp_name: tt_smeft
+
+data:
+  data_dir: data/tt_smeft/
+  lbl_0: sm # sm | neg
+  bsm: im # re | im | mix
+  c_value: 2.6 # |c_tG| of the BSM files: 0.1 | 2.6
+  cpflip_batch: false # only used with lbl_0=neg and bsm=im
+  mass_window: loose
+  pid: true
+  pseudoscalars: false # jet-level pseudoscalars (eps, spin correlation)
+  down_tag: truth # truth | hard | soft | mix: true down quark, rounded or raw down-tagger probability, outputs of both assignments weighted by it (eval only)
+  downtag_labels: null # labels.txt of a downtagging run, for down_tag=hard|soft|mix
+  eval_all: false # evaluate on all events, only for samples never trained on (c_value=0.1)
+
+defaults:
+ - tagging
+ - override model: tag_slim_pseudo
+ - _self_

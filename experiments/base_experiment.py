@@ -120,6 +120,8 @@ class BaseExperiment:
     def init_model(self):
         # initialize model
         self.model = instantiate(self.cfg.model)
+        # only the backbone, the wrapper builds data-dependent attention masks
+        self.model.net.compile()
         num_parameters = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         if self.cfg.use_mlflow:
             log_mlflow("num_parameters", float(num_parameters), step=0)
@@ -158,6 +160,13 @@ class BaseExperiment:
                     self.ema.load_state_dict(state_dict)
             except FileNotFoundError as err:
                 raise ValueError(f"Cannot load model from {model_path}") from err
+        elif self.cfg.init_from:
+            # fine-tuning: weights only, fresh optimizer and scheduler
+            checkpoint = torch.load(self.cfg.init_from, map_location="cpu", weights_only=False)
+            LOGGER.info(f"Initializing model from {self.cfg.init_from}")
+            self.model.load_state_dict(checkpoint["model"])
+            if self.ema is not None:
+                self.ema.load_state_dict(checkpoint["ema"])
 
         self.model.to(self.device, dtype=self.dtype)
         if self.ema is not None:
@@ -373,11 +382,23 @@ class BaseExperiment:
             def is_bias(param):
                 return param.ndim <= 1
 
+            def is_io(name):
+                return name.startswith(("linear_in.", "linear_out."))
+
+            wd_io = self.cfg.training.weight_decay_io
+            if wd_io is None:
+                wd_io = self.cfg.training.weight_decay
+            weights = [(n, p) for n, p in self.model.net.named_parameters() if not is_bias(p)]
             param_groups = [
                 {
-                    "params": [p for p in self.model.net.parameters() if not is_bias(p)],
+                    "params": [p for n, p in weights if not is_io(n)],
                     "lr": self.cfg.training.lr,
                     "weight_decay": self.cfg.training.weight_decay,
+                },
+                {
+                    "params": [p for n, p in weights if is_io(n)],
+                    "lr": self.cfg.training.lr,
+                    "weight_decay": wd_io,
                 },
                 {
                     "params": [p for p in self.model.net.parameters() if is_bias(p)],
@@ -578,6 +599,9 @@ class BaseExperiment:
             f"while validating every {self.cfg.training.validate_every_n_steps} iterations"
             + (f" with gradient accumulation over {K} steps" if K > 1 else "")
         )
+        # validation at iteration 0, not used for early stopping
+        self._validate(-1)
+
         self.training_start_time = time.time()
         self.training_start_time_corrected = time.time()  # reset at first iteration
         train_time, val_time = 0.0, 0.0
@@ -597,6 +621,8 @@ class BaseExperiment:
 
         iterator = iter(cycle(self.train_loader))
         self._acc_loss_sum = 0.0
+        self._nan_streak = 0
+        self._terminate_training = False
         for step in range(self.cfg.training.iterations):
             # training
             self.model.train()
@@ -607,6 +633,12 @@ class BaseExperiment:
             accumulate = (step + 1) % K != 0
             self._step(data, step, accumulate=accumulate, K=K)
             train_time += time.time() - t0
+            if self._terminate_training:
+                LOGGER.error(
+                    f"Terminating training at iteration {step}: loss has been nonfinite for "
+                    f"{self._nan_streak} consecutive optimizer steps (diverged)"
+                )
+                break
             # validation (and early stopping)
             if (step + 1) % self.cfg.training.validate_every_n_steps == 0:
                 t0 = time.time()
@@ -651,9 +683,11 @@ class BaseExperiment:
             ):
                 dt_corrected = time.time() - self.training_start_time_corrected
                 dt_estimate = dt_corrected * self.cfg.training.iterations / (step + 1)
+
+                current_loss = self.train_loss[-1] if self.train_loss else float("nan")
                 LOGGER.info(
                     f"Finished iteration {step + 1} after {dt:.2f}s, "
-                    f"current training loss: {self.train_loss[-1]:.3f}, "
+                    f"current training loss: {current_loss:.3f}, "
                     f"training time estimate: {dt_estimate / 60:.2f}min "
                     f"= {dt_estimate / 60**2:.2f}h"
                 )
@@ -760,6 +794,30 @@ class BaseExperiment:
                 self.cfg.training.clip_grad_norm_framesnet,
             ).detach().to(self.device)
 
+        # mean loss over the K accumulated steps
+        acc_loss = torch.tensor(self._acc_loss_sum / K, device=self.device)
+        self._acc_loss_sum = 0.0
+
+        nonfinite = (~torch.isfinite(acc_loss) | ~torch.isfinite(grad_norm)).float()
+        if self.world_size > 1:
+            # all ranks have to skip together, the loss all_reduce below is collective
+            dist.all_reduce(nonfinite, op=dist.ReduceOp.MAX)
+        if nonfinite:
+            self._nan_streak += 1
+            nan_max = self.cfg.training.nan_max_consecutive
+            LOGGER.warning(
+                f"Nonfinite update at iteration {step} (loss={acc_loss.item()}, "
+                f"grad_norm={grad_norm}); skipping optimizer step "
+                f"[{self._nan_streak}/{nan_max}]"
+            )
+            self.optimizer.zero_grad(set_to_none=True)
+            # lets the GradScaler lower its scale after an overflow (no-op without AMP)
+            self.scaler.update()
+            if nan_max is not None and self._nan_streak >= nan_max:
+                self._terminate_training = True
+            return
+        self._nan_streak = 0
+
         if step > MIN_STEP_SKIP and self.cfg.training.max_grad_norm is not None:
             if grad_norm > self.cfg.training.max_grad_norm:
                 LOGGER.warning(
@@ -777,13 +835,6 @@ class BaseExperiment:
             "CosineAnnealingWarmRestarts",
         ]:
             self.scheduler.step()
-
-        # mean loss over the K accumulated steps
-        acc_loss = torch.tensor(self._acc_loss_sum / K, device=self.device)
-        self._acc_loss_sum = 0.0
-
-        if not torch.isfinite(acc_loss):
-            LOGGER.warning(f"Loss is nonfinite (loss={acc_loss}) at iteration {step}")
 
         # collect metrics
         if self.world_size > 1:
@@ -859,6 +910,8 @@ class BaseExperiment:
         LOGGER.debug(f"Saving config at {config_filename}")
         with open(config_filename, "w", encoding="utf-8") as file:
             file.write(OmegaConf.to_yaml(self.cfg))
+            # hydra strips its own settings from cfg, keep them for -cp <run_dir> -cn config
+            file.write((Path(__file__).parents[1] / "config" / "hydra.yaml").read_text())
 
         if to_mlflow and self.cfg.use_mlflow:
             for key, value in flatten_dict(self.cfg).items():
@@ -871,7 +924,9 @@ class BaseExperiment:
                 f"Tried to load information from existing config but {config_filename} does not exist"
             )
         LOGGER.info(f"Loading information from config from {config_filename}")
-        return OmegaConf.load(config_filename)
+        cfg = OmegaConf.load(config_filename)
+        cfg.pop("hydra", None)
+        return cfg
 
     def _save_model(self, filename=None):
         if not self.cfg.save:

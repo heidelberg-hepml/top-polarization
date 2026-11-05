@@ -1,55 +1,31 @@
-import hashlib
-import json
-import os
+from typing import NamedTuple
 
-import awkward as ak
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch_geometric.data import Data
-from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr
-from torch_geometric.data.storage import GlobalStorage
 
-from experiments.hep import PtPhiEtaM_to_EPPP
 from experiments.logger import LOGGER
+from experiments.tagging.pseudoscalars import eps_tensor, spin_correlation_nr
+from experiments.tagging.top_events import (
+    DOWN_TAGS,
+    N_HEAD,
+    N_SUBJETS,
+    PHOTON_PID,
+    PID_FEATURES,
+    TAIL,
+    read_events,
+)
 
-torch.serialization.add_safe_globals(
-    [DataEdgeAttr, DataTensorAttr, GlobalStorage]
-)  # Needed to cache sequence data
-
-EPS = 1e-5
+# arrays of a file with one entry per token, all others have one entry per event
+TOKEN_ARRAYS = ("x", "pid")
 
 
 class TaggingDataset(torch.utils.data.Dataset):
-    """
-    We use torch_geometric to handle point cloud of jet constituents more efficiently
-    The torch_geometric dataloader concatenates jets along their constituent direction,
-    effectively combining the constituent index with the batch index in a single dimension.
-    An extra object batch.batch for each batch specifies to which jet the constituent belongs.
-    We extend the constituent list by a global token that is used to embed extra global
-    information and extract the classifier score.
+    """A list of torch_geometric graphs."""
 
-    Structure of the elements in self.data_list
-    x : torch.tensor of shape (num_elements, 4)
-        List of 4-momenta of jet constituents
-    scalars : empty placeholder
-        label : torch.tensor of shape (1), dtype torch.int
-        Binary label supplied by the concrete dataset implementation
-    is_global : torch.tensor of shape (num_elements), dtype torch.bool
-        True for the global token (first element in constituent list), False otherwise
-        We set is_global=None if no global token is used
-    """
-
-    CACHE_VERSION = 1
-    CACHE_PREFIX = "tagging"
-
-    def __init__(self, length=-1):
+    def __init__(self, data_list=()):
         super().__init__()
-        self.data_list = []
-        self.length = length
-
-    def load_data(self, filename, mode):
-        raise NotImplementedError
+        self.data_list = list(data_list)
 
     def __len__(self):
         return len(self.data_list)
@@ -57,883 +33,530 @@ class TaggingDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         return self.data_list[idx]
 
-    def _hash_cache_key(self, cache_key) -> str:
-        key_bytes = json.dumps(cache_key, sort_keys=True).encode("utf-8")
-        return hashlib.sha256(key_bytes).hexdigest()
 
-    def _cache_path(self, cache_hash: str, data_dir: str) -> str:
-        cache_dir = os.path.join(data_dir, "cache")
-        os.makedirs(cache_dir, exist_ok=True)
-        return os.path.join(cache_dir, f"{self.CACHE_PREFIX}_{cache_hash}.pt")
+class TokenDataset(torch.utils.data.Dataset):
+    """Events stored as flat token tensors, sliced into torch_geometric graphs on access.
 
-    def _save_to_cache(self, cache_key, data, indices, data_dir):
-        cache_hash = self._hash_cache_key(cache_key)
-        path = self._cache_path(cache_hash, data_dir)
-        torch.save(
-            {"key": cache_key, "data": data, "indices": indices},
-            path,
-        )
-
-    def _load_from_cache(self, cache_key, data_dir):
-        cache_hash = self._hash_cache_key(cache_key)
-        path = self._cache_path(cache_hash, data_dir)
-
-        if not os.path.exists(path):
-            return None
-
-        cached = torch.load(path)
-        return cached["data"], cached["indices"]
-
-    def _get_target_length(self, num_events):
-        if self.length is None or self.length < 0:
-            return num_events
-        if self.length == 0:
-            raise ValueError("Requested dataset length must be positive")
-        return min(int(self.length), num_events)
-
-    @classmethod
-    def _normalize_filename_key(cls, filename):
-        if isinstance(filename, (list, tuple)):
-            return tuple(cls._normalize_filename_key(f) for f in filename)
-        elif isinstance(filename, (dict)):
-            return tuple(sorted((k, cls._normalize_filename_key(v)) for k, v in filename.items()))
-        return filename
-
-
-class HEPTaggingDataset(TaggingDataset):
-    """
-    Optimized dataset for HEP classification tasks.
+    torch_geometric concatenates the graphs of a batch along the token dimension and keeps the
+    event boundaries in batch.ptr. Subclasses read one file into flat arrays (`_read`) and turn
+    the selected events into `x`, `scalars` and `labels` (`_build`).
     """
 
-    CACHE_VERSION = 1
-    CACHE_PREFIX = "hep_tagging"
+    # truncate every label to the size of the smallest one
+    BALANCE = False
 
-    _parquet_cache = {}
-    _split_cache = {}
-
-    def __init__(
-        self,
-        length=-1,
-        seed=12345,
-        split_fracs=(0.8, 0.1, 0.1),
-        shuffle=True,
-    ):
-        super().__init__(length=length)
+    def __init__(self, length=-1, seed=12345, split_fracs=(0.8, 0.1, 0.1), shuffle=True):
+        super().__init__()
+        self.length = -1 if length is None else length
         self.seed = seed
         self.split_fracs = split_fracs
         self.shuffle = shuffle
-        self.filename = None
-        self.cache_key = {}
+        self.filenames = None
+        self.splits = {}
+        # per-event tensors attached to every graph
+        self.extras = {}
+        # per token, the index within its event of the token its tagging features are relative to
+        self.ref = None
 
-    @staticmethod
-    def pid_encoding(pids: torch.Tensor) -> torch.Tensor:
-        """
-        Convert PDG PIDs to a 6-dimensional encoded representation.
-
-        Encoding:
-        [charge, is_electron, is_muon, is_photon, is_charged_hadron, is_neutral_hadron]
-        """
-
-        pid_map = {
-            22: [0, 0, 0, 1, 0, 0],  # photon
-            11: [-1, 1, 0, 0, 0, 0],  # e-
-            -11: [1, 1, 0, 0, 0, 0],  # e+
-            13: [-1, 0, 1, 0, 0, 0],  # mu-
-            -13: [1, 0, 1, 0, 0, 0],  # mu+
-            211: [1, 0, 0, 0, 1, 0],  # pi+
-            -211: [-1, 0, 0, 0, 1, 0],  # pi-
-            321: [1, 0, 0, 0, 1, 0],  # K+
-            -321: [-1, 0, 0, 0, 1, 0],  # K-
-            130: [0, 0, 0, 0, 0, 1],  # K0_L
-            2212: [1, 0, 0, 0, 1, 0],  # proton
-            -2212: [-1, 0, 0, 0, 1, 0],  # anti-proton
-            2112: [0, 0, 0, 0, 0, 1],  # neutron
-            -2112: [0, 0, 0, 0, 0, 1],  # anti-neutron
-        }
-
-        pids_int = pids.to(torch.int64)
-        encoded = torch.zeros(*pids.shape, 6, device=pids.device, dtype=pids.dtype)
-
-        for pid, encoding in pid_map.items():
-            mask = pids_int == pid
-            if mask.any():
-                encoded[mask] = torch.tensor(encoding, device=pids.device, dtype=pids.dtype)
-
-        return encoded
-
-    def load_data(self, data_dir, filename, network_float64=False, momentum_float64=True):
+    def load_data(self, data_dir, filenames, network_float64=False, momentum_float64=True):
+        """Read `filenames`, a dict from each label to its files or a list of unlabelled files."""
         network_dtype = torch.float64 if network_float64 else torch.float32
         momentum_dtype = torch.float64 if momentum_float64 else torch.float32
+        self.filenames = filenames
 
-        self.filename = filename
+        groups = list(filenames.values()) if isinstance(filenames, dict) else [filenames]
+        sources, source_group = [], []
+        for group, paths in enumerate(groups):
+            for path in [paths] if isinstance(paths, str) else paths:
+                sources.append(self._read(path))
+                source_group.append(group)
+        counts = np.array([len(source["ntokens"]) for source in sources])
+        source_ids, event_ids = self._select_events(counts, np.array(source_group))
 
-        # Load data with caching
-        parquet, num_events = self._get_parquet()
-        target_length = self._get_target_length(num_events)
-        self.cache_key = self._cache_key_gen(target_length)
+        events = _gather_events(sources, source_ids, event_ids)
+        events["label"] = np.array(source_group)[source_ids]
+        offsets = np.concatenate([[0], np.cumsum(events["ntokens"])])
+        position = np.arange(offsets[-1]) - offsets[:-1].repeat(events["ntokens"])
+        tokens = _gather_tokens(sources, source_ids, event_ids, events["ntokens"], position)
+        tokens["position"], tokens["offsets"] = position, offsets
+        del sources
 
-        if self.use_cache:
-            cache = self._load_from_cache(self.cache_key, data_dir)
-        else:
-            cache = None
-
-        if cache is None:
-            data_list, indices = self._fill_data(parquet, network_dtype, momentum_dtype)
-
-            if not data_list:
-                raise RuntimeError(f"No usable events found for {self.filename}")
-
-            self._save_to_cache(self.cache_key, data_list, indices, data_dir)
-
-            LOGGER.info(f"[{self.__class__.__name__}] saved to cache")
-
-        else:
-            data_list, indices = cache
-
-            LOGGER.info(f"[{self.__class__.__name__}] loaded from cache")
-
-        self.data_list = data_list
+        self._build(events, tokens, network_dtype, momentum_dtype)
+        self.ptr = torch.from_numpy(np.concatenate([[0], np.cumsum(self._ntokens)]))
         self._split_data()
+        LOGGER.info(
+            f"[{self.__class__.__name__}] {len(self)} events, {self.x.shape[0]} tokens, "
+            f"label=1 ratio: {self.labels.double().mean().item():.4f}"
+        )
 
-    def _shuffle_data(self, data, evt_types=-1):
-        # target_length = num_events if self.length is None else min(self.length, num_events)
-        target_length = self._get_target_length(len(data))
-        if evt_types > 0 and target_length < len(data):
-            target_length = int(target_length / evt_types)
+    def __len__(self):
+        return len(self.labels)
 
-        if target_length == 0:
-            raise RuntimeError("No events found in loaded data")
-
-        # Generate permutation
-        gen = torch.Generator().manual_seed(self.seed)
-        perm = torch.randperm(len(data), generator=gen) if self.shuffle else torch.arange(len(data))
-        perm = perm[:target_length]
-
-        if isinstance(data, (list)):
-            return [data[x] for x in perm.tolist()], perm
-
-        return data[perm.tolist()], perm
-
-    def _split_data(self):
-        split_indices = torch.arange(len(self.data_list), dtype=torch.long)
-
-        if self.cache_key not in self._split_cache:
-            # Calculate split sizes
-            fracs = torch.as_tensor(self.split_fracs, dtype=torch.double)
-            fracs = fracs / fracs.sum()
-
-            n_train = int(len(self.data_list) * fracs[0].item())
-            n_val = int(len(self.data_list) * fracs[1].item())
-            n_test = len(self.data_list) - n_train - n_val
-
-            if min(n_train, n_val, n_test) <= 0:
-                raise ValueError(
-                    f"Split fractions result in empty dataset parts. "
-                    f"num_events={len(self.data_list)}, fractions={self.split_fracs}"
-                )
-
-            self._split_cache[self.cache_key] = {
-                "train": split_indices[:n_train],
-                "val": split_indices[n_train : n_train + n_val],
-                "test": split_indices[n_train + n_val :],
-            }
+    def __getitem__(self, idx):
+        lo, hi = self.ptr[idx], self.ptr[idx + 1]
+        graph = Data(x=self.x[lo:hi], scalars=self.scalars[lo:hi], label=int(self.labels[idx]))
+        if self.ref is not None:
+            graph.ref = self.ref[lo:hi]
+        for name, value in self.extras.items():
+            graph[name] = value[idx]
+        return graph
 
     def get_subset(self, mode):
-        if mode not in {"train", "val", "test"}:
+        if mode not in self.splits:
             raise ValueError(f"Unknown dataset split '{mode}'")
-
-        if self.cache_key not in self._split_cache:
-            raise KeyError(f"{self.cache_key} not found in cache")
-
-        split_indices = self._split_cache[self.cache_key][mode]
-
         LOGGER.info(
             f"[{self.__class__.__name__}] mode={mode}, requested_length={self.length}, "
-            f"selected={len(split_indices)}/{len(self.data_list)}"
+            f"selected={len(self.splits[mode])}/{len(self)}"
         )
+        return self.splits[mode]
 
-        return split_indices
+    def _read(self, path):
+        raise NotImplementedError
 
-    def _cache_key_gen(self):
-        raise NotImplementedError()
+    def _build(self, events, tokens, network_dtype, momentum_dtype):
+        """Set x, scalars, labels and _ntokens (tokens per event) from the gathered arrays."""
+        raise NotImplementedError
 
-    def _get_parquet(self):
-        raise NotImplementedError()
-
-    def _fill_data(self):
-        raise NotImplementedError()
-
-    def _build_event_graph(self):
-        raise NotImplementedError()
-
-
-class DownTaggingDataset(HEPTaggingDataset):
-    """
-    Dataset for tagging down quarks from the two non-b-tagged subjets in a binary classification task.
-    Parameters:
-        tag: PID of the quark to tag. Default 1 (= down quark)
-        use_ditop: If set to true, also include the lepton and the leptonic top quark in the event/graph
-    """
-
-    CACHE_VERSION = 1
-    CACHE_PREFIX = "down_quark_tagging"
-
-    def __init__(
-        self,
-        tag=[-3, -1, 1, 3],
-        length=-1,
-        pid=False,
-        use_ditop=False,
-        use_cache=True,
-    ):
-        super().__init__(length=length)
-        self.tag = tag
-        self.include_pid = pid
-        self.use_ditop = use_ditop
-        self.use_cache = use_cache
-
-    def _cache_key_gen(self, target_length):
-        cache_key = (
-            self.CACHE_VERSION,
-            self._normalize_filename_key(self.filename),
-            tuple(self.split_fracs),
-            self.seed,
-            bool(self.shuffle),
-            bool(self.use_ditop),
-            target_length,
+    def _permutation(self, num_events):
+        gen = torch.Generator().manual_seed(self.seed)
+        perm = (
+            torch.randperm(num_events, generator=gen) if self.shuffle else torch.arange(num_events)
         )
-        return cache_key
+        return perm.numpy()
 
-    def _get_parquet(self):
-        parquet = ak.concatenate(
-            [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in self.filename]
+    def _select_events(self, counts, source_group):
+        """Return the (source, event) indices to use, shuffled within and across labels."""
+        num_groups = source_group.max() + 1
+        sizes = [counts[source_group == group].sum() for group in range(num_groups)]
+        if self.BALANCE:
+            sizes = [min(sizes)] * num_groups
+        if self.length >= 0:
+            sizes = [min(size, self.length // num_groups) for size in sizes]
+        assert min(sizes) > 0, f"data.length={self.length} leaves a label without events"
+
+        source_ids, event_ids = [], []
+        for group, size in enumerate(sizes):
+            ids = np.nonzero(source_group == group)[0]
+            offsets = np.concatenate([[0], np.cumsum(counts[ids])])
+            selected = self._permutation(offsets[-1])[:size]
+            source = np.searchsorted(offsets[1:], selected, side="right")
+            source_ids.append(ids[source])
+            event_ids.append(selected - offsets[source])
+
+        source_ids, event_ids = np.concatenate(source_ids), np.concatenate(event_ids)
+        if num_groups == 1:
+            return source_ids, event_ids
+        perm = self._permutation(len(source_ids))
+        return source_ids[perm], event_ids[perm]
+
+    def _split_data(self):
+        fracs = np.asarray(self.split_fracs, dtype=np.float64)
+        fracs = fracs / fracs.sum()
+        num_events = len(self)
+        n_train = int(num_events * fracs[0])
+        n_val = int(num_events * fracs[1])
+        assert min(n_train, n_val, num_events - n_train - n_val) > 0, (
+            f"Split fractions {self.split_fracs} leave an empty part for {num_events} events"
         )
-        num_events = len(parquet)
-        return parquet, num_events
-
-    def _fill_data(self, parquet, network_dtype, momentum_dtype):
-        data_list = []
-        indices = []
-        label_counts = 0
-
-        parquet, perm = self._shuffle_data(parquet)
-        for event in parquet:
-            graph = self._build_event_graph(event, network_dtype, momentum_dtype)
-            label_counts += graph.label.item()
-            data_list.append(graph)
-        indices += perm
-
-        LOGGER.info(
-            f"[{self.__class__.__name__}] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
-        )
-
-        return data_list, indices
-
-    def _build_event_graph(self, event, network_dtype, momentum_dtype):
-        ncat_ditop = 2 if self.use_ditop else 0
-
-        top_had = event["TopHad"]
-        subjets = event["Subjets"]
-
-        jet_kin = torch.stack(
-            [
-                torch.as_tensor(top_had[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta", "mass"]
-            ],
-            dim=-1,
-        )
-        jet_four = PtPhiEtaM_to_EPPP(jet_kin).unsqueeze(0)
-
-        subjet_kin = torch.stack(
-            [
-                torch.as_tensor(subjets[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta", "mass"]
-            ],
-            dim=-1,
-        )
-        subjet_tags = torch.as_tensor(subjets["tag"], dtype=torch.long)
-        subjet_four = PtPhiEtaM_to_EPPP(subjet_kin)
-
-        top_lep = event["TopLep"]
-        lepton = event["Lepton"]
-
-        toplep_kin = torch.stack(
-            [
-                torch.as_tensor(top_lep[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta", "mass"]
-            ],
-            dim=-1,
-        )
-        toplep_four = PtPhiEtaM_to_EPPP(toplep_kin).unsqueeze(0)
-
-        lep_kin = torch.stack(
-            [torch.as_tensor(lepton[k], dtype=momentum_dtype) for k in ["pt", "phi", "eta"]]
-            + [torch.as_tensor(0.0, dtype=momentum_dtype)],
-            dim=-1,
-        )
-        lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
-        lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
-
-        b_idx = torch.argmax((subjet_tags == 5).to(torch.int)).item()
-        other_indices = [i for i in range(len(subjet_tags)) if i != b_idx]
-        other_indices.sort(key=lambda idx: subjet_kin[idx, 0].item(), reverse=True)
-        subjet_order = torch.tensor([b_idx] + other_indices, dtype=torch.long)
-
-        subjet_four_sorted = subjet_four[subjet_order]
-
-        # Label the jet as 1 if the leading non-b subjet matches the target tag
-        label = (
-            torch.isin(subjet_tags[subjet_order[1]], torch.tensor(self.tag))
-            .to(network_dtype)
-            .unsqueeze(0)
-        )
-
-        constituents = subjets["Constituents"]
-        const_four_list, const_pid_list, const_parent_list = [], [], []
-        for parent_idx, original_idx in enumerate(subjet_order.tolist()):
-            subj_const = constituents[original_idx]
-            const_kin = torch.stack(
-                [
-                    torch.as_tensor(subj_const[k], dtype=momentum_dtype)
-                    for k in ["pt", "phi", "eta", "mass"]
-                ],
-                dim=-1,
-            )
-            const_pid = torch.as_tensor(subj_const["pid"], dtype=momentum_dtype)
-
-            const_order = torch.argsort(const_kin[:, 0], descending=True)
-            const_four_list.append(PtPhiEtaM_to_EPPP(const_kin[const_order]))
-            const_pid_list.append(const_pid[const_order])
-            const_parent_list.append(
-                torch.full((const_order.numel(),), parent_idx, dtype=torch.long)
-            )
-
-        const_four_sorted = torch.cat(const_four_list, dim=0)
-        const_pid_sorted = torch.cat(const_pid_list, dim=0)
-        const_parents_sorted = torch.cat(const_parent_list, dim=0)
-
-        sequence = torch.cat([jet_four, subjet_four_sorted, const_four_sorted], dim=0)
-
-        n_constituents = const_four_sorted.shape[0]
-
-        category = torch.zeros(4 + n_constituents + ncat_ditop, 5 + ncat_ditop, dtype=network_dtype)
-        # Hadronic top: [1, 0, 0, 0, 0]
-        category[0, 0] = 1
-
-        # 3 Subjets: [0, 1, X, X, X] where one X=1 for subjet index
-        category[1:4, 1] = 1
-        category[1, 2] = 1
-        category[2, 3] = 1
-        category[3, 4] = 1
-
-        # Constituents: [0, 0, X, X, X] where one X=1 for parent subjet (0, 1, or 2)
-        for j, parent_idx in enumerate(const_parents_sorted):
-            category[4 + j, 2 + parent_idx] = 1
-
-        if self.use_ditop:
-            # Leptonic top: [0, 0, 0, 0, 0, 1, 0]
-            category[4 + len(const_parents_sorted), 5] = 1
-
-            # Lepton: [0, 0, 0, 0, 0, 0, charge]
-            category[4 + len(const_parents_sorted) + 1, 6] = lep_charge
-
-        if self.include_pid:
-            pid_features = torch.zeros(4 + n_constituents + ncat_ditop, 6, dtype=network_dtype)
-            pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
-            pid_features[4 : 4 + n_constituents] = pid_encoded.to(network_dtype)
-            scalars = torch.cat([category, pid_features], dim=-1)
-        else:
-            scalars = category
-
-        if self.use_ditop:
-            sequence = torch.cat([sequence, toplep_four, lep_four], dim=0)
-            return Data(x=sequence, scalars=scalars, label=label, lep_vec=None, lep_charge=None)
-
-        lep_vec = torch.cat([toplep_four, lep_four], dim=0)
-        return Data(
-            x=sequence, scalars=scalars, label=label, lep_vec=lep_vec, lep_charge=lep_charge
-        )
-
-
-class PolarizationDataset(HEPTaggingDataset):
-    """
-    Dataset for directly identifying the top quark polarization in a binary classification task.
-    Parameters:
-        use_ditop: If set to true, also include the lepton and the leptonic top quark in the event/graph
-    """
-
-    CACHE_VERSION = 1
-    CACHE_PREFIX = "polarization_tagging"
-
-    def __init__(
-        self,
-        length=-1,
-        pid=False,
-        use_ditop=False,
-        use_cache=True,
-    ):
-        super().__init__(length=length)
-        self.include_pid = pid
-        self.use_ditop = use_ditop
-        self.use_cache = use_cache
-
-    def _cache_key_gen(self, target_length):
-        cache_key = (
-            self.CACHE_VERSION,
-            self._normalize_filename_key(self.filename),
-            tuple(self.split_fracs),
-            self.seed,
-            bool(self.shuffle),
-            bool(self.use_ditop),
-            target_length,
-        )
-        return cache_key
-
-    def _get_parquet(self):
-        parquet = [
-            ak.concatenate([self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in files])
-            for files in self.filename.values()
-        ]
-        num_events = len(parquet)
-        return parquet, num_events
-
-    def _fill_data(self, parquet, network_dtype, momentum_dtype):
-        data_list = []
-        indices = []
-        label_counts = 0
-
-        offset = 0
-        for lbl, p in enumerate(parquet):
-            p, perm = self._shuffle_data(p, evt_types=len(parquet))
-            if offset > 0:
-                perm = [pm + offset for pm in perm]
-            for event in p:
-                graph = self._build_event_graph(event, lbl, network_dtype, momentum_dtype)
-                label_counts += graph.label
-                data_list.append(graph)
-            indices += perm
-            offset += len(data_list)
-        data_list, _ = self._shuffle_data(data_list)
-
-        LOGGER.info(
-            f"[{self.__class__.__name__}] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
-        )
-
-        return data_list, indices
-
-    def _build_event_graph(self, event, label, network_dtype, momentum_dtype):
-        ncat_ditop = 2 if self.use_ditop else 0
-
-        top_had = event["TopHad"]
-        subjets = event["Subjets"]
-
-        jet_kin = torch.stack(
-            [
-                torch.as_tensor(top_had[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta", "mass"]
-            ],
-            dim=-1,
-        )
-        jet_four = PtPhiEtaM_to_EPPP(jet_kin).unsqueeze(0)
-
-        subjet_kin = torch.stack(
-            [
-                torch.as_tensor(subjets[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta", "mass"]
-            ],
-            dim=-1,
-        )
-        subjet_tags = torch.as_tensor(subjets["tag"], dtype=torch.long)
-        subjet_four = PtPhiEtaM_to_EPPP(subjet_kin)
-
-        top_lep = event["TopLep"]
-        lepton = event["Lepton"]
-
-        toplep_kin = torch.stack(
-            [
-                torch.as_tensor(top_lep[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta", "mass"]
-            ],
-            dim=-1,
-        )
-        toplep_four = PtPhiEtaM_to_EPPP(toplep_kin).unsqueeze(0)
-
-        lep_kin = torch.stack(
-            [torch.as_tensor(lepton[k], dtype=momentum_dtype) for k in ["pt", "phi", "eta"]]
-            + [torch.as_tensor(0.0, dtype=momentum_dtype)],
-            dim=-1,
-        )
-        lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
-        lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
-
-        b_idx = torch.argmax((subjet_tags == 5).to(torch.int)).item()
-        other_indices = [i for i in range(len(subjet_tags)) if i != b_idx]
-        other_indices.sort(key=lambda idx: subjet_kin[idx, 0].item(), reverse=True)
-        subjet_order = torch.tensor([b_idx] + other_indices, dtype=torch.long)
-
-        subjet_four_sorted = subjet_four[subjet_order]
-
-        constituents = subjets["Constituents"]
-        const_four_list, const_pid_list, const_parent_list = [], [], []
-        for parent_idx, original_idx in enumerate(subjet_order.tolist()):
-            subj_const = constituents[original_idx]
-            const_kin = torch.stack(
-                [
-                    torch.as_tensor(subj_const[k], dtype=momentum_dtype)
-                    for k in ["pt", "phi", "eta", "mass"]
-                ],
-                dim=-1,
-            )
-            const_pid = torch.as_tensor(subj_const["pid"], dtype=momentum_dtype)
-
-            const_order = torch.argsort(const_kin[:, 0], descending=True)
-            const_four_list.append(PtPhiEtaM_to_EPPP(const_kin[const_order]))
-            const_pid_list.append(const_pid[const_order])
-            const_parent_list.append(
-                torch.full((const_order.numel(),), parent_idx, dtype=torch.long)
-            )
-
-        const_four_sorted = torch.cat(const_four_list, dim=0)
-        const_pid_sorted = torch.cat(const_pid_list, dim=0)
-        const_parents_sorted = torch.cat(const_parent_list, dim=0)
-
-        sequence = torch.cat([jet_four, subjet_four_sorted, const_four_sorted], dim=0)
-
-        n_constituents = const_four_sorted.shape[0]
-
-        category = torch.zeros(4 + n_constituents + ncat_ditop, 5 + ncat_ditop, dtype=network_dtype)
-        # Hadronic top: [1, 0, 0, 0, 0]
-        category[0, 0] = 1
-
-        # 3 Subjets: [0, 1, X, X, X] where one X=1 for subjet index
-        category[1:4, 1] = 1
-        category[1, 2] = 1
-        category[2, 3] = 1
-        category[3, 4] = 1
-
-        # Constituents: [0, 0, X, X, X] where one X=1 for parent subjet (0, 1, or 2)
-        for j, parent_idx in enumerate(const_parents_sorted):
-            category[4 + j, 2 + parent_idx] = 1
-
-        if self.use_ditop:
-            # Leptonic top: [0, 0, 0, 0, 0, 1, 0]
-            category[4 + len(const_parents_sorted), 5] = 1
-
-            # Lepton: [0, 0, 0, 0, 0, 0, charge]
-            category[4 + len(const_parents_sorted) + 1, 6] = lep_charge
-
-        if self.include_pid:
-            pid_features = torch.zeros(4 + n_constituents + ncat_ditop, 6, dtype=network_dtype)
-            pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
-            pid_features[4 : 4 + n_constituents] = pid_encoded.to(network_dtype)
-            scalars = torch.cat([category, pid_features], dim=-1)
-        else:
-            scalars = category
-
-        if self.use_ditop:
-            sequence = torch.cat([sequence, toplep_four, lep_four], dim=0)
-            return Data(x=sequence, scalars=scalars, label=label, lep_vec=None, lep_charge=None)
-
-        lep_vec = torch.cat([toplep_four, lep_four], dim=0)
-        return Data(
-            x=sequence, scalars=scalars, label=label, lep_vec=lep_vec, lep_charge=lep_charge
-        )
-
-
-class PseudoscalarDataset(HEPTaggingDataset):
-    """
-    Dataset for extracting the pseudoscalar component to build a CP-odd observable in ttH.
-    """
-
-    CACHE_VERSION = 1
-    CACHE_PREFIX = "pseudoscalar"
-
-    def __init__(
-        self,
-        length=-1,
-        pid=False,
-        use_cache=True,
-    ):
-        super().__init__(length=length)
-        self.include_pid = pid
-        self.use_cache = use_cache
-
-    def _cache_key_gen(self, target_length):
-        cache_key = (
-            self.CACHE_VERSION,
-            self._normalize_filename_key(self.filename),
-            tuple(self.split_fracs),
-            self.seed,
-            bool(self.shuffle),
-            target_length,
-        )
-        return cache_key
-
-    def _get_parquet(self):
-        parquet = {
-            key: ak.concatenate(
-                [self._parquet_cache.setdefault(f, ak.from_parquet(f)) for f in value]
-            )
-            for key, value in self.filename.items()
+        indices = torch.arange(num_events)
+        self.splits = {
+            "train": indices[:n_train],
+            "val": indices[n_train : n_train + n_val],
+            "test": indices[n_train + n_val :],
         }
-        num_events = len(parquet[0]) + len(parquet[1])
-        return parquet, num_events
 
-    def _fill_data(self, parquet, network_dtype, momentum_dtype, balance=True):
-        data_list = []
-        indices = []
-        label_counts = 0
 
-        if balance:
-            label_events = {lbl: list(p) for lbl, p in parquet.items()}
-            min_count = min(len(events) for events in label_events.values())
-            balanced_parquet = {}
-            for lbl, events in label_events.items():
-                if len(events) > min_count:
-                    perm = np.random.permutation(len(events))[:min_count]
-                    balanced_parquet[lbl] = [events[i] for i in perm]
-                else:
-                    balanced_parquet[lbl] = events
-            parquet = balanced_parquet
+def _gather_events(sources, source_ids, event_ids):
+    """Collect the per-event arrays of the selected events."""
+    events = {}
+    for name, value in sources[0].items():
+        if name in TOKEN_ARRAYS:
+            continue
+        events[name] = np.empty((len(source_ids),) + value.shape[1:], dtype=value.dtype)
+        for i, source in enumerate(sources):
+            selected = source_ids == i
+            events[name][selected] = source[name][event_ids[selected]]
+    return events
 
-        offset = 0
-        for lbl, p in parquet.items():
-            p, perm = self._shuffle_data(p, evt_types=len(parquet))
-            if offset > 0:
-                perm = [pm + offset for pm in perm]
-            for event in p:
-                graph = self._build_event_graph(event, lbl, network_dtype, momentum_dtype)
-                label_counts += graph.label
-                data_list.append(graph)
-            indices += perm
-            offset += len(data_list)
-        data_list, _ = self._shuffle_data(data_list)
 
-        LOGGER.info(
-            f"[{self.__class__.__name__}] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
-        )
+def _gather_tokens(sources, source_ids, event_ids, ntokens, position):
+    """Collect the per-token arrays of the selected events."""
+    num_tokens = ntokens.sum()
+    tokens = {
+        name: np.empty((num_tokens,) + sources[0][name].shape[1:], dtype=sources[0][name].dtype)
+        for name in TOKEN_ARRAYS
+        if name in sources[0]
+    }
+    for i, source in enumerate(sources):
+        selected = source_ids == i
+        source_offsets = np.concatenate([[0], np.cumsum(source["ntokens"])])
+        idx = np.nonzero(selected.repeat(ntokens))[0]
+        src = source_offsets[event_ids[selected]].repeat(ntokens[selected]) + position[idx]
+        for name, value in tokens.items():
+            value[idx] = source[name][src]
+    return tokens
 
-        return data_list, indices
 
-    def _build_event_graph(self, event, label, network_dtype, momentum_dtype):
-        top_had = event["TopHad"]
-        subjets = event["Subjets"]
+def _indices(mask):
+    return torch.from_numpy(np.nonzero(mask)[0])
 
-        jet_kin = torch.stack(
-            [
-                torch.as_tensor(top_had[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta", "mass"]
-            ],
-            dim=-1,
-        )
-        jet_four = PtPhiEtaM_to_EPPP(jet_kin).unsqueeze(0)
 
-        subjet_kin = torch.stack(
-            [
-                torch.as_tensor(subjets[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta", "mass"]
-            ],
-            dim=-1,
-        )
-        subjet_tags = torch.as_tensor(subjets["tag"], dtype=torch.long)
-        subjet_four = PtPhiEtaM_to_EPPP(subjet_kin)
+def _top_category(tokens, events, n_tail, n_cols, dtype):
+    """One-hot token roles shared by the top datasets, in the first five of `n_cols` columns:
+    [is_hadtop, is_subjet, sub0, sub1, sub2], where subjets mark their own slot and
+    constituents the slot of their subjet."""
+    position, ntokens = tokens["position"], events["ntokens"]
+    is_subjet = (position >= 1) & (position <= N_SUBJETS)
+    is_const = (position >= N_HEAD) & (position < ntokens.repeat(ntokens) - n_tail)
+    parent = np.repeat(np.tile(np.arange(N_SUBJETS), len(ntokens)), events["nconst"].ravel())
 
-        top_lep = event["TopLep"]
-        lepton = event["Lepton"]
+    category = torch.zeros(len(position), n_cols, dtype=dtype)
+    category[_indices(position == 0), 0] = 1
+    category[_indices(is_subjet), 1] = 1
+    category[_indices(is_subjet), torch.from_numpy(1 + position[is_subjet])] = 1
+    category[_indices(is_const), torch.from_numpy(2 + parent)] = 1
+    return category
 
-        toplep_kin = torch.stack(
-            [
-                torch.as_tensor(top_lep[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta", "mass"]
-            ],
-            dim=-1,
-        )
-        toplep_four = PtPhiEtaM_to_EPPP(toplep_kin).unsqueeze(0)
 
-        lep_kin = torch.stack(
-            [torch.as_tensor(lepton[k], dtype=momentum_dtype) for k in ["pt", "phi", "eta"]]
-            + [torch.as_tensor(0.0, dtype=momentum_dtype)],
-            dim=-1,
-        )
-        lep_charge = torch.as_tensor(lepton["charge"], dtype=torch.long)
-        lep_four = PtPhiEtaM_to_EPPP(lep_kin).unsqueeze(0)
+def _tail_tokens(tokens, n_tail, i):
+    """Index of the i-th tail token of every event."""
+    return torch.from_numpy(tokens["offsets"][1:] - n_tail + i)
 
-        b_idx = torch.argmax((subjet_tags == 5).to(torch.int)).item()
-        other_indices = [i for i in range(len(subjet_tags)) if i != b_idx]
-        other_indices.sort(key=lambda idx: subjet_kin[idx, 0].item(), reverse=True)
-        subjet_order = torch.tensor([b_idx] + other_indices, dtype=torch.long)
 
-        subjet_four_sorted = subjet_four[subjet_order]
+def _top_ref(tokens, events, n_tail):
+    """Reference tokens of the top datasets: the hadronic top (token 0) for the hadronic side,
+    the leptonic top (first tail token) for itself and the lepton (second tail token)."""
+    ref = torch.zeros(len(tokens["position"]), dtype=torch.int32)
+    toplep_position = torch.from_numpy(events["ntokens"] - n_tail).to(torch.int32)
+    for i in range(2):
+        ref[_tail_tokens(tokens, n_tail, i)] = toplep_position
+    return ref
 
-        constituents = subjets["Constituents"]
-        const_four_list, const_pid_list, const_parent_list = [], [], []
-        for parent_idx, original_idx in enumerate(subjet_order.tolist()):
-            subj_const = constituents[original_idx]
-            const_kin = torch.stack(
-                [
-                    torch.as_tensor(subj_const[k], dtype=momentum_dtype)
-                    for k in ["pt", "phi", "eta", "mass"]
-                ],
-                dim=-1,
-            )
-            const_pid = torch.as_tensor(subj_const["pid"], dtype=momentum_dtype)
 
-            const_order = torch.argsort(const_kin[:, 0], descending=True)
-            const_four_list.append(PtPhiEtaM_to_EPPP(const_kin[const_order]))
-            const_pid_list.append(const_pid[const_order])
-            const_parent_list.append(
-                torch.full((const_order.numel(),), parent_idx, dtype=torch.long)
-            )
+def _pid_features(pid, dtype):
+    """PID_FEATURES rows of all tokens, zero for tokens without a PID."""
+    rows = PID_FEATURES[np.where(pid < 0, len(PID_FEATURES) - 1, pid)]
+    return torch.from_numpy(rows).to(dtype)
 
-        const_four_sorted = torch.cat(const_four_list, dim=0)
-        const_pid_sorted = torch.cat(const_pid_list, dim=0)
-        const_parents_sorted = torch.cat(const_parent_list, dim=0)
 
-        higgs = event["higgs"]
-        photon1 = event["photon_leading"]
-        photon2 = event["photon_subleading"]
+class TopTaggingDataset(TokenDataset):
+    """Semileptonic ttbar events with the hadronic top resolved into subjets and constituents.
 
-        higgs_kin = torch.stack(
-            [torch.as_tensor(higgs[k], dtype=momentum_dtype) for k in ["pt", "phi", "eta", "mass"]],
-            dim=-1,
-        )
-        higgs_four = PtPhiEtaM_to_EPPP(higgs_kin).unsqueeze(0)
+    Scalars: [is_hadtop, is_subjet, sub0, sub1, sub2] (+ [is_toplep, lepton charge] with
+    use_ditop) (+ 6 PID features with pid, 5 without the charge). Without use_ditop the leptonic
+    top and the lepton are no tokens but attached to every graph as lep_vec and lep_charge.
+    With charge_last the C-odd charges (lepton charge with use_ditop, PID charge with pid) move
+    into one trailing charge column, and the lepton gets an is_lepton flag.
+    """
 
-        photon1_kin = torch.stack(
-            [
-                torch.as_tensor(photon1[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta", "mass"]
-            ],
-            dim=-1,
-        )
-        photon1_four = PtPhiEtaM_to_EPPP(photon1_kin).unsqueeze(0)
+    def __init__(self, length=-1, pid=False, use_ditop=False, charge=True, charge_last=False):
+        super().__init__(length=length)
+        assert charge or not use_ditop, "use_ditop passes the lepton charge"
+        assert charge or not charge_last, "charge_last moves the charges, charge=false drops them"
+        self.include_pid = pid
+        self.use_ditop = use_ditop
+        self.charge = charge
+        self.charge_last = charge_last
 
-        photon2_kin = torch.stack(
-            [
-                torch.as_tensor(photon2[k], dtype=momentum_dtype)
-                for k in ["pt", "phi", "eta", "mass"]
-            ],
-            dim=-1,
-        )
-        photon2_four = PtPhiEtaM_to_EPPP(photon2_kin).unsqueeze(0)
+    def _read(self, path):
+        return read_events(path)
 
-        photon_pids = torch.as_tensor([22, 22], dtype=momentum_dtype)
+    def _labels(self, events):
+        return events["label"]
 
-        sequence = torch.cat(
-            [
-                jet_four,
-                subjet_four_sorted,
-                const_four_sorted,
-                toplep_four,
-                lep_four,
-                higgs_four,
-                photon1_four,
-                photon2_four,
-            ],
-            dim=0,
-        )
-
-        n_constituents = const_four_sorted.shape[0]
-
-        category = torch.zeros(9 + n_constituents, 10, dtype=network_dtype)
-        # Hadronic top: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        category[0, 0] = 1
-
-        # 3 Subjets: [0, 1, X, X, X, 0, 0, 0, 0, 0] where one X=1 for subjet index
-        category[1:4, 1] = 1
-        category[1, 2] = 1
-        category[2, 3] = 1
-        category[3, 4] = 1
-
-        # Constituents: [0, 0, X, X, X, 0, 0, 0, 0, 0] where one X=1 for parent subjet (0, 1, or 2)
-        for j, parent_idx in enumerate(const_parents_sorted):
-            category[4 + j, 2 + parent_idx] = 1
-
-        # Leptonic top: [0, 0, 0, 0, 0, 1, 0, 0, 0, 0]
-        category[4 + len(const_parents_sorted), 5] = 1
-
-        # Lepton: [0, 0, 0, 0, 0, 0, charge, 0, 0, 0]
-        category[4 + len(const_parents_sorted) + 1, 6] = lep_charge
-
-        # Higgs: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0]
-        category[4 + len(const_parents_sorted) + 2, 7] = 1
-
-        # Photons: [0, 0, 0, 0, 0, 0, 0, 1, X, X] where one X=1 for photon index
-        category[4 + len(const_parents_sorted) + 3, 7] = 1
-        category[4 + len(const_parents_sorted) + 3, 8] = 1
-        category[4 + len(const_parents_sorted) + 4, 7] = 1
-        category[4 + len(const_parents_sorted) + 4, 9] = 1
-
+    def _build(self, events, tokens, network_dtype, momentum_dtype):
+        n_tail = len(TAIL)
+        lep_charge = torch.from_numpy(events["lep_charge"])
+        scalars = _top_category(tokens, events, n_tail, 7 if self.use_ditop else 5, network_dtype)
+        if self.use_ditop:
+            scalars[_tail_tokens(tokens, n_tail, 0), 5] = 1
+            scalars[_tail_tokens(tokens, n_tail, 1), 6] = lep_charge.to(network_dtype)
         if self.include_pid:
-            pid_features = torch.zeros(9 + n_constituents, 6, dtype=network_dtype)
-            pid_encoded = self.pid_encoding(const_pid_sorted.unsqueeze(-1)).squeeze(-2)
-            pid_encoded_photons = self.pid_encoding(photon_pids.unsqueeze(-1)).squeeze(-2)
-            pid_features[4 : 4 + n_constituents] = pid_encoded.to(network_dtype)
-            pid_features[-2:] = pid_encoded_photons.to(network_dtype)
-            scalars = torch.cat([category, pid_features], dim=-1)
-        else:
-            scalars = category
+            rows = _pid_features(tokens["pid"], network_dtype)
+            scalars = torch.cat([scalars, rows if self.charge else rows[:, 1:]], dim=-1)
 
-        return Data(x=sequence, scalars=scalars, label=label)
+        x = torch.from_numpy(tokens["x"]).to(momentum_dtype)
+        ref = _top_ref(tokens, events, n_tail)
+        self._ntokens = events["ntokens"]
+        if not self.use_ditop:
+            is_tail = tokens["position"] >= events["ntokens"].repeat(events["ntokens"]) - n_tail
+            self.extras = {
+                "lep_vec": x[is_tail].reshape(-1, n_tail, 4),
+                "lep_charge": lep_charge.to(torch.long),
+            }
+            x, scalars, ref = x[~is_tail], scalars[~is_tail], ref[~is_tail]
+            self._ntokens = events["ntokens"] - n_tail
+        # truth: the harder non-b subjet is the down quark (evaluation only)
+        self.extras["down_hard"] = torch.from_numpy(np.isin(events["tags"][:, 1], DOWN_TAGS)).long()
+        self.x, self.scalars, self.ref = x, scalars, ref
+        self.labels = torch.from_numpy(self._labels(events)).to(torch.long)
+        if self.charge_last and (self.use_ditop or self.include_pid):
+            self._move_charge_last()
+
+    def _move_charge_last(self):
+        s = self.scalars
+        charge = s.new_zeros(len(s))
+        if self.include_pid:
+            pid_charge_col = 7 if self.use_ditop else 5
+            charge = s[:, pid_charge_col].clone()
+            s = torch.cat([s[:, :pid_charge_col], s[:, pid_charge_col + 1 :]], dim=-1)
+        if self.use_ditop:
+            is_lepton = s[:, 6] != 0
+            charge[is_lepton] = s[is_lepton, 6]
+            s[:, 6] = is_lepton.to(s.dtype)
+        self.scalars = torch.cat([s, charge[:, None]], dim=-1)
 
 
-class VBFDataset(HEPTaggingDataset):
-    """
-    Dataset for VBF parton-level events.
-    """
-
-    CACHE_VERSION = 1
-    CACHE_PREFIX = "vbf"
+class DownTaggingDataset(TopTaggingDataset):
+    """Label 1 if the harder non-b subjet (in the top rest frame) has one of the parton tags
+    `tag` (down quarks)."""
 
     def __init__(
-        self,
-        length=-1,
-        use_cache=True,
+        self, tag=DOWN_TAGS, length=-1, pid=False, use_ditop=False, charge=True, charge_last=False
     ):
+        super().__init__(
+            length=length, pid=pid, use_ditop=use_ditop, charge=charge, charge_last=charge_last
+        )
+        self.tag = tag
+
+    def _labels(self, events):
+        return np.isin(events["tags"][:, 1], self.tag)
+
+
+class PolarizationDataset(TopTaggingDataset):
+    """Left- (label 0) against right-handed (label 1) hadronic tops, by default with the charges
+    last. charge_last=False keeps the layout of a down tagger without pseudoscalar stream."""
+
+    def __init__(self, length=-1, pid=False, use_ditop=False, charge_last=True, charge=True):
+        super().__init__(
+            length=length, pid=pid, use_ditop=use_ditop, charge=charge, charge_last=charge_last
+        )
+
+
+class PseudoscalarDataset(TokenDataset):
+    """CP-even against CP-odd ttH events, with H -> gamma gamma.
+
+    Scalars: [is_hadtop, is_subjet, sub0, sub1, sub2, is_toplep, is_lepton, is_higgs or
+    is_photon, photon0, photon1] (+ 5 PID features with pid, for constituents and photons), then
+    the C-odd charge column (lepton charge, and the constituent charges with pid).
+    """
+
+    BALANCE = True
+    TAIL = TAIL + ("higgs", "photon_leading", "photon_subleading")
+
+    def __init__(self, length=-1, pid=False):
         super().__init__(length=length)
-        self.use_cache = use_cache
+        self.include_pid = pid
 
-    def _cache_key_gen(self, target_length):
-        cache_key = (
-            self.CACHE_VERSION,
-            self._normalize_filename_key(self.filename),
-            tuple(self.split_fracs),
-            self.seed,
-            bool(self.shuffle),
-            target_length,
+    def _read(self, path):
+        return read_events(path, tail=self.TAIL)
+
+    def _build(self, events, tokens, network_dtype, momentum_dtype):
+        n_tail = len(self.TAIL)
+        toplep, lepton, higgs, photon0, photon1 = (
+            _tail_tokens(tokens, n_tail, i) for i in range(n_tail)
         )
-        return cache_key
+        scalars = _top_category(tokens, events, n_tail, 10, network_dtype)
+        scalars[toplep, 5] = 1
+        scalars[lepton, 6] = 1
+        for col, photon in enumerate([photon0, photon1]):
+            scalars[photon, 7] = 1
+            scalars[photon, 8 + col] = 1
+        scalars[higgs, 7] = 1
 
-    def _get_parquet(self):
-        files = {key: torch.from_numpy(np.load(value)) for key, value in self.filename.items()}
-        num_events = sum(len(v) for v in files.values())
-        return files, num_events
+        charge = scalars.new_zeros(len(scalars), 1)
+        if self.include_pid:
+            pid = tokens["pid"].copy()
+            pid[torch.cat([photon0, photon1]).numpy()] = PHOTON_PID
+            rows = _pid_features(pid, network_dtype)
+            scalars = torch.cat([scalars, rows[:, 1:]], dim=-1)
+            charge = rows[:, :1]
+        charge[lepton, 0] = torch.from_numpy(events["lep_charge"]).to(network_dtype)
+        scalars = torch.cat([scalars, charge], dim=-1)
 
-    def _fill_data(self, parquet, network_dtype, momentum_dtype):
-        data_list = []
-        indices = []
-        label_counts = 0
+        # the Higgs is its own reference and that of the photons
+        self.ref = _top_ref(tokens, events, n_tail)
+        higgs_position = torch.from_numpy(events["ntokens"] - n_tail + 2).to(torch.int32)
+        for token in [higgs, photon0, photon1]:
+            self.ref[token] = higgs_position
 
-        offset = 0
-        for lbl, p in parquet.items():
-            p, perm = self._shuffle_data(p, evt_types=len(parquet))
-            if offset > 0:
-                perm = [pm + offset for pm in perm]
-            for event in p:
-                graph = self._build_event_graph(event, lbl, network_dtype, momentum_dtype)
-                label_counts += graph.label
-                data_list.append(graph)
-            indices += perm
-            offset += len(data_list)
-        data_list, _ = self._shuffle_data(data_list)
+        self.x = torch.from_numpy(tokens["x"]).to(momentum_dtype)
+        self.scalars = scalars
+        self.labels = torch.from_numpy(events["label"]).to(torch.long)
+        self._ntokens = events["ntokens"]
 
-        LOGGER.info(
-            f"[{self.__class__.__name__}] label=1 ratio: {label_counts}/{len(data_list)} = {label_counts / len(data_list)}"
+
+class VBFDataset(TokenDataset):
+    """VBF parton-level events of three particles each, one file per label."""
+
+    def _read(self, path):
+        x = np.load(path)
+        return {"x": x.reshape(-1, 4), "ntokens": np.full(len(x), x.shape[1])}
+
+    def _build(self, events, tokens, network_dtype, momentum_dtype):
+        n_particles = events["ntokens"][0]
+        self.x = torch.from_numpy(tokens["x"]).to(momentum_dtype)
+        self.scalars = torch.eye(n_particles, dtype=network_dtype).repeat(len(events["ntokens"]), 1)
+        self.labels = torch.from_numpy(events["label"]).to(torch.long)
+        self._ntokens = events["ntokens"]
+
+
+# tt_smeft scalars: [category(6), pid(5), charge, eps, nr], with the CP-odd columns last.
+# category = [is_hadtop, is_subjet, is_b, down, is_toplep, is_lepton], down = probability that
+# the token's non-b subjet is the down quark
+# pid = [is_electron, is_muon, is_photon, is_charged_hadron, is_neutral_hadron]
+TTSMEFT_N_CATEGORY = 6
+TTSMEFT_N_PID = 5
+TTSMEFT_N_GLOBAL_PS = 2  # eps_tensor, spin_correlation_nr
+
+
+class TTSmeftLayout(NamedTuple):
+    """Column layout of the tt_smeft ``scalars`` tensor.
+
+    The last ``n_ps`` columns are the CP-odd ones: the charge (C-odd), then the jet-level
+    pseudoscalars (P-odd, with ``include_ps``).
+    """
+
+    pid: bool = False
+    include_ps: bool = False
+
+    @property
+    def n_scalars(self):
+        return TTSMEFT_N_CATEGORY + (TTSMEFT_N_PID if self.pid else 0)
+
+    @property
+    def n_ps(self):
+        # the charge column always holds the lepton charge, and the constituent charges with pid
+        return 1 + (TTSMEFT_N_GLOBAL_PS if self.include_ps else 0)
+
+    @property
+    def n_cols(self):
+        return self.n_scalars + self.n_ps
+
+    @property
+    def charge_col(self):
+        return self.n_scalars
+
+
+class TTSmeftDataset(TokenDataset):
+    """CP-even vs CP-odd SMEFT ttbar events.
+
+    The down column of the non-b subjets and their constituents holds the probability that the
+    subjet is the down quark: 1/0 for the true tag, or a down-tagger output set with
+    `set_down_prob`. The pseudoscalars are the expectation over the two down candidates.
+    """
+
+    BALANCE = True
+
+    def __init__(self, length=-1, pid=False, include_ps=False):
+        super().__init__(length=length)
+        self.include_pid = pid
+        self.include_ps = include_ps
+        self.layout = TTSmeftLayout(pid=pid, include_ps=include_ps)
+
+    def _read(self, path):
+        return read_events(path)
+
+    def set_down_prob(self, p):
+        """Set the probability per event that the harder non-b subjet is the down quark."""
+        p = p.to(self.scalars.dtype)
+        p_token = p.repeat_interleave(self._ntokens_t)
+        self.scalars[:, 3] = torch.where(
+            self._harder, p_token, torch.where(self._softer, 1 - p_token, 0)
+        )
+        if self.include_ps:
+            ps = p[:, None] * self._ps[0] + (1 - p[:, None]) * self._ps[1]
+            self.scalars[:, -TTSMEFT_N_GLOBAL_PS:] = ps.repeat_interleave(self._ntokens_t, dim=0)
+
+    def _build(self, events, tokens, network_dtype, momentum_dtype):
+        layout, offsets, n_tail = self.layout, tokens["offsets"], len(TAIL)
+        toplep, lepton = _tail_tokens(tokens, n_tail, 0), _tail_tokens(tokens, n_tail, 1)
+        scalars = _top_category(tokens, events, n_tail, layout.n_cols, network_dtype)
+        # columns 3, 4 of _top_category mark the harder and softer non-b subjet
+        self._harder, self._softer = scalars[:, 3] == 1, scalars[:, 4] == 1
+        scalars[:, 4] = 0
+        scalars[toplep, 4] = 1
+        scalars[lepton, 5] = 1
+
+        if layout.pid:
+            rows = _pid_features(tokens["pid"], network_dtype)
+            scalars[:, TTSMEFT_N_CATEGORY : TTSMEFT_N_CATEGORY + TTSMEFT_N_PID] = rows[:, 1:]
+            scalars[:, layout.charge_col] = rows[:, 0]
+        lep_charge = torch.from_numpy(events["lep_charge"])
+        scalars[lepton, layout.charge_col] = lep_charge.to(network_dtype)
+
+        x = torch.from_numpy(tokens["x"]).to(momentum_dtype)
+        if layout.include_ps:
+            # jet-level, so the same value on every token of an event; (down harder, down softer)
+            self._ps = []
+            for slot in (2, 3):
+                args = (x[offsets[:-1]], x[toplep], x[offsets[:-1] + slot], x[lepton])
+                charge = lep_charge.to(momentum_dtype)
+                self._ps.append(
+                    torch.stack(
+                        [
+                            eps_tensor(*args, dtype=momentum_dtype),
+                            spin_correlation_nr(*args, charge, dtype=momentum_dtype),
+                        ],
+                        dim=-1,
+                    ).to(network_dtype)
+                )
+
+        self.x, self.scalars = x, scalars
+        self.ref = _top_ref(tokens, events, n_tail)
+        self.labels = torch.from_numpy(events["label"]).to(torch.long)
+        self._ntokens = events["ntokens"]
+        self._ntokens_t = torch.from_numpy(events["ntokens"])
+        self.down_harder = torch.from_numpy(np.isin(events["tags"][:, 1], DOWN_TAGS))
+        self.set_down_prob(self.down_harder)
+
+
+def ttsmeft_graph_to_downtag_input(graph, layout, pid, network_dtype, charge=True, use_ditop=False):
+    """Rebuild a tt_smeft graph with the true down tag in the format the down-tagger was trained
+    on: the down column replaced by harder/softer non-b subjet, the leptonic top and the lepton
+    as tokens with use_ditop and attached as lep_vec / lep_charge otherwise."""
+    if pid and not layout.pid:
+        raise ValueError(
+            "Down-tagger expects PID features, but the tt_smeft graph was built "
+            "without them. Load the tt_smeft dataset with pid=True."
         )
 
-        return data_list, indices
+    x, scalars = graph.x, graph.scalars
+    is_down, is_toplep, is_lep = scalars[:, 3] == 1, scalars[:, 4] == 1, scalars[:, 5] == 1
+    is_light = (scalars[:, [0, 2, 4, 5]] == 0).all(dim=-1)  # non-b subjets and constituents
 
-    def _build_event_graph(self, event, label, network_dtype, momentum_dtype):
-        fourmomenta = event.to(dtype=momentum_dtype)
-        category = torch.eye(3, dtype=network_dtype)
-        return Data(x=fourmomenta, scalars=category, label=label)
+    # token 2 is the harder non-b subjet
+    down_is_leading = bool(is_down[2])
+    harder = is_down if down_is_leading else is_light & ~is_down
+
+    lep_charge = scalars[is_lep, layout.charge_col].to(network_dtype)
+    new_category = torch.zeros(scalars.shape[0], 7 if use_ditop else 5, dtype=network_dtype)
+    new_category[:, :3] = scalars[:, :3]
+    new_category[:, 3] = harder.to(network_dtype)
+    new_category[:, 4] = (is_light & ~harder).to(network_dtype)
+    if use_ditop:
+        new_category[is_toplep, 5] = 1
+        new_category[is_lep, 6] = lep_charge
+
+    keep = torch.ones_like(is_lep) if use_ditop else ~(is_toplep | is_lep)
+    new_scalars = new_category[keep]
+    if pid:
+        pid_lo = TTSMEFT_N_CATEGORY
+        # the down-tagger's pid encoding leads with the charge, which is 0 on the lepton
+        pid_charge = torch.where(is_lep, 0, scalars[:, layout.charge_col])
+        new_scalars = torch.cat(
+            [new_scalars]
+            + ([pid_charge[keep, None].to(network_dtype)] if charge else [])
+            + [scalars[keep, pid_lo : pid_lo + TTSMEFT_N_PID].to(network_dtype)],
+            dim=-1,
+        )
+
+    downtag_graph = Data(
+        x=x[keep],
+        ref=graph.ref[keep],
+        scalars=new_scalars,
+        label=torch.tensor([float(down_is_leading)], dtype=network_dtype),
+        lep_vec=torch.cat([x[is_toplep], x[is_lep]], dim=0),
+        lep_charge=lep_charge,
+    )
+    return downtag_graph, down_is_leading

@@ -1,6 +1,9 @@
 import glob
+import json
 import os
+import re
 import time
+from collections import defaultdict
 
 import numpy as np
 import torch
@@ -11,15 +14,26 @@ from torch_geometric.loader import DataLoader
 from experiments.base_experiment import BaseExperiment
 from experiments.logger import LOGGER
 from experiments.mlflow import log_mlflow
+from experiments.tagging.asymmetry import asymmetry, pooled_asymmetry
 from experiments.tagging.dataset import (
     DownTaggingDataset,
     PolarizationDataset,
     PseudoscalarDataset,
+    TaggingDataset,
+    TTSmeftDataset,
+    TTSmeftLayout,
     VBFDataset,
+    ttsmeft_graph_to_downtag_input,
 )
-from experiments.tagging.embedding import embed_tagging_data, get_num_tagging_features
-from experiments.tagging.likelihood import get_polarization
+from experiments.tagging.embedding import (
+    embed_tagging_data,
+    get_num_parity_odd_tagging_features,
+    get_num_tagging_features,
+)
+from experiments.tagging.likelihood import get_polarization, probe_report
 from experiments.tagging.plots import plot_mixer
+
+PSEUDOSCALAR_MODELS = ("LGATr", "LGATrSlimPseudo")
 
 
 class TaggingExperiment(BaseExperiment):
@@ -33,30 +47,53 @@ class TaggingExperiment(BaseExperiment):
         self.data = None
         self.num_outputs = 1  # binary classification
         self.extra_scalars = 0  # number of extra scalar input features per particle
+        self.ps_task = False  # whether the task requires ps channels
+        self.n_ps_data = 0  # parity-odd columns the dataset appends to `scalars`
+        self.n_ps = 0  # pseudoscalar channels fed to the network, set in init_physics
+        self.split_parity = False  # route the parity-odd inputs to the pseudoscalar stream
 
     def init_physics(self):
-        modelname = self.cfg.model.net._target_.rsplit(".", 1)[-1]
+        self.modelname = self.cfg.model.net._target_.rsplit(".", 1)[-1]
         self.momentum_dtype = torch.float64 if self.cfg.data.momentum_float64 else torch.float32
 
         self.cfg.model.out_channels = self.num_outputs
-        if modelname in ["LGATr", "LGATrSlim", "LGATrSlimPseudo"]:
+
+        n_tagging = get_num_tagging_features(self.cfg.data.tagging_features)
+        n_tagging_odd = get_num_parity_odd_tagging_features(self.cfg.data.tagging_features)
+        if not self.ps_task:
+            assert self.n_ps_data == 0, "No pseudoscalars can be given unless ps_task is set"
+            self.n_ps = 0
+        elif self.modelname in PSEUDOSCALAR_MODELS:
+            # the parity-odd tagging features join the dataset pseudoscalars
+            self.split_parity = True
+            self.n_ps = self.n_ps_data + n_tagging_odd
+            n_tagging -= n_tagging_odd
+        else:
+            # no pseudoscalar stream, so they travel as scalars and parity is broken
+            LOGGER.info(f"{self.modelname} takes no pseudoscalar inputs, passing them as scalars.")
+            self.extra_scalars += self.n_ps_data
+            self.n_ps, self.n_ps_data = 0, 0
+
+        if self.modelname in ["LGATr", "LGATrSlim", "LGATrSlimPseudo"]:
             # Lorentz-equivariance by internal representations
-            in_s_channels = self.extra_scalars
-            in_s_channels += get_num_tagging_features(
-                tagging_features=self.cfg.data.tagging_features
-            )
+            in_s_channels = self.extra_scalars + n_tagging
             self.cfg.model.net.in_s_channels = 0 if self.cfg.model.mean_aggregation else 1
             self.cfg.model.net.in_s_channels += in_s_channels
+            if self.modelname == "LGATr":
+                # 1 mv for the vector, n_ps mv for the pseudoscalars
+                self.cfg.model.net.in_mv_channels = max(1, self.n_ps)
+            elif self.modelname == "LGATrSlimPseudo":
+                self.cfg.model.net.in_p_channels = self.n_ps
 
             # doesn't affect results and never needed
             self.cfg.data.boost_jet = False
-        elif modelname == "Transformer":
+        elif self.modelname == "Transformer":
             # Non-equivariant or canonicalization
             self.cfg.model.in_channels = 7 + self.extra_scalars
             if self.cfg.model.add_fourmomenta_backbone:
                 self.cfg.model.in_channels += 4
 
-            if modelname == "Transformer":
+            if self.modelname == "Transformer":
                 self.cfg.model.in_channels += 0 if self.cfg.model.mean_aggregation else 1
 
             # decide which entries to use for the framesnet
@@ -70,7 +107,7 @@ class TaggingExperiment(BaseExperiment):
                 # not allowed, because the network is not Lorentz-equivariant
                 self.cfg.data.boost_jet = False
         else:
-            raise NotImplementedError(f"Model {modelname} not implemented")
+            raise NotImplementedError(f"Model {self.modelname} not implemented")
 
     def init_data(self):
         raise NotImplementedError
@@ -144,6 +181,9 @@ class TaggingExperiment(BaseExperiment):
                 scalars,
                 ptr,
                 self.cfg.data,
+                n_ps=self.n_ps_data,
+                split_parity=self.split_parity,
+                ref=self._batch_ref(batch),
             )
             self.model.init_standardization(embedding["fourmomenta"], embedding["ptr"])
 
@@ -209,9 +249,29 @@ class TaggingExperiment(BaseExperiment):
                 self.results[set_label] = self._evaluate_single(
                     loader_dict[set_label], set_label, mode="eval"
                 )
+        self._evaluate_physics()
 
         if self.cfg.evaluation.save_labels:
             self._save_metrics()
+        if self.cfg.save:
+            self._save_results()
+
+    def _evaluate_physics(self):
+        """Task-specific evaluation of self.results, before they are saved."""
+
+    def _save_results(self):
+        """Write the scalar metrics and event counts of the evaluated sets to results_<idx>.json."""
+        out = {"n_events": {s: len(getattr(self, f"data_{s}")) for s in ["train", "val", "test"]}}
+        for set_label, res in self.results.items():
+            out[set_label] = {
+                k: float(v) for k, v in res.items() if isinstance(v, (int, float, np.number))
+            } | res.get("extra", {})
+        path = os.path.join(
+            self.cfg.run_dir, f"results_{self.cfg.run_idx}{self._eval_output_suffix()}.json"
+        )
+        with open(path, "w") as f:
+            json.dump(out, f, indent=1)
+        LOGGER.info(f"Saved results in {path}")
 
     @torch.no_grad()
     def _evaluate_single(self, loader, title, mode, step=None):
@@ -226,15 +286,32 @@ class TaggingExperiment(BaseExperiment):
 
         # predictions
         labels_true, labels_predict = [], []
+        trackers = defaultdict(list)
         self.model.eval()
+        # a summed head is evaluated split so that the CP-odd channel p is available on its own
+        split_sum = mode == "eval" and self.model.output == "sum"
+        if split_sum:
+            self.model.output = "split"
         for batch in loader:
-            y_pred, label, _, _ = self._get_ypred_and_label(batch)
+            y_pred, label, tracker, _ = self._get_ypred_and_label(batch, val=(mode == "val"))
             labels_true.append(label)
             labels_predict.append(y_pred)
+            for key, value in tracker.items():
+                trackers[key].append(value.detach().float().flatten().cpu())
         labels_true, labels_predict = (
             torch.cat(labels_true).cpu().float(),
             torch.cat(labels_predict).cpu().float(),
         )
+        if split_sum:
+            self.model.output = "sum"
+            logits_split = labels_predict
+            labels_predict = labels_predict.sum(dim=-1)
+
+        # tracked model outputs: mean and std over the full dataset
+        for key, values in trackers.items():
+            values = torch.cat(values)
+            metrics[key] = values.mean().item()
+            metrics[f"{key}_std"] = values.std().item() if values.numel() > 1 else 0.0
 
         # bce loss
         metrics["loss"] = self.loss(labels_predict, labels_true).item()
@@ -262,6 +339,9 @@ class TaggingExperiment(BaseExperiment):
             if self.model.output == "split":
                 metrics["labels_predict_scalar"] = labels_predict_scalar
                 metrics["labels_predict_pseudo"] = labels_predict_pseudo
+            elif split_sum:
+                metrics["labels_predict_scalar"] = torch.sigmoid(logits_split[:, 0])
+                metrics["labels_predict_pseudo"] = torch.sigmoid(logits_split[:, 1])
 
         labels_true, labels_predict = labels_true.numpy(), labels_predict.numpy()
         if self.model.output == "split":
@@ -337,8 +417,15 @@ class TaggingExperiment(BaseExperiment):
             )
         return metrics
 
+    def _eval_output_suffix(self):
+        if not self.cfg.train and self.cfg.data.dataset_eval:
+            return f"_{self.cfg.data.dataset_eval}"
+        return ""
+
     def _save_metrics(self):
-        metric_path = os.path.join(self.cfg.run_dir, f"preds_{self.cfg.run_idx}")
+        metric_path = os.path.join(
+            self.cfg.run_dir, f"preds_{self.cfg.run_idx}{self._eval_output_suffix()}"
+        )
         os.makedirs(metric_path, exist_ok=True)
         LOGGER.info(f"Saving labels in {metric_path}")
 
@@ -349,7 +436,9 @@ class TaggingExperiment(BaseExperiment):
         np.savetxt(file, labels)
 
     def plot(self):
-        plot_path = os.path.join(self.cfg.run_dir, f"plots_{self.cfg.run_idx}")
+        suffix = self._eval_output_suffix()
+        plot_path = os.path.join(self.cfg.run_dir, f"plots_{self.cfg.run_idx}{suffix}")
+        preds_path = os.path.join(self.cfg.run_dir, f"preds_{self.cfg.run_idx}{suffix}")
         os.makedirs(plot_path, exist_ok=True)
         title = f"{type(self.model.net).__name__} - {self.cfg.exp_name}"
         LOGGER.info(f"Creating plots in {plot_path}")
@@ -373,9 +462,11 @@ class TaggingExperiment(BaseExperiment):
             plot_dict["grad_norm"] = torch.stack(self.grad_norm_train).cpu()
             plot_dict["grad_norm_frames"] = torch.stack(self.grad_norm_frames).cpu()
             plot_dict["grad_norm_net"] = torch.stack(self.grad_norm_net).cpu()
-            for key, value in self.train_metrics.items():
-                plot_dict[key] = value
-        plot_mixer(self.cfg, plot_path, title, plot_dict)
+            for metric_dict in [self.train_metrics, self.val_metrics]:
+                for key, value in metric_dict.items():
+                    if len(value) > 0:
+                        plot_dict[key] = value
+        plot_mixer(self.cfg, plot_path, preds_path, title, plot_dict)
 
     def _init_loss(self):
         if self.model.output == "split":
@@ -401,6 +492,18 @@ class TaggingExperiment(BaseExperiment):
         else:
             metrics = self._evaluate_single(self.val_loader, "val", mode="val", step=step)
         self.val_loss.append(metrics["loss"])
+        for key in self.val_metrics:
+            if key in metrics:
+                self.val_metrics[key].append(metrics[key])
+
+        LOGGER.info(
+            ("Validation before training: " if step < 0 else f"Validation at iteration {step}: ")
+            + ", ".join(
+                f"{key}={value:.6f}"
+                for key, value in metrics.items()
+                if isinstance(value, (int, float))
+            )
+        )
         return metrics["loss"]
 
     def _batch_loss(self, batch):
@@ -418,17 +521,23 @@ class TaggingExperiment(BaseExperiment):
         label = batch.label.to(self.dtype)
         return fourmomenta, scalars, ptr, label
 
-    def _get_ypred_and_label(self, batch):
+    def _batch_ref(self, batch):
+        return batch.get("ref")
+
+    def _get_ypred_and_label(self, batch, val=False):
         fourmomenta, scalars, ptr, label, *_ = self._extract_batch(batch)
         embedding = embed_tagging_data(
             fourmomenta,
             scalars,
             ptr,
             self.cfg.data,
+            n_ps=self.n_ps_data,
+            split_parity=self.split_parity,
+            ref=self._batch_ref(batch),
         )
         embedding["num_graphs"] = label.shape[0]
         embedding["label"] = label
-        y_pred, tracker, frames = self.model(embedding)
+        y_pred, tracker, frames = self.model(embedding, val)
         if isinstance(self.loss, torch.nn.BCEWithLogitsLoss) and self.model.output != "split":
             y_pred = y_pred[:, 0]
         return y_pred, label, tracker, frames
@@ -442,11 +551,11 @@ class TaggingExperiment(BaseExperiment):
             "gamma_mean": [],
             "gamma_max": [],
         }
-        if "LGATr" in self.cfg.model.net._target_:
-            metrics["scalar_output_0"] = []
-            metrics["scalar_output_1"] = []
-            metrics["pseudoscalar_output_0"] = []
-            metrics["pseudoscalar_output_1"] = []
+        if self.modelname in PSEUDOSCALAR_MODELS:
+            for output in ["scalar", "pseudoscalar"]:
+                for lbl in [0, 1]:
+                    metrics[f"{output}_output_{lbl}"] = []
+                    metrics[f"{output}_output_{lbl}_std"] = []
 
         return metrics
 
@@ -457,9 +566,16 @@ class DownTaggingExperiment(TaggingExperiment):
         self.num_outputs = 1
         self.extra_scalars = 5  # Differentiate between fatjet, subjets, and constituents
         if self.cfg.data.pid:
-            self.extra_scalars += 6
+            self.extra_scalars += 5 + int(self.cfg.data.charge)
         if self.cfg.data.use_ditop:
             self.extra_scalars += 2
+        # with LGATrSlimPseudo the C-odd charge and the P-odd tagging features go to the
+        # pseudoscalar stream, to test for CP-odd information in the down tag
+        if self.cfg.model.net._target_.endswith("LGATrSlimPseudo"):
+            assert not self.cfg.data.use_ditop, "the evaluation reads the lepton charge from col 6"
+            self.ps_task = True
+            self.n_ps_data = int(self.cfg.data.pid and self.cfg.data.charge)
+            self.extra_scalars -= self.n_ps_data
 
     def _init_experiment(self, run_name_add=None):
         run_name_add = [
@@ -472,6 +588,17 @@ class DownTaggingExperiment(TaggingExperiment):
             f"bs={self.cfg.training.batchsize}",
         ]
         super()._init_experiment(run_name_add=run_name_add)
+
+    def _eval_output_suffix(self):
+        suffix = super()._eval_output_suffix()
+        if suffix == "_ttsmeft":
+            # one labels.txt per tt_smeft task, read by tt_smeft via data.downtag_labels
+            suffix += f"_{self.cfg.data.ttsmeft.lbl_0}"
+            if self.cfg.data.ttsmeft.c_value != 2.6:  # e.g. 0.1 -> _c0p1
+                suffix += f"_c{self.cfg.data.ttsmeft.c_value}".replace(".", "p")
+            if self.cfg.data.ttsmeft.split != "test":
+                suffix += f"_{self.cfg.data.ttsmeft.split}"
+        return suffix
 
     def _extract_batch(self, batch):
         batch = batch.to(self.device)
@@ -487,6 +614,9 @@ class DownTaggingExperiment(TaggingExperiment):
         if not self.cfg.train and self.cfg.data.dataset_eval == "polarized":
             pol_experiment = PolarizationExperiment
             pol_experiment.init_data(self, mode=mode)
+
+        elif not self.cfg.train and self.cfg.data.dataset_eval == "ttsmeft":
+            self._init_ttsmeft_eval_data()
 
         else:
             if self.data:
@@ -513,13 +643,67 @@ class DownTaggingExperiment(TaggingExperiment):
                 "tag": self.cfg.data.tag,
                 "pid": self.cfg.data.pid,
                 "use_ditop": self.cfg.data.use_ditop,
-                "use_cache": self.cfg.data.use_cache,
+                "charge": self.cfg.data.charge,
+                "charge_last": self.ps_task,
             }
             self._init_data(DownTaggingDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
-    def evaluate(self):
-        super().evaluate()
+    def _init_ttsmeft_eval_data(self):
+        if self.data:
+            return
 
+        ttsmeft_cfg = self.cfg.data.ttsmeft
+        assert not self.ps_task, "the tt_smeft conversion builds the charge-first layout"
+        data_dir = ttsmeft_cfg.data_dir
+
+        filenames = TTSmeftExperiment._select_filenames(
+            data_dir,
+            ttsmeft_cfg.mass_window,
+            ttsmeft_cfg.lbl_0,
+            ttsmeft_cfg.bsm,
+            ttsmeft_cfg.c_value,
+        )
+
+        dataset_kwargs = TTSmeftExperiment._dataset_kwargs(ttsmeft_cfg)
+        ttsmeft_dataset = TTSmeftDataset(**dataset_kwargs)
+        ttsmeft_dataset.load_data(
+            data_dir,
+            filenames,
+            network_float64=self.cfg.use_float64,
+            momentum_float64=self.cfg.data.momentum_float64,
+        )
+
+        network_dtype = torch.float64 if self.cfg.use_float64 else torch.float32
+        split = ttsmeft_cfg.split
+        if split == "all":
+            idx = torch.arange(len(ttsmeft_dataset))
+        else:
+            idx = ttsmeft_dataset.get_subset(split)
+        downtag_graphs = [
+            ttsmeft_graph_to_downtag_input(
+                ttsmeft_dataset[i],
+                ttsmeft_dataset.layout,
+                self.cfg.data.pid,
+                network_dtype,
+                charge=self.cfg.data.charge,
+                use_ditop=self.cfg.data.use_ditop,
+            )[0]
+            for i in idx.tolist()
+        ]
+
+        downtag_dataset = TaggingDataset(downtag_graphs)
+
+        self.data = downtag_dataset
+        self.data_train = downtag_dataset
+        self.data_val = downtag_dataset
+        self.data_test = downtag_dataset
+
+        LOGGER.info(
+            f"Built {len(downtag_graphs)} down-tagger-compatible events from the fixed tt_smeft "
+            f"{split} split ({data_dir}) for evaluation with data.dataset_eval='ttsmeft'"
+        )
+
+    def _evaluate_physics(self):
         for set_label in self.cfg.evaluation.eval_set:
             pol = get_polarization(self.results[set_label], exp="downtagging")
             LOGGER.info(
@@ -533,6 +717,37 @@ class DownTaggingExperiment(TaggingExperiment):
             self.results[set_label]["pol_r"] = pol["pol_r"]
             self.results[set_label]["score_l"] = pol["score_l"][-1]
             self.results[set_label]["score_r"] = pol["score_r"][-1]
+            self.results[set_label]["beta_l"] = pol["beta_l"]
+            self.results[set_label]["beta_r"] = pol["beta_r"]
+            self.results[set_label]["cos_true_l"] = pol["cos_true_l"]
+            self.results[set_label]["cos_true_r"] = pol["cos_true_r"]
+
+            probe = probe_report(self.results[set_label])
+            at = [
+                int(np.argmin(np.abs(np.array(probe["efficiencies"]) - e))) for e in (0.2, 0.5, 1)
+            ]
+            self.results[set_label]["extra"] = {
+                "probe": probe,
+                "pol_l": {
+                    str(pol["efficiency"][i]): float(pol["pol_l"][i]) for i in (0, 375, 1000)
+                },
+                "pol_r": {
+                    str(pol["efficiency"][i]): float(pol["pol_r"][i]) for i in (0, 375, 1000)
+                },
+            }
+            for name in ["net", "kinematic", "soft", "truth"]:
+                LOGGER.info(
+                    f"Probe {name} ({set_label}), efficiency 0.2 / 0.5 / 1.0: "
+                    + " ".join(
+                        f"{key}=" + "/".join(f"{probe[name][key][i]:.3f}" for i in at)
+                        for key in probe[name]
+                        if not key.endswith("_err") and key != "beta_truth_raw"
+                    )
+                )
+
+        # labels.txt holds the down tags that the tt_smeft evaluation reads (data.downtag_labels)
+        if self.cfg.data.dataset_eval == "ttsmeft" and not self.cfg.evaluation.save_labels:
+            self._save_metrics()
 
     @torch.no_grad()
     def _evaluate_single(self, loader, title, mode, step=None):
@@ -551,9 +766,12 @@ class DownTaggingExperiment(TaggingExperiment):
             [],
             [],
         )
+        down_hard = []
         self.model.eval()
         for batch in loader:
             fourmomenta, scalars, _, _, lep_vec, lep_charge = self._extract_batch(batch)
+            # the true down tag; L/R datasets carry it separately, the others have it as label
+            down_hard.append(getattr(batch, "down_hard", batch.label).flatten().cpu().double())
             mask_hadtop, mask_b, mask_hard, mask_soft = (
                 (scalars[:, 0] == 1),
                 (scalars[:, 1] + scalars[:, 2] == 2),
@@ -605,6 +823,7 @@ class DownTaggingExperiment(TaggingExperiment):
                 mom_lep,
                 charge,
             )
+            momenta["down_hard"] = torch.cat(down_hard)
 
         results = metrics | momenta
 
@@ -617,9 +836,12 @@ class PolarizationExperiment(TaggingExperiment):
         self.num_outputs = 1
         self.extra_scalars = 5  # Differentiate between fatjet, subjets, and constituents
         if self.cfg.data.pid:
-            self.extra_scalars += 6
+            self.extra_scalars += 5
         if self.cfg.data.use_ditop:
             self.extra_scalars += 2
+        # L and R are CP mirrors, the trailing charge column is C-odd
+        self.ps_task = True
+        self.n_ps_data = int(self.cfg.data.pid or self.cfg.data.use_ditop)
 
     def _init_experiment(self, run_name_add=None):
         run_name_add = [
@@ -667,24 +889,316 @@ class PolarizationExperiment(TaggingExperiment):
             "length": getattr(self.cfg.data, "length", None),
             "pid": self.cfg.data.pid,
             "use_ditop": self.cfg.data.use_ditop,
-            "use_cache": self.cfg.data.use_cache,
+            # the down tagger also evaluates on this data (dataset_eval=polarized), in its own layout
+            "charge_last": self.ps_task,
         }
+        if isinstance(self, DownTaggingExperiment):
+            dataset_kwargs["charge"] = self.cfg.data.charge
         self._init_data(PolarizationDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
-    def evaluate(self):
-        super().evaluate()
-
+    def _evaluate_physics(self):
         for set_label in self.cfg.evaluation.eval_set:
             pol = get_polarization(self.results[set_label], exp="polarization")
             LOGGER.info(
                 f"Degree of polarization: "
-                f"{pol['pol_l'][-1]:.3f} (L) and {pol['pol_r'][-1]:.3f} (R) at efficiency {pol['efficiency'][-1]}"
+                f"{pol['pol_l'][-1]:.3f} (L) and {pol['pol_r'][-1]:.3f} (R) at efficiency "
+                f"{pol['efficiency'][-1]}"
             )
             self.results[set_label]["efficiencies"] = pol["efficiency"]
             self.results[set_label]["pol_l"] = pol["pol_l"]
             self.results[set_label]["pol_r"] = pol["pol_r"]
             self.results[set_label]["score_l"] = pol["score_l"][-1]
             self.results[set_label]["score_r"] = pol["score_r"][-1]
+            self.results[set_label]["beta_l"] = pol["beta_l"]
+            self.results[set_label]["beta_r"] = pol["beta_r"]
+
+
+class TTSmeftExperiment(TaggingExperiment):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.layout = TTSmeftLayout(pid=self.cfg.data.pid, include_ps=self.cfg.data.pseudoscalars)
+        self.extra_scalars = self.layout.n_scalars
+        self.ps_task = True
+        self.n_ps_data = self.layout.n_ps
+        assert self.cfg.data.max_particles is None, (
+            "data.max_particles crops the leptonic top and the lepton, set it to null"
+        )
+        assert self.cfg.data.down_tag in ("truth", "hard", "soft", "mix"), (
+            f"Unknown data.down_tag '{self.cfg.data.down_tag}' (expected truth, hard, soft or mix)"
+        )
+        assert (self.cfg.data.down_tag == "truth") == (self.cfg.data.downtag_labels is None), (
+            "data.down_tag=hard|soft|mix needs data.downtag_labels, data.down_tag=truth none"
+        )
+        assert self.cfg.data.down_tag != "mix" or (
+            not self.cfg.train and "test" in self.cfg.evaluation.eval_set
+        ), "data.down_tag=mix only evaluates, with train=false and test in evaluation.eval_set"
+
+        # `_cpflip_batch` relabels the CP-conjugate copy as the opposite class
+        if self.cfg.data.cpflip_batch and (
+            self.cfg.data.lbl_0 != "neg" or self.cfg.data.bsm != "im"
+        ):
+            raise ValueError(
+                "data.cpflip_batch=true is only valid for lbl_0='neg' with bsm='im', where the "
+                "two classes are exact CP mirror images. Got "
+                f"lbl_0='{self.cfg.data.lbl_0}', bsm='{self.cfg.data.bsm}'."
+            )
+
+    @staticmethod
+    def _dataset_kwargs(cfg_data):
+        """Dataset options that define the tt_smeft graphs."""
+        return {
+            "length": cfg_data.length,
+            "pid": cfg_data.pid,
+            "include_ps": cfg_data.pseudoscalars,
+        }
+
+    def _init_experiment(self, run_name_add=None):
+        run_name_add = [
+            "dataset=ttsmeft",
+            f"mass={self.cfg.data.mass_window}",
+            f"data={'all' if self.cfg.data.length == -1 else self.cfg.data.length}",
+            f"lr={self.cfg.training.lr}",
+            f"opt={self.cfg.training.optimizer}",
+            f"bs={self.cfg.training.batchsize}",
+        ]
+        super()._init_experiment(run_name_add=run_name_add)
+
+    @staticmethod
+    def _select_filenames(data_dir, mass_window, lbl_0, bsm, c_value=None):
+        if mass_window == "strict":
+            top_window = "165_190"
+        elif mass_window == "loose":
+            top_window = "120_220"
+        else:
+            raise ValueError(f"Unknown mass window definition '{mass_window}'")
+
+        all_files = sorted(
+            glob.glob(os.path.join(data_dir, f"tt_ctg_*_{top_window}_train*.parquet"))
+        )
+
+        def _coeffs(filename):
+            m = re.search(
+                r"_re_(-?[\d]+(?:p[\d]+)?)_im_(-?[\d]+(?:p[\d]+)?)_", os.path.basename(filename)
+            )
+            if m is None:
+                return None, None
+            return float(m.group(1).replace("p", ".")), float(m.group(2).replace("p", "."))
+
+        if bsm not in ("re", "im", "mix"):
+            raise ValueError(
+                f"Unknown type for tt SMEFT data '{bsm}' (expected 're', 'im', or 'mix')"
+            )
+
+        def _select(sign):
+            """Files whose active coefficient(s) have the given sign and |c| == c_value."""
+            selected = []
+            for f in all_files:
+                re_c, im_c = _coeffs(f)
+                if re_c is None:
+                    continue
+                if bsm == "re":
+                    active, inactive = (re_c,), (im_c,)
+                elif bsm == "im":
+                    active, inactive = (im_c,), (re_c,)
+                else:
+                    active, inactive = (re_c, im_c), ()
+                if any(a == 0 for a in active) or any(sign * a < 0 for a in active):
+                    continue
+                if any(i != 0 for i in inactive):
+                    continue
+                if c_value is not None and any(abs(a) != float(c_value) for a in active):
+                    continue
+                selected.append(f)
+            return selected
+
+        if lbl_0 == "sm":
+            null_files = [f for f in all_files if "re_0_im_0_" in f]
+        elif lbl_0 == "neg":
+            null_files = _select(-1)
+        else:
+            raise ValueError(f"Unknown lbl_0 '{lbl_0}' for tt SMEFT data (expected 'sm' or 'neg')")
+        pos_files = _select(+1)
+        assert null_files and pos_files, (
+            f"No tt_smeft files for one label with lbl_0={lbl_0}, bsm={bsm}, c_value={c_value} "
+            f"in {data_dir}"
+        )
+        return {0: null_files, 1: pos_files}
+
+    def init_data(self, mode="train"):
+        if self.data:
+            return
+
+        filenames = self._select_filenames(
+            self.cfg.data.data_dir,
+            self.cfg.data.mass_window,
+            self.cfg.data.lbl_0,
+            self.cfg.data.bsm,
+            self.cfg.data.c_value,
+        )
+
+        LOGGER.info(
+            f"Using tt SMEFT dataset from {self.cfg.data.data_dir} for '{self.cfg.data.bsm}' tagging "
+            f"with {len(filenames[0])} files labeled 0 and {len(filenames[1])} files labeled 1."
+        )
+
+        dataset_kwargs = self._dataset_kwargs(self.cfg.data)
+        self._init_data(TTSmeftDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
+        if self._eval_all():
+            self.data_test = Subset(self.data, self._eval_idx())
+
+        if self.cfg.data.down_tag != "truth":
+            self._set_downtag_labels()
+
+    def _eval_all(self):
+        return not self.cfg.train and self.cfg.data.eval_all
+
+    def _eval_idx(self):
+        return torch.arange(len(self.data)) if self._eval_all() else self.data.get_subset("test")
+
+    def _set_downtag_labels(self):
+        """Replace the true down tag by the down-tagger prediction, rounded (data.down_tag=hard)
+        or as a probability (data.down_tag=soft). data.down_tag=mix sets the wrong tag, whose
+        outputs `_mix_downtag` combines with those of the saved truth evaluation."""
+        # labels.txt of a downtagging run with data.dataset_eval='ttsmeft': (down subjet is the
+        # harder one, predicted probability of that), one row per test
+        # event, or per event with data.ttsmeft.split=all (needed to train and for data.eval_all)
+        path, mode = self.cfg.data.downtag_labels, self.cfg.data.down_tag
+        labels = torch.from_numpy(np.loadtxt(path))
+        all_events = len(labels) == len(self.data)
+        assert all_events or not (self.cfg.train or self._eval_all()), (
+            f"{path} only labels the test events, use data.ttsmeft.split=all in the downtagging run"
+        )
+        idx = torch.arange(len(self.data)) if all_events else self.data.get_subset("test")
+
+        # guards against labels of other events
+        true_leading = self.data.down_harder[idx]
+        if not torch.equal(true_leading, labels[:, 0] == 1):
+            raise ValueError(
+                f"Down tags in {path} do not match the tt_smeft events. Run the downtagging "
+                "experiment with data.dataset_eval='ttsmeft' and the same tt_smeft settings."
+            )
+
+        p = self.data.down_harder.double()
+        p[idx] = labels[:, 1].round() if mode == "hard" else labels[:, 1]
+        if mode == "mix":
+            self.p_harder = p
+            p = 1 - self.data.down_harder.double()
+        self.data.set_down_prob(p)
+        self.downtag_accuracy = float(((labels[:, 1] > 0.5) == true_leading).double().mean())
+        LOGGER.info(
+            f"Set the {mode} down tags of {len(idx)} tt_smeft events from "
+            f"{path}, accuracy {self.downtag_accuracy:.4f}"
+        )
+
+    def _mix_downtag(self):
+        """O = p O(d = q_hard) + (1 - p) O(d = q_soft) for the scalar and pseudoscalar logits, with
+        p the down-tagger probability of the harder subjet. One assignment is the true one, read
+        from the truth evaluation, the other the wrong one of this evaluation."""
+        assert self.world_size == 1, "events are matched by their order, evaluate on one GPU"
+        res = self.results["test"]
+        path = os.path.join(
+            self.cfg.run_dir, f"preds_{self.cfg.run_idx}{self._eval_output_suffix('truth')}"
+        )
+        assert os.path.exists(f"{path}/score.npz"), f"data.down_tag=mix needs {path}/score.npz"
+        truth = np.load(f"{path}/score.npz")
+        assert np.array_equal(truth["labels_true"], res["labels_true"].numpy()), (
+            f"{path} holds other events"
+        )
+        idx = self._eval_idx()
+        harder, p = self.data.down_harder[idx], self.p_harder[idx]
+        logits = {}
+        for output in ("scalar", "pseudo"):
+            key = f"labels_predict_{output}"
+            right = torch.logit(torch.from_numpy(truth[key]).double())
+            wrong = torch.logit(res[key].double())
+            o_hard, o_soft = torch.where(harder, right, wrong), torch.where(harder, wrong, right)
+            logits[output] = p * o_hard + (1 - p) * o_soft
+            res[key] = torch.sigmoid(logits[output]).float()
+
+        logit = (logits["scalar"] + logits["pseudo"]).float()
+        res["labels_predict"] = torch.sigmoid(logit)
+        res["loss"] = self.loss(logit, res["labels_true"]).item()
+        y, pred = res["labels_true"].numpy(), res["labels_predict"].numpy()
+        res["accuracy"] = accuracy_score(y, pred.round())
+        res["fpr"], res["tpr"], _ = roc_curve(y, pred)
+        res["auc"] = roc_auc_score(y, pred)
+        for key in ("rej03", "rej05", "rej08"):  # of the wrong tag
+            res.pop(key)
+        LOGGER.info(f"AUC with the mixed down tag: {res['auc']:.4f}")
+
+    def _eval_output_suffix(self, down_tag=None):
+        if self.cfg.train:
+            return ""
+        suffix = {"truth": "", "hard": "_downtag", "soft": "_softdown", "mix": "_mixdown"}[
+            down_tag or self.cfg.data.down_tag
+        ]
+        if self.cfg.data.c_value != 2.6:  # e.g. 0.1 -> _c0p1
+            suffix += f"_c{self.cfg.data.c_value}".replace(".", "p")
+        if self._eval_all():
+            suffix += "_all"
+        return suffix
+
+    def _evaluate_physics(self):
+        if self.cfg.data.down_tag == "mix":
+            self._mix_downtag()
+        if "test" in self.cfg.evaluation.eval_set and self.cfg.data.bsm == "im":
+            self._evaluate_asymmetry()
+
+    def _evaluate_asymmetry(self):
+        """Sign asymmetry of the network output p on the evaluated events: per coupling, and for
+        lbl_0=neg pooled over +c and -c. O1 is in paper_plots/tt_smeft_o1.py."""
+        cfg, res = self.cfg.data, self.results["test"]
+        arrays = {
+            "labels": res["labels_true"].numpy(),
+            # sign of the CP-odd channel p only, the scalar channel would shift the sign cut;
+            # the full output for models without a pseudoscalar stream
+            "omega": (2 * res.get("labels_predict_pseudo", res["labels_predict"]) - 1).numpy(),
+            "c0": 0.0 if cfg.lbl_0 == "sm" else -float(cfg.c_value),
+            "c1": float(cfg.c_value),
+        }
+        if cfg.down_tag != "truth":
+            res.setdefault("extra", {})["downtag_label_accuracy"] = self.downtag_accuracy
+        asym = {}
+        for label in (0, 1):
+            a, sigma = asymmetry(arrays["omega"][arrays["labels"] == label])
+            asym[f"omega_c={arrays[f'c{label}']:g}"] = {"A": a, "sigma": sigma}
+            LOGGER.info(f"Asymmetry of p at c = {arrays[f'c{label}']:g}: {a:+.5f} +- {sigma:.5f}")
+        if cfg.lbl_0 == "neg":
+            a, sigma = pooled_asymmetry(arrays["omega"], arrays["labels"])
+            asym["omega_pooled"] = {"A": a, "sigma": sigma}
+            LOGGER.info(f"Pooled asymmetry of p at |c| = {cfg.c_value:g}: {a:+.5f} +- {sigma:.5f}")
+        res.setdefault("extra", {})["asymmetry"] = asym
+        if self.cfg.save:
+            path = os.path.join(
+                self.cfg.run_dir, f"preds_{self.cfg.run_idx}{self._eval_output_suffix()}"
+            )
+            os.makedirs(path, exist_ok=True)
+            np.savez(os.path.join(path, "asymmetry.npz"), **arrays)
+
+    def _cpflip_batch(self, fourmomenta, scalars, ptr, label):
+        new_fourmomenta = torch.cat(
+            [fourmomenta, fourmomenta * fourmomenta.new_tensor([1, -1, -1, -1])], dim=0
+        )  # Flip momentum
+        # the trailing columns are parity-odd ones
+        scalar_signs = scalars.new_ones(scalars.shape[1])
+        scalar_signs[-self.layout.n_ps :] = -1
+        new_scalars = torch.cat([scalars, scalars * scalar_signs], dim=0)
+        new_label = torch.cat([label, 1 - label], dim=0)
+        new_ptr = torch.cat([ptr, ptr[1:] + ptr[-1]])
+        return new_fourmomenta, new_scalars, new_ptr, new_label
+
+    def _extract_batch(self, batch):
+        fourmomenta, scalars, ptr, label = super()._extract_batch(batch)
+        if self.cfg.data.cpflip_batch and self.model.training:
+            return self._cpflip_batch(fourmomenta, scalars, ptr, label)
+        return fourmomenta, scalars, ptr, label
+
+    def _batch_ref(self, batch):
+        ref = batch.get("ref")
+        if self.cfg.data.cpflip_batch and self.model.training:
+            # the CP-conjugate copy keeps the reference tokens of the original
+            ref = torch.cat([ref, ref])
+        return ref
 
 
 class PseudoscalarExperiment(TaggingExperiment):
@@ -695,7 +1209,9 @@ class PseudoscalarExperiment(TaggingExperiment):
             10  # Differentiate between tops, higgs, photons, subjets, and constituents
         )
         if self.cfg.data.pid:
-            self.extra_scalars += 6
+            self.extra_scalars += 5
+        self.ps_task = True
+        self.n_ps_data = 1  # trailing C-odd charge column
 
     def _init_experiment(self, run_name_add=None):
         run_name_add = [
@@ -741,7 +1257,6 @@ class PseudoscalarExperiment(TaggingExperiment):
         dataset_kwargs = {
             "length": getattr(self.cfg.data, "length", None),
             "pid": self.cfg.data.pid,
-            "use_cache": self.cfg.data.use_cache,
         }
         self._init_data(PseudoscalarDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)
 
@@ -751,6 +1266,7 @@ class VBFExperiment(TaggingExperiment):
         super().__init__(*args, **kwargs)
         self.num_outputs = 1
         self.extra_scalars = 3
+        self.ps_task = True
 
     def _init_experiment(self):
         BaseExperiment._init_experiment(self)
@@ -767,11 +1283,11 @@ class VBFExperiment(TaggingExperiment):
             filenames = {
                 0: os.path.join(
                     self.cfg.data.data_dir,
-                    "cHWtil_pos.npy",
+                    "cHWtil_neg.npy",
                 ),
                 1: os.path.join(
                     self.cfg.data.data_dir,
-                    "cHWtil_neg.npy",
+                    "cHWtil_pos.npy",
                 ),
             }
         elif self.cfg.data.exp_type == "cp":
@@ -791,11 +1307,7 @@ class VBFExperiment(TaggingExperiment):
                 " (expected 'pseudoscalar' or 'cp')"
             )
 
-        LOGGER.info(
-            f"Using VBF dataset from {self.cfg.data.data_dir} for '{self.cfg.data.exp_type}' tagging"
-        )
         dataset_kwargs = {
             "length": getattr(self.cfg.data, "length", None),
-            "use_cache": self.cfg.data.use_cache,
         }
         self._init_data(VBFDataset, self.cfg.data.data_dir, filenames, dataset_kwargs)

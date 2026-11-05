@@ -11,6 +11,7 @@ use_float64: false
 float32_matmul_precision: highest
 
 warm_start_idx: null
+init_from: null # checkpoint (models/model_run*.pt) whose weights start a new training run
 save: false
 use_mlflow: false
 save_source: true

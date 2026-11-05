@@ -28,3 +28,4 @@ notebooks/
 *.csv
 *.pt
 *.ipynb_checkpoint*
+paper_plots/*/

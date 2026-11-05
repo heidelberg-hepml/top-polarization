@@ -1,5 +1,5 @@
 # experiment management
-hydra-core
+hydra-core>1
 pytest
 pre-commit>=3.7
 mlflow-skinny # can optionally install extras, see https://pypi.org/project/mlflow-skinny/
@@ -8,6 +8,7 @@ mlflow-skinny # can optionally install extras, see https://pypi.org/project/mlfl
 numpy
 matplotlib
 scikit-learn
+setuptools<82
 
 # data loading
 awkward
@@ -16,7 +17,7 @@ pandas
 wget
 
 # deep learning
-torch==2.10.0
+torch>=2.4.0
 torch-geometric>=2.4.0
 torch-ema
 pytorch_optimizer>=3.2.0
@@ -24,8 +25,7 @@ optuna
 
 # project-specific
 xformers # might cause troubles, see https://github.com/facebookresearch/xformers
-# lgatr[xformers-attention]>=1.4.0
 lloca[xformers-attention]>=1.3.1
 
-# custom lgatr with LGATrSlimPseudo
-git+https://github.com/AntoinePTJ/lgatr.git@pseudoslim
+# custom lgatr 2.0 with LGATrSlimPseudo
+git+https://github.com/heidelberg-hepml/lgatr.git@slim-pseudo

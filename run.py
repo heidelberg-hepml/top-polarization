@@ -6,17 +6,15 @@ import optuna
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from lgatr.primitives.config import gatr_config
 from omegaconf import OmegaConf
 
 from experiments.tagging.experiment import (
     DownTaggingExperiment,
     PolarizationExperiment,
     PseudoscalarExperiment,
+    TTSmeftExperiment,
     VBFExperiment,
 )
-
-gatr_config.use_fully_connected_subgroup = False
 
 GLOBAL_METRIC = None
 
@@ -61,11 +59,12 @@ def objective(base_cfg, trial=None):
         cfg.training.weight_decay = trial.suggest_categorical(
             "weight_decay", [0.2, 0.5, 1.0, 2.0, 5.0]
         )
-        if cfg.model.net._target_.rsplit(".", 1)[0] == "lgatr":
+        if cfg.model.net._target_.startswith("lgatr."):
             cfg.model.net.num_blocks = trial.suggest_categorical("num_blocks", [6, 12])
             cfg.model.net.dropout_prob = trial.suggest_categorical("dropout_prob", [None, 0.1, 0.2])
 
-    world_size = torch.cuda.device_count() if torch.cuda.is_available() else 1
+    n_avail = torch.cuda.device_count() if torch.cuda.is_available() else 1
+    world_size = n_avail if cfg.gpus < 0 else max(1, min(cfg.gpus, n_avail))
 
     try:
         if world_size > 1:
@@ -121,6 +120,8 @@ def ddp_worker(rank, cfg, trial=None):
         constructor = PolarizationExperiment
     elif cfg.exp_type == "downtagging":
         constructor = DownTaggingExperiment
+    elif cfg.exp_type == "tt_smeft":
+        constructor = TTSmeftExperiment
     elif cfg.exp_type == "pseudoscalar":
         constructor = PseudoscalarExperiment
     elif cfg.exp_type == "vbf":

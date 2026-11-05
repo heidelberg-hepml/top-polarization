@@ -1,0 +1,14 @@
+exp_type: vbf
+exp_name: vbf
+
+data:
+  data_dir: 'data/vbf/'
+  exp_type: cp # cp | pseudoscalar
+
+training:
+  iterations: 50000
+
+defaults:
+ - tagging
+ - override model: tag_slim_pseudo
+ - _self_

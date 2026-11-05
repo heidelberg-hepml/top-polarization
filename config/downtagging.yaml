@@ -2,14 +2,28 @@ exp_type: downtagging
 exp_name: downtagging
 
 data:
-  data_dir: data/tt/
+  data_dir: data/tt_pol/
   mass_window: loose
   pid: true
+  charge: true # C-odd PID charge, with pid
   tag: [-3,-1,1,3]
   use_ditop: false
+  ttsmeft: # tt_smeft data for dataset_eval=ttsmeft, must match the tt_smeft run
+    data_dir: data/tt_smeft/
+    mass_window: loose
+    lbl_0: sm
+    bsm: im
+    c_value: 2.6
+    length: -1
+    pid: true
+    pseudoscalars: false
+    split: test # test | all, the tt_smeft events to label
 
 plotting:
- polarization: true
+  polarization: true
+
+training:
+  iterations: 500000
 
 defaults:
  - tagging
